@@ -34,6 +34,7 @@ import {
   computeSpectraBoost,
 } from "../formatters.js";
 import type { BoostInfo } from "../formatters.js";
+import { dual } from "./dual.js";
 
 export function register(server: McpServer): void {
   server.tool(
@@ -315,7 +316,13 @@ Use get_pool_activity and get_portfolio to investigate trading patterns and posi
             ` Try lowering min_tvl_usd/min_liquidity_usd or increasing max_price_impact_pct.` +
             (failedChains.length > 0 ? `\nNote: ${failedChains.length} chain(s) failed (${failedChains.join(", ")}).` : "");
 
-          return { content: [{ type: "text", text: msg }] };
+          const ts = Math.floor(Date.now() / 1000);
+          return dual(msg, {
+            tool: "scan_opportunities",
+            ts,
+            params: { capital_usd, asset_filter, min_tvl_usd, min_liquidity_usd, include_looping, max_price_impact_pct, top_n: rawTopN, ve_spectra_balance },
+            data: { opportunities: [], failedChains },
+          });
         }
 
         const text = formatScanResults(
@@ -329,9 +336,15 @@ Use get_pool_activity and get_portfolio to investigate trading patterns and posi
           topBoostInfos,
         );
 
-        return { content: [{ type: "text", text }] };
+        const ts = Math.floor(Date.now() / 1000);
+        return dual(text, {
+          tool: "scan_opportunities",
+          ts,
+          params: { capital_usd, asset_filter, min_tvl_usd, min_liquidity_usd, include_looping, max_price_impact_pct, top_n: rawTopN, ve_spectra_balance },
+          data: { opportunities: topOpps, failedChains },
+        });
       } catch (e: any) {
-        return { content: [{ type: "text", text: `Error scanning opportunities: ${e.message}` }], isError: true };
+        return dual(`Error scanning opportunities: ${e.message}`, { tool: "scan_opportunities", ts: Math.floor(Date.now() / 1000), params: { capital_usd, asset_filter, min_tvl_usd, min_liquidity_usd, include_looping, max_price_impact_pct, top_n: rawTopN, ve_spectra_balance }, data: { error: e.message } }, { isError: true });
       }
     }
   );

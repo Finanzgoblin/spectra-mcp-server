@@ -19,6 +19,7 @@ import {
   computeSpectraBoost,
   estimatePriceImpact,
 } from "../formatters.js";
+import { dual } from "./dual.js";
 
 export function register(server: McpServer): void {
   // ===========================================================================
@@ -53,16 +54,16 @@ Use get_pool_activity to see trading patterns on this pool.`,
         const pt = parsePtResponse(data);
 
         if (!pt) {
-          return { content: [{ type: "text", text: `No PT found at ${pt_address} on ${chain}` }] };
+          const ts = Math.floor(Date.now() / 1000);
+          return dual(`No PT found at ${pt_address} on ${chain}`, { tool: "get_pt_details", ts, params: { chain, pt_address }, data: { pt: null } });
         }
 
         const summary = formatPtSummary(pt, chain);
 
-        return {
-          content: [{ type: "text", text: summary }],
-        };
+        const ts = Math.floor(Date.now() / 1000);
+        return dual(summary, { tool: "get_pt_details", ts, params: { chain, pt_address }, data: { pt } });
       } catch (e: any) {
-        return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+        return dual(`Error: ${e.message}`, { tool: "get_pt_details", ts: Math.floor(Date.now() / 1000), params: { chain, pt_address }, data: { error: e.message } }, { isError: true });
       }
     }
   );
@@ -102,7 +103,8 @@ Use get_pool_activity on a specific pool to see recent trading patterns.`,
         const pts: SpectraPt[] = raw?.data || raw || [];
 
         if (!Array.isArray(pts) || pts.length === 0) {
-          return { content: [{ type: "text", text: `No pools found on ${chain}. The endpoint may use a different format -- try get_pt_details with a specific address.` }] };
+          const ts = Math.floor(Date.now() / 1000);
+          return dual(`No pools found on ${chain}. The endpoint may use a different format -- try get_pt_details with a specific address.`, { tool: "list_pools", ts, params: { chain, sort_by, min_tvl_usd }, data: { pools: [] } });
         }
 
         // Expand each PT into one entry per pool so multi-pool PTs are all visible
@@ -133,17 +135,17 @@ Use get_pool_activity on a specific pool to see recent trading patterns.`,
         });
 
         if (expanded.length === 0) {
-          return { content: [{ type: "text", text: `No active pools on ${chain} with TVL >= ${formatUsd(min_tvl_usd)}` }] };
+          const ts = Math.floor(Date.now() / 1000);
+          return dual(`No active pools on ${chain} with TVL >= ${formatUsd(min_tvl_usd)}`, { tool: "list_pools", ts, params: { chain, sort_by, min_tvl_usd }, data: { pools: [] } });
         }
 
         const summaries = expanded.map(({ pt, pool }) => formatPoolSummary(pt, pool, chain));
         const header = `Found ${expanded.length} active pool(s) on ${SUPPORTED_CHAINS[chain]?.name || chain} (sorted by ${sort_by}):\n`;
 
-        return {
-          content: [{ type: "text", text: header + "\n" + summaries.join("\n\n") }],
-        };
+        const ts = Math.floor(Date.now() / 1000);
+        return dual(header + "\n" + summaries.join("\n\n"), { tool: "list_pools", ts, params: { chain, sort_by, min_tvl_usd }, data: { pools: expanded } });
       } catch (e: any) {
-        return { content: [{ type: "text", text: `Error listing pools: ${e.message}` }], isError: true };
+        return dual(`Error listing pools: ${e.message}`, { tool: "list_pools", ts: Math.floor(Date.now() / 1000), params: { chain, sort_by, min_tvl_usd }, data: { error: e.message } }, { isError: true });
       }
     }
   );
@@ -201,22 +203,20 @@ instead — it's the strategy tool for deploying real capital.`,
           : "";
 
         if (top.length === 0) {
-          return {
-            content: [{
-              type: "text",
-              text: `No opportunities found matching criteria.${asset_filter ? ` Asset filter: ${asset_filter}.` : ""} Try lowering min_tvl_usd or min_liquidity_usd.${chainWarning}`,
-            }],
-          };
+          const ts = Math.floor(Date.now() / 1000);
+          return dual(
+            `No opportunities found matching criteria.${asset_filter ? ` Asset filter: ${asset_filter}.` : ""} Try lowering min_tvl_usd or min_liquidity_usd.${chainWarning}`,
+            { tool: "get_best_fixed_yields", ts, params: { asset_filter, min_tvl_usd, min_liquidity_usd, top_n }, data: { opportunities: [], failedChains } }
+          );
         }
 
         const header = `Top ${top.length} Fixed Yield Opportunities on Spectra${asset_filter ? ` (filtered: ${asset_filter})` : ""}:\n`;
         const summaries = top.map((opp, i) => `#${i + 1}\n${formatPoolSummary(opp.pt, opp.pool, opp.chain)}`);
 
-        return {
-          content: [{ type: "text", text: header + chainWarning + "\n" + summaries.join("\n\n") }],
-        };
+        const ts = Math.floor(Date.now() / 1000);
+        return dual(header + chainWarning + "\n" + summaries.join("\n\n"), { tool: "get_best_fixed_yields", ts, params: { asset_filter, min_tvl_usd, min_liquidity_usd, top_n }, data: { opportunities: top, failedChains } });
       } catch (e: any) {
-        return { content: [{ type: "text", text: `Error scanning yields: ${e.message}` }], isError: true };
+        return dual(`Error scanning yields: ${e.message}`, { tool: "get_best_fixed_yields", ts: Math.floor(Date.now() / 1000), params: { asset_filter, min_tvl_usd, min_liquidity_usd, top_n }, data: { error: e.message } }, { isError: true });
       }
     }
   );
@@ -262,12 +262,14 @@ check your current positions. Use scan_opportunities for multi-chain comparison.
         const pt = parsePtResponse(data);
 
         if (!pt) {
-          return { content: [{ type: "text", text: `No PT found at ${pt_address} on ${chain}` }] };
+          const ts = Math.floor(Date.now() / 1000);
+          return dual(`No PT found at ${pt_address} on ${chain}`, { tool: "compare_yield", ts, params: { chain, pt_address, ve_spectra_balance, capital_usd }, data: { pt: null } });
         }
 
         const pool = pt.pools?.[0];
         if (!pool) {
-          return { content: [{ type: "text", text: `No active pool for this PT` }] };
+          const ts = Math.floor(Date.now() / 1000);
+          return dual(`No active pool for this PT`, { tool: "compare_yield", ts, params: { chain, pt_address, ve_spectra_balance, capital_usd }, data: { pt, pool: null } });
         }
 
         const fixedApy = pool.impliedApy || 0;
@@ -350,11 +352,10 @@ check your current positions. Use scan_opportunities for multi-chain comparison.
         }
         lines.push(`  YT Leverage: ${(pool.ytLeverage || 0).toFixed(1)}x (for yield bulls)`);
 
-        return {
-          content: [{ type: "text", text: lines.join("\n") }],
-        };
+        const ts = Math.floor(Date.now() / 1000);
+        return dual(lines.join("\n"), { tool: "compare_yield", ts, params: { chain, pt_address, ve_spectra_balance, capital_usd }, data: { pt, pool, fixedApy, variableApr, spread, maturityDays, effectiveFixedApy, lpData, boostInfo } });
       } catch (e: any) {
-        return { content: [{ type: "text", text: `Error comparing yields: ${e.message}` }], isError: true };
+        return dual(`Error comparing yields: ${e.message}`, { tool: "compare_yield", ts: Math.floor(Date.now() / 1000), params: { chain, pt_address, ve_spectra_balance, capital_usd }, data: { error: e.message } }, { isError: true });
       }
     }
   );

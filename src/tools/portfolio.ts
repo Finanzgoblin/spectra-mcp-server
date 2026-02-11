@@ -7,6 +7,7 @@ import { CHAIN_ENUM, EVM_ADDRESS, API_NETWORKS, resolveNetwork } from "../config
 import type { SpectraPt } from "../types.js";
 import { fetchSpectra } from "../api.js";
 import { formatUsd, formatPositionSummary } from "../formatters.js";
+import { dual } from "./dual.js";
 
 export function register(server: McpServer): void {
   server.tool(
@@ -81,23 +82,28 @@ Protocol context:
 
         if (summaries.length === 0) {
           const scope = chain || "any chain";
-          return {
-            content: [{
-              type: "text",
-              text: `No active Spectra positions found for ${address} on ${scope}.${chainWarning}`,
-            }],
-          };
+          const text = `No active Spectra positions found for ${address} on ${scope}.${chainWarning}`;
+          return dual(text, {
+            tool: "get_portfolio",
+            ts: Math.floor(Date.now() / 1000),
+            params: { address, chain },
+            data: { positions: [], totalPortfolioValue: 0, failedChains },
+          });
         }
 
         const scope = chain || "all chains";
         const header = `Spectra Portfolio for ${address} (${scope}):\n` +
           `Total Positions: ${summaries.length} | Estimated Value: ${formatUsd(totalPortfolioValue)}\n`;
+        const text = header + chainWarning + "\n" + summaries.join("\n\n");
 
-        return {
-          content: [{ type: "text", text: header + chainWarning + "\n" + summaries.join("\n\n") }],
-        };
+        return dual(text, {
+          tool: "get_portfolio",
+          ts: Math.floor(Date.now() / 1000),
+          params: { address, chain },
+          data: { positions: allPositions, totalPortfolioValue, failedChains },
+        });
       } catch (e: any) {
-        return { content: [{ type: "text", text: `Error fetching portfolio: ${e.message}` }], isError: true };
+        return dual(`Error fetching portfolio: ${e.message}`, { tool: "get_portfolio", ts: Math.floor(Date.now() / 1000), params: { address, chain }, data: { error: e.message } }, { isError: true });
       }
     }
   );

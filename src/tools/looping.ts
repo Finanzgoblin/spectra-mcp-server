@@ -17,6 +17,7 @@ import {
   estimateLoopingEntryCost,
   estimatePriceImpact,
 } from "../formatters.js";
+import { dual } from "./dual.js";
 
 export function register(server: McpServer): void {
   server.tool(
@@ -76,12 +77,24 @@ discover the best looping opportunities across all chains with capital-aware siz
         const pt = parsePtResponse(data);
 
         if (!pt) {
-          return { content: [{ type: "text", text: `No PT found at ${pt_address} on ${chain}` }] };
+          const ts = Math.floor(Date.now() / 1000);
+          return dual(`No PT found at ${pt_address} on ${chain}`, {
+            tool: "get_looping_strategy",
+            ts,
+            params: { chain, pt_address, morpho_ltv, borrow_rate, max_loops },
+            data: { pt: null },
+          });
         }
 
         const pool = pt.pools?.[0];
         if (!pool) {
-          return { content: [{ type: "text", text: `PT has no active pool` }] };
+          const ts = Math.floor(Date.now() / 1000);
+          return dual(`PT has no active pool`, {
+            tool: "get_looping_strategy",
+            ts,
+            params: { chain, pt_address, morpho_ltv, borrow_rate, max_loops },
+            data: { pt, pool: null },
+          });
         }
 
         // Try to auto-detect Morpho market for this PT
@@ -148,6 +161,16 @@ discover the best looping opportunities across all chains with capital-aware siz
         }
         lines.push(`  ${"--".repeat(hasLiq ? 32 : 26)}`);
 
+        // Build rows array for both formatting and data envelope
+        const rows: Array<{
+          loop: number;
+          leverage: number;
+          grossApy: number;
+          netApy: number;
+          entryCostPct: number;
+          effectiveMarginPct: number;
+        }> = [];
+
         for (let i = 0; i <= max_loops; i++) {
           const lev = cumulativeLeverageAtLoop(effectiveLtv, i);
 
@@ -156,9 +179,10 @@ discover the best looping opportunities across all chains with capital-aware siz
           const netApy = grossApy - borrowCost;
 
           // Cumulative entry cost across all loops (i loops = i buy-PT transactions)
+          let totalImpactPct = 0;
           let entryCostStr = "—";
           if (hasLiq && i > 0) {
-            const { totalImpactPct } = estimateLoopingEntryCost(refCapital, poolLiqUsd, effectiveLtv, i);
+            totalImpactPct = estimateLoopingEntryCost(refCapital, poolLiqUsd, effectiveLtv, i).totalImpactPct;
             entryCostStr = `~${formatPct(totalImpactPct)}`;
           } else if (hasLiq) {
             entryCostStr = "0.00%";
@@ -169,6 +193,15 @@ discover the best looping opportunities across all chains with capital-aware siz
             ? (lev - 1) / (lev * effectiveLtv)
             : 0;
           const effectiveMargin = (1 - debtRatio) * 100;
+
+          rows.push({
+            loop: i,
+            leverage: lev,
+            grossApy,
+            netApy,
+            entryCostPct: totalImpactPct,
+            effectiveMarginPct: effectiveMargin,
+          });
 
           if (hasLiq) {
             lines.push(
@@ -216,11 +249,26 @@ discover the best looping opportunities across all chains with capital-aware siz
         lines.push(`     cumulative entry cost increases with capital size and loop count.`);
         lines.push(`     This is NOT financial advice. Do your own research.`);
 
-        return {
-          content: [{ type: "text", text: lines.join("\n") }],
-        };
+        const ts = Math.floor(Date.now() / 1000);
+        return dual(lines.join("\n"), {
+          tool: "get_looping_strategy",
+          ts,
+          params: { chain, pt_address, morpho_ltv, borrow_rate, max_loops },
+          data: {
+            pt,
+            pool,
+            morphoMarket: morphoMarket || null,
+            morphoDetected,
+            effectiveLtv,
+            effectiveBorrowRate,
+            baseApy,
+            bestLoop,
+            bestNet,
+            rows,
+          },
+        });
       } catch (e: any) {
-        return { content: [{ type: "text", text: `Error calculating loop strategy: ${e.message}` }], isError: true };
+        return dual(`Error calculating loop strategy: ${e.message}`, { tool: "get_looping_strategy", ts: Math.floor(Date.now() / 1000), params: { chain, pt_address, morpho_ltv, borrow_rate, max_loops }, data: { error: e.message } }, { isError: true });
       }
     }
   );
