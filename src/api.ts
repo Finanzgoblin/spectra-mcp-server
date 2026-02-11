@@ -253,6 +253,69 @@ export async function findMorphoMarketsForPts(
 }
 
 // =============================================================================
+// Pool Data Cache (30s TTL per chain)
+// =============================================================================
+
+const POOL_CACHE_TTL_MS = 30_000; // 30 seconds
+const _poolCache = new Map<string, { pts: SpectraPt[]; expiresAt: number }>();
+const _poolInflight = new Map<string, Promise<SpectraPt[]>>();
+
+/**
+ * Fetch all PTs (with pools) for a chain, with 30s TTL cache and inflight dedup.
+ * Used by scanAllChainPools and resolvePoolAddressFromPt indirectly via fetchSpectra.
+ */
+/**
+ * Validate essential PT fields at the system boundary.
+ * Filters out entries missing required fields (address, maturity, name).
+ * Logs a warning for the first malformed entry per chain (avoid log spam).
+ */
+function validatePtEntries(raw: any[], chain: string): SpectraPt[] {
+  let warned = false;
+  const valid: SpectraPt[] = [];
+  for (const item of raw) {
+    if (
+      item &&
+      typeof item === "object" &&
+      typeof item.address === "string" &&
+      typeof item.maturity === "number" &&
+      typeof item.name === "string"
+    ) {
+      valid.push(item as SpectraPt);
+    } else if (!warned) {
+      console.error(`[${chain}] Skipping malformed PT entry: missing address/maturity/name`);
+      warned = true;
+    }
+  }
+  return valid;
+}
+
+async function fetchChainPools(chain: string): Promise<SpectraPt[]> {
+  const now = Date.now();
+  const cached = _poolCache.get(chain);
+  if (cached && now < cached.expiresAt) return cached.pts;
+
+  // Deduplicate concurrent requests for the same chain
+  const inflight = _poolInflight.get(chain);
+  if (inflight) return inflight;
+
+  const promise = (async () => {
+    try {
+      const raw = await fetchSpectra(`/${chain}/pools`) as any;
+      const arr: any[] = raw?.data || raw || [];
+      if (!Array.isArray(arr)) return [];
+      const pts = validatePtEntries(arr, chain);
+      _poolCache.set(chain, { pts, expiresAt: Date.now() + POOL_CACHE_TTL_MS });
+      return pts;
+    } finally {
+      _poolInflight.delete(chain);
+    }
+  })();
+
+  _poolInflight.set(chain, promise);
+  return promise;
+}
+
+// =============================================================================
 // Multi-Chain Pool Scanner
 // =============================================================================
 
@@ -266,6 +329,7 @@ export interface ChainScanOptions {
  * Scan all Spectra chains in parallel, returning non-expired PT×pool pairs
  * that pass TVL, liquidity, and optional asset filters.
  * Shared by get_best_fixed_yields, scan_opportunities, and scan_yt_arbitrage.
+ * Uses a 30s TTL cache per chain to avoid redundant API calls.
  */
 export async function scanAllChainPools(
   opts: ChainScanOptions = {}
@@ -278,9 +342,8 @@ export async function scanAllChainPools(
 
   const chainResults = await Promise.allSettled(
     API_NETWORKS.map(async (chain): Promise<RawPoolOpportunity[]> => {
-      const raw = await fetchSpectra(`/${chain}/pools`) as any;
-      const pts: SpectraPt[] = raw?.data || raw || [];
-      if (!Array.isArray(pts)) return [];
+      const pts = await fetchChainPools(chain);
+      if (pts.length === 0) return [];
 
       const results: RawPoolOpportunity[] = [];
       for (const pt of pts) {
@@ -328,9 +391,8 @@ export async function fetchSpectraPtAddresses(): Promise<Set<string>> {
   const morphoNetworks = Object.keys(MORPHO_CHAIN_IDS);
   const results = await Promise.allSettled(
     morphoNetworks.map(async (net) => {
-      const raw = await fetchSpectra(`/${net}/pools`) as any;
-      const items: SpectraPt[] = Array.isArray(raw) ? raw : raw?.data || [];
-      return items
+      const pts = await fetchChainPools(net);
+      return pts
         .filter((pt) => pt.address)
         .map((pt) => pt.address.toLowerCase());
     })

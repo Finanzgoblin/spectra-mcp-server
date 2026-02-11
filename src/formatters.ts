@@ -56,6 +56,142 @@ export function formatBalance(raw: string | null | undefined, decimals: number):
 }
 
 // =============================================================================
+// Slim Data Extractors (for dual-layer JSON envelope — keeps token cost low)
+// =============================================================================
+
+/** Minimal PT identity for structured data. Agents can use ptAddress + chain to call other tools. */
+export interface SlimPt {
+  address: string;
+  name: string;
+  maturity: number;
+  daysToMaturity: number;
+  tvlUsd: number;
+  underlying: string;
+  ibtSymbol: string;
+  ibtProtocol: string;
+  ibtApr: number;
+}
+
+/** Minimal pool metrics for structured data. */
+export interface SlimPool {
+  address: string;
+  impliedApy: number;
+  ptPriceUsd: number;
+  ptPriceUnderlying: number;
+  ytPriceUsd: number;
+  ytLeverage: number;
+  liquidityUsd: number;
+  lpApy: number;
+  lpApyBoostedTotal: number;
+}
+
+/** Minimal Morpho market for structured data. */
+export interface SlimMorphoMarket {
+  uniqueKey: string;
+  chainId: number;
+  collateralSymbol: string;
+  loanSymbol: string;
+  lltv: number;
+  borrowApy: number;
+  supplyApy: number;
+  utilization: number;
+  liquidityUsd: number;
+  supplyUsd: number;
+}
+
+export function slimPt(pt: SpectraPt): SlimPt {
+  return {
+    address: pt.address,
+    name: pt.name,
+    maturity: pt.maturity,
+    daysToMaturity: daysToMaturity(pt.maturity),
+    tvlUsd: pt.tvl?.usd || 0,
+    underlying: pt.underlying?.symbol || "?",
+    ibtSymbol: pt.ibt?.symbol || "?",
+    ibtProtocol: pt.ibt?.protocol || "Unknown",
+    ibtApr: pt.ibt?.apr?.total || 0,
+  };
+}
+
+export function slimPool(pool: SpectraPool): SlimPool {
+  return {
+    address: pool.address || "",
+    impliedApy: pool.impliedApy || 0,
+    ptPriceUsd: pool.ptPrice?.usd || 0,
+    ptPriceUnderlying: pool.ptPrice?.underlying || 0,
+    ytPriceUsd: pool.ytPrice?.usd || 0,
+    ytLeverage: pool.ytLeverage || 0,
+    liquidityUsd: pool.liquidity?.usd || 0,
+    lpApy: pool.lpApy?.total || 0,
+    lpApyBoostedTotal: pool.lpApy?.boostedTotal || 0,
+  };
+}
+
+export function slimMorphoMarket(m: MorphoMarket): SlimMorphoMarket {
+  // Inline LLTV parsing (BigInt / 1e18) to avoid forward-reference to formatMorphoLltv
+  let lltv = 0;
+  if (m.lltv) {
+    try {
+      const bi = BigInt(m.lltv);
+      const div = BigInt("1000000000000000000");
+      lltv = Number(bi / div) + Number(bi % div) / Number(div);
+    } catch { lltv = Number(m.lltv) / 1e18 || 0; }
+  }
+  return {
+    uniqueKey: m.uniqueKey,
+    chainId: m.morphoBlue?.chain?.id || 0,
+    collateralSymbol: m.collateralAsset?.symbol || "?",
+    loanSymbol: m.loanAsset?.symbol || "?",
+    lltv,
+    borrowApy: (m.state?.borrowApy || 0) * 100,
+    supplyApy: (m.state?.supplyApy || 0) * 100,
+    utilization: (m.state?.utilization || 0) * 100,
+    liquidityUsd: m.state?.liquidityAssetsUsd || 0,
+    supplyUsd: m.state?.supplyAssetsUsd || 0,
+  };
+}
+
+/** Strip pt/pool from ScanOpportunity for envelope — all relevant fields are already top-level. */
+export function slimScanOpportunity(opp: ScanOpportunity): Omit<ScanOpportunity, "pt" | "pool"> {
+  const { pt: _pt, pool: _pool, ...rest } = opp;
+  return rest;
+}
+
+/** Strip pt/pool from YtArbitrageOpportunity for envelope. */
+export function slimYtArbOpportunity(opp: YtArbitrageOpportunity): Omit<YtArbitrageOpportunity, "pt" | "pool"> {
+  const { pt: _pt, pool: _pool, ...rest } = opp;
+  return rest;
+}
+
+// =============================================================================
+// Compact Formatters (for agent-efficient output)
+// =============================================================================
+
+/** One-line pool summary for compact list output. */
+export function formatPoolCompact(pt: SpectraPt, pool: SpectraPool, chain: string): string {
+  const apy = formatPct(pool.impliedApy || 0);
+  const tvl = formatUsd(pt.tvl?.usd || 0);
+  const liq = formatUsd(pool.liquidity?.usd || 0);
+  const days = daysToMaturity(pt.maturity);
+  const lpApy = pool.lpApy?.total ? ` | LP ${formatPct(pool.lpApy.total)}` : "";
+  return `${pt.name} (${chain}) | APY ${apy} | TVL ${tvl} | Liq ${liq} | ${days}d${lpApy} | PT: ${pt.address} | Pool: ${pool.address || "?"}`;
+}
+
+/** One-line scan opportunity summary for compact output. */
+export function formatScanOpportunityCompact(opp: ScanOpportunity, rank: number): string {
+  const loopTag = opp.looping
+    ? ` | Loop ${formatPct(opp.looping.optimalEffectiveNetApy)} @${opp.looping.optimalLoops}x`
+    : "";
+  return `#${rank} ${opp.pt.name} (${opp.chain}) | Eff ${formatPct(opp.effectiveApy)} | Impl ${formatPct(opp.impliedApy)} | Impact ${formatPct(opp.entryImpactPct)} | ${opp.daysToMaturity}d${loopTag} | PT: ${opp.ptAddress} | Pool: ${opp.poolAddress}`;
+}
+
+/** One-line YT arb opportunity summary for compact output. */
+export function formatYtArbCompact(opp: YtArbitrageOpportunity, rank: number): string {
+  const dir = opp.direction === "buy_yt" ? "BUY" : "SELL";
+  return `#${rank} ${dir} ${opp.pt.name} (${opp.chain}) | Spread ${opp.spreadPct >= 0 ? "+" : ""}${formatPct(opp.spreadPct)} | IBT ${formatPct(opp.ibtCurrentApr)} vs YT ${formatPct(opp.ytImpliedRate)} | Impact ${formatPct(opp.entryImpactPct)} | ${opp.daysToMaturity}d | PT: ${opp.ptAddress}`;
+}
+
+// =============================================================================
 // PT Response Parsing
 // =============================================================================
 

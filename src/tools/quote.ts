@@ -11,7 +11,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork } from "../config.js";
 import { fetchSpectra } from "../api.js";
-import { parsePtResponse, buildQuoteFromPt, formatTradeQuote } from "../formatters.js";
+import { parsePtResponse, buildQuoteFromPt, formatTradeQuote, slimPt } from "../formatters.js";
 import { dual } from "./dual.js";
 
 export function register(server: McpServer): void {
@@ -72,7 +72,7 @@ makes sense relative to variable rates.`,
         if (!pool) {
           const ts = Math.floor(Date.now() / 1000);
           const params = { chain, pt_address, amount, side, slippage_tolerance };
-          return dual(`No active pool for PT ${pt.name}`, { tool: "quote_trade", ts, params, data: { pt, pool: null } });
+          return dual(`No active pool for PT ${pt.name}`, { tool: "quote_trade", ts, params, data: { pt: slimPt(pt), pool: null } });
         }
 
         const quote = buildQuoteFromPt(pt, pool, amount, side, slippage_tolerance);
