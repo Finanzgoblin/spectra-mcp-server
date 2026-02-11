@@ -27,11 +27,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/spectra-finance/spectra-mcp-server.git"
+    "url": "git+https://github.com/Finanzgoblin/spectra-mcp-server.git"
   },
-  "homepage": "https://github.com/spectra-finance/spectra-mcp-server#readme",
+  "homepage": "https://github.com/Finanzgoblin/spectra-mcp-server#readme",
   "bugs": {
-    "url": "https://github.com/spectra-finance/spectra-mcp-server/issues"
+    "url": "https://github.com/Finanzgoblin/spectra-mcp-server/issues"
   },
   "engines": {
     "node": ">=18.0.0"
