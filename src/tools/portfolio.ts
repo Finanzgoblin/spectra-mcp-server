@@ -6,8 +6,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { CHAIN_ENUM, EVM_ADDRESS, API_NETWORKS, resolveNetwork } from "../config.js";
 import type { SpectraPt } from "../types.js";
 import { fetchSpectra } from "../api.js";
-import { formatUsd, formatPositionSummary, slimPt } from "../formatters.js";
-import { dual } from "./dual.js";
+import { formatUsd, formatPositionSummary } from "../formatters.js";
 
 export function register(server: McpServer): void {
   server.tool(
@@ -83,12 +82,7 @@ Protocol context:
         if (summaries.length === 0) {
           const scope = chain || "any chain";
           const text = `No active Spectra positions found for ${address} on ${scope}.${chainWarning}`;
-          return dual(text, {
-            tool: "get_portfolio",
-            ts: Math.floor(Date.now() / 1000),
-            params: { address, chain },
-            data: { positions: [], totalPortfolioValue: 0, failedChains },
-          });
+          return { content: [{ type: "text" as const, text }] };
         }
 
         const scope = chain || "all chains";
@@ -96,14 +90,10 @@ Protocol context:
           `Total Positions: ${summaries.length} | Estimated Value: ${formatUsd(totalPortfolioValue)}\n`;
         const text = header + chainWarning + "\n" + summaries.join("\n\n");
 
-        return dual(text, {
-          tool: "get_portfolio",
-          ts: Math.floor(Date.now() / 1000),
-          params: { address, chain },
-          data: { positions: allPositions.map(p => ({ pt: slimPt(p.pos), chain: p.chain })), totalPortfolioValue, failedChains },
-        });
+        return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
-        return dual(`Error fetching portfolio: ${e.message}`, { tool: "get_portfolio", ts: Math.floor(Date.now() / 1000), params: { address, chain }, data: { error: e.message } }, { isError: true });
+        const text = `Error fetching portfolio: ${e.message}`;
+        return { content: [{ type: "text" as const, text }], isError: true };
       }
     }
   );

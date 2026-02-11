@@ -19,10 +19,7 @@ import {
   extractLpApyBreakdown,
   computeSpectraBoost,
   estimatePriceImpact,
-  slimPt,
-  slimPool,
 } from "../formatters.js";
-import { dual } from "./dual.js";
 
 export function register(server: McpServer): void {
   // ===========================================================================
@@ -57,17 +54,16 @@ Use get_pool_activity to see trading patterns on this pool.`,
         const pt = parsePtResponse(data);
 
         if (!pt) {
-          const ts = Math.floor(Date.now() / 1000);
-          return dual(`No PT found at ${pt_address} on ${chain}`, { tool: "get_pt_details", ts, params: { chain, pt_address }, data: { pt: null } });
+          const text = `No PT found at ${pt_address} on ${chain}`;
+          return { content: [{ type: "text" as const, text }] };
         }
 
-        const summary = formatPtSummary(pt, chain);
-        const pool = pt.pools?.[0];
+        const text = formatPtSummary(pt, chain);
 
-        const ts = Math.floor(Date.now() / 1000);
-        return dual(summary, { tool: "get_pt_details", ts, params: { chain, pt_address }, data: { pt: slimPt(pt), pool: pool ? slimPool(pool) : null } });
+        return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
-        return dual(`Error: ${e.message}`, { tool: "get_pt_details", ts: Math.floor(Date.now() / 1000), params: { chain, pt_address }, data: { error: e.message } }, { isError: true });
+        const text = `Error: ${e.message}`;
+        return { content: [{ type: "text" as const, text }], isError: true };
       }
     }
   );
@@ -111,8 +107,8 @@ Use get_pool_activity on a specific pool to see recent trading patterns.`,
         const pts: SpectraPt[] = raw?.data || raw || [];
 
         if (!Array.isArray(pts) || pts.length === 0) {
-          const ts = Math.floor(Date.now() / 1000);
-          return dual(`No pools found on ${chain}. The endpoint may use a different format -- try get_pt_details with a specific address.`, { tool: "list_pools", ts, params: { chain, sort_by, min_tvl_usd, compact }, data: { pools: [] } });
+          const text = `No pools found on ${chain}. The endpoint may use a different format -- try get_pt_details with a specific address.`;
+          return { content: [{ type: "text" as const, text }] };
         }
 
         // Expand each PT into one entry per pool so multi-pool PTs are all visible
@@ -143,8 +139,8 @@ Use get_pool_activity on a specific pool to see recent trading patterns.`,
         });
 
         if (expanded.length === 0) {
-          const ts = Math.floor(Date.now() / 1000);
-          return dual(`No active pools on ${chain} with TVL >= ${formatUsd(min_tvl_usd)}`, { tool: "list_pools", ts, params: { chain, sort_by, min_tvl_usd, compact }, data: { pools: [] } });
+          const text = `No active pools on ${chain} with TVL >= ${formatUsd(min_tvl_usd)}`;
+          return { content: [{ type: "text" as const, text }] };
         }
 
         const header = `Found ${expanded.length} active pool(s) on ${SUPPORTED_CHAINS[chain]?.name || chain} (sorted by ${sort_by}):\n`;
@@ -155,12 +151,11 @@ Use get_pool_activity on a specific pool to see recent trading patterns.`,
           body = expanded.map(({ pt, pool }) => formatPoolSummary(pt, pool, chain)).join("\n\n");
         }
 
-        // Slim envelope: only computed metrics, not full API objects
-        const slimPools = expanded.map(({ pt, pool }) => ({ pt: slimPt(pt), pool: slimPool(pool), chain }));
-        const ts = Math.floor(Date.now() / 1000);
-        return dual(header + "\n" + body, { tool: "list_pools", ts, params: { chain, sort_by, min_tvl_usd, compact }, data: { pools: slimPools } });
+        const text = header + "\n" + body;
+        return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
-        return dual(`Error listing pools: ${e.message}`, { tool: "list_pools", ts: Math.floor(Date.now() / 1000), params: { chain, sort_by, min_tvl_usd, compact }, data: { error: e.message } }, { isError: true });
+        const text = `Error listing pools: ${e.message}`;
+        return { content: [{ type: "text" as const, text }], isError: true };
       }
     }
   );
@@ -221,11 +216,8 @@ instead.`,
           : "";
 
         if (top.length === 0) {
-          const ts = Math.floor(Date.now() / 1000);
-          return dual(
-            `No opportunities found matching criteria.${asset_filter ? ` Asset filter: ${asset_filter}.` : ""} Try lowering min_tvl_usd or min_liquidity_usd.${chainWarning}`,
-            { tool: "get_best_fixed_yields", ts, params: { asset_filter, min_tvl_usd, min_liquidity_usd, top_n, compact }, data: { opportunities: [], failedChains } }
-          );
+          const text = `No opportunities found matching criteria.${asset_filter ? ` Asset filter: ${asset_filter}.` : ""} Try lowering min_tvl_usd or min_liquidity_usd.${chainWarning}`;
+          return { content: [{ type: "text" as const, text }] };
         }
 
         const header = `Top ${top.length} Fixed Yield Opportunities on Spectra${asset_filter ? ` (filtered: ${asset_filter})` : ""}:\n`;
@@ -236,12 +228,11 @@ instead.`,
           body = top.map((opp, i) => `#${i + 1}\n${formatPoolSummary(opp.pt, opp.pool, opp.chain)}`).join("\n\n");
         }
 
-        // Slim envelope
-        const slimOpps = top.map(({ pt, pool, chain }) => ({ pt: slimPt(pt), pool: slimPool(pool), chain }));
-        const ts = Math.floor(Date.now() / 1000);
-        return dual(header + chainWarning + "\n" + body, { tool: "get_best_fixed_yields", ts, params: { asset_filter, min_tvl_usd, min_liquidity_usd, top_n, compact }, data: { opportunities: slimOpps, failedChains } });
+        const text = header + chainWarning + "\n" + body;
+        return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
-        return dual(`Error scanning yields: ${e.message}`, { tool: "get_best_fixed_yields", ts: Math.floor(Date.now() / 1000), params: { asset_filter, min_tvl_usd, min_liquidity_usd, top_n, compact }, data: { error: e.message } }, { isError: true });
+        const text = `Error scanning yields: ${e.message}`;
+        return { content: [{ type: "text" as const, text }], isError: true };
       }
     }
   );
@@ -287,14 +278,12 @@ check your current positions. Use scan_opportunities for multi-chain comparison.
         const pt = parsePtResponse(data);
 
         if (!pt) {
-          const ts = Math.floor(Date.now() / 1000);
-          return dual(`No PT found at ${pt_address} on ${chain}`, { tool: "compare_yield", ts, params: { chain, pt_address, ve_spectra_balance, capital_usd }, data: { pt: null } });
+          return { content: [{ type: "text" as const, text: `No PT found at ${pt_address} on ${chain}` }] };
         }
 
         const pool = pt.pools?.[0];
         if (!pool) {
-          const ts = Math.floor(Date.now() / 1000);
-          return dual(`No active pool for this PT`, { tool: "compare_yield", ts, params: { chain, pt_address, ve_spectra_balance, capital_usd }, data: { pt: slimPt(pt), pool: null } });
+          return { content: [{ type: "text" as const, text: `No active pool for this PT` }] };
         }
 
         const fixedApy = pool.impliedApy || 0;
@@ -377,10 +366,11 @@ check your current positions. Use scan_opportunities for multi-chain comparison.
         }
         lines.push(`  YT Leverage: ${(pool.ytLeverage || 0).toFixed(1)}x (for yield bulls)`);
 
-        const ts = Math.floor(Date.now() / 1000);
-        return dual(lines.join("\n"), { tool: "compare_yield", ts, params: { chain, pt_address, ve_spectra_balance, capital_usd }, data: { pt: slimPt(pt), pool: slimPool(pool), fixedApy, variableApr, spread, maturityDays, effectiveFixedApy, lpApy: lpData.lpApy, lpApyBoostedTotal: lpData.lpApyBoostedTotal, boostInfo: boostInfo || null } });
+        const text = lines.join("\n");
+        return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
-        return dual(`Error comparing yields: ${e.message}`, { tool: "compare_yield", ts: Math.floor(Date.now() / 1000), params: { chain, pt_address, ve_spectra_balance, capital_usd }, data: { error: e.message } }, { isError: true });
+        const text = `Error comparing yields: ${e.message}`;
+        return { content: [{ type: "text" as const, text }], isError: true };
       }
     }
   );

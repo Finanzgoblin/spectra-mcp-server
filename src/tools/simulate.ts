@@ -15,9 +15,7 @@ import {
   buildQuoteFromPt,
   formatBalance,
   formatPortfolioSimulation,
-  slimPt,
 } from "../formatters.js";
-import { dual } from "./dual.js";
 
 function buildSnapshot(
   ptBal: number, ytBal: number, lpBal: number,
@@ -83,27 +81,23 @@ price quote without portfolio context.`,
           fetchSpectra(`/${network}/pt/${pt_address}`) as Promise<any>,
         ]);
 
-        const tool = "simulate_portfolio_after_trade";
-        const ts = Math.floor(Date.now() / 1000);
-        const params = { chain, pt_address, address, amount, side, slippage_tolerance };
-
         const pt = parsePtResponse(ptData);
         if (!pt) {
           const text = `No PT found at ${pt_address} on ${chain}`;
-          return dual(text, { tool, ts, params, data: { pt: null } });
+          return { content: [{ type: "text" as const, text }] };
         }
 
         const pool = pt.pools?.[0];
         if (!pool) {
           const text = `No active pool for PT ${pt.name}`;
-          return dual(text, { tool, ts, params, data: { pt: slimPt(pt), pool: null } });
+          return { content: [{ type: "text" as const, text }] };
         }
 
         // Build the trade quote
         const quote = buildQuoteFromPt(pt, pool, amount, side, slippage_tolerance);
         if (!quote) {
           const text = `Cannot quote: PT price data unavailable for ${pt.name}. The pool may have no liquidity.`;
-          return dual(text, { tool, ts, params, data: { quote: null } });
+          return { content: [{ type: "text" as const, text }] };
         }
 
         // Extract prices from pool
@@ -176,9 +170,10 @@ price quote without portfolio context.`,
           portfolioFetchFailed,
         });
 
-        return dual(text, { tool, ts, params, data: { before, after, quote, isNewPosition, sellExceedsBalance } });
+        return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
-        return dual(`Error simulating trade: ${e.message}`, { tool: "simulate_portfolio_after_trade", ts: Math.floor(Date.now() / 1000), params: { chain, pt_address, address, amount, side, slippage_tolerance }, data: { error: e.message } }, { isError: true });
+        const text = `Error simulating trade: ${e.message}`;
+        return { content: [{ type: "text" as const, text }], isError: true };
       }
     }
   );
