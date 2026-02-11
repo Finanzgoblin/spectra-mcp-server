@@ -10,6 +10,7 @@ import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork, VE_SPECTRA } from "../config.js";
 import { fetchVeTotalSupply, fetchSpectra } from "../api.js";
 import { formatUsd, formatPct, parsePtResponse, computeSpectraBoost } from "../formatters.js";
+import { dual } from "./dual.js";
 
 export function register(server: McpServer): void {
   server.tool(
@@ -49,6 +50,9 @@ pool at a given deposit size.`,
     async ({ ve_spectra_balance, capital_usd, chain, pt_address }) => {
       try {
         const veTotalSupply = await fetchVeTotalSupply();
+        let computedBoost: { multiplier: number; boostFraction: number } | null = null;
+        let ptResult: any = null;
+        let poolResult: any = null;
 
         const lines: string[] = [
           `-- veSPECTRA Info --`,
@@ -70,15 +74,19 @@ pool at a given deposit size.`,
           // If pool specified, compute exact boost
           if (chain && pt_address) {
             const network = resolveNetwork(chain);
-            const data = await fetchSpectra(`/${network}/pt/${pt_address}`) as any;
-            const pt = parsePtResponse(data);
+            const ptData = await fetchSpectra(`/${network}/pt/${pt_address}`) as any;
+            const pt = parsePtResponse(ptData);
             const pool = pt?.pools?.[0];
             const tvlUsd = pt?.tvl?.usd || 0;
+            ptResult = pt || null;
+            poolResult = pool || null;
 
             if (pt && pool && tvlUsd > 0) {
-              const { multiplier, boostFraction } = computeSpectraBoost(
+              const boost = computeSpectraBoost(
                 ve_spectra_balance, veTotalSupply, tvlUsd, capital_usd
               );
+              computedBoost = boost;
+              const { multiplier, boostFraction } = boost;
 
               lines.push(``);
               lines.push(`  Pool: ${pt.name}`);
@@ -140,7 +148,13 @@ pool at a given deposit size.`,
         lines.push(`  Max boost condition: v/V >= d/D`);
         lines.push(`  In words: your share of total veSPECTRA must be >= your share of pool TVL.`);
 
-        return { content: [{ type: "text", text: lines.join("\n") }] };
+        const ts = Math.floor(Date.now() / 1000);
+        return dual(lines.join("\n"), {
+          tool: "get_ve_info",
+          ts,
+          params: { ve_spectra_balance, capital_usd, chain, pt_address },
+          data: { veTotalSupply, boostInfo: computedBoost, pt: ptResult, pool: poolResult },
+        });
       } catch (e: any) {
         return { content: [{ type: "text", text: `Error fetching veSPECTRA info: ${e.message}` }], isError: true };
       }

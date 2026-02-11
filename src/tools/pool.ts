@@ -7,6 +7,7 @@ import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork } from "../config.js";
 import { fetchSpectra } from "../api.js";
 import { formatUsd, formatDate, formatActivityType } from "../formatters.js";
+import { dual } from "./dual.js";
 
 export function register(server: McpServer): void {
   // ===========================================================================
@@ -37,9 +38,13 @@ Use quote_trade to estimate price impact for a specific trade size.`,
           Array.isArray(raw) ? raw : raw?.data || [];
 
         if (entries.length === 0) {
-          return {
-            content: [{ type: "text", text: `No volume data found for pool ${pool_address} on ${chain}. Verify this is a valid Curve pool address (not a PT address).` }],
-          };
+          const text = `No volume data found for pool ${pool_address} on ${chain}. Verify this is a valid Curve pool address (not a PT address).`;
+          return dual(text, {
+            tool: "get_pool_volume",
+            ts: Math.floor(Date.now() / 1000),
+            params: { chain, pool_address },
+            data: { entries: [], totalVolume: 0 },
+          });
         }
 
         // Aggregate totals
@@ -109,9 +114,12 @@ Use quote_trade to estimate price impact for a specific trade size.`,
           }
         }
 
-        return {
-          content: [{ type: "text", text: lines.join("\n") }],
-        };
+        return dual(lines.join("\n"), {
+          tool: "get_pool_volume",
+          ts: Math.floor(Date.now() / 1000),
+          params: { chain, pool_address },
+          data: { entries, totalBuy, totalSell, totalVolume, recentBuy, recentSell, recentTotal, rangeDays, activeDays },
+        });
       } catch (e: any) {
         return { content: [{ type: "text", text: `Error fetching pool volume: ${e.message}` }], isError: true };
       }
@@ -198,12 +206,13 @@ addresses from Address Concentration, and compare_yield or get_pt_details for ra
         }> = Array.isArray(raw) ? raw : raw?.data || [];
 
         if (entries.length === 0) {
-          return {
-            content: [{
-              type: "text",
-              text: `No activity found for pool ${pool_address} on ${chain}. Verify this is a valid Curve pool address (not a PT address).`,
-            }],
-          };
+          const text = `No activity found for pool ${pool_address} on ${chain}. Verify this is a valid Curve pool address (not a PT address).`;
+          return dual(text, {
+            tool: "get_pool_activity",
+            ts: Math.floor(Date.now() / 1000),
+            params: { chain, pool_address, type_filter, limit },
+            data: { entries: [], typeCounts: {}, addressStats: {} },
+          });
         }
 
         // Filter by type
@@ -213,12 +222,13 @@ addresses from Address Concentration, and compare_yield or get_pt_details for ra
 
         // Guard against empty array after filtering
         if (entries.length === 0) {
-          return {
-            content: [{
-              type: "text",
-              text: `No ${formatActivityType(type_filter)} activity found for pool ${pool_address} on ${chain}. The pool has activity of other types -- try type_filter "all".`,
-            }],
-          };
+          const text = `No ${formatActivityType(type_filter)} activity found for pool ${pool_address} on ${chain}. The pool has activity of other types -- try type_filter "all".`;
+          return dual(text, {
+            tool: "get_pool_activity",
+            ts: Math.floor(Date.now() / 1000),
+            params: { chain, pool_address, type_filter, limit },
+            data: { entries: [], typeCounts: {}, addressStats: {} },
+          });
         }
 
         // Sort by timestamp descending (most recent first)
@@ -325,9 +335,12 @@ addresses from Address Concentration, and compare_yield or get_pt_details for ra
           lines.push(`  ${date.padEnd(12)} ${actType.padEnd(18)} ${value.padEnd(16)} ${from.padEnd(14)} ${hash}`);
         }
 
-        return {
-          content: [{ type: "text", text: lines.join("\n") }],
-        };
+        return dual(lines.join("\n"), {
+          tool: "get_pool_activity",
+          ts: Math.floor(Date.now() / 1000),
+          params: { chain, pool_address, type_filter, limit },
+          data: { entries: shown, allEntries: entries, typeCounts, addressStats, totalValue },
+        });
       } catch (e: any) {
         return { content: [{ type: "text", text: `Error fetching pool activity: ${e.message}` }], isError: true };
       }
