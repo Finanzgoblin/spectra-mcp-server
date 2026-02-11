@@ -7,8 +7,7 @@ import { z } from "zod";
 import { CHAIN_ENUM, MORPHO_CHAIN_IDS, resolveNetwork } from "../config.js";
 import type { MorphoMarket } from "../types.js";
 import { fetchMorpho, sanitizeGraphQL, MORPHO_MARKET_FIELDS, fetchSpectraPtAddresses } from "../api.js";
-import { formatPct, formatMorphoLltv, formatMorphoMarketSummary, slimMorphoMarket } from "../formatters.js";
-import { dual } from "./dual.js";
+import { formatPct, formatMorphoLltv, formatMorphoMarketSummary } from "../formatters.js";
 
 export function register(server: McpServer): void {
   // ===========================================================================
@@ -65,7 +64,8 @@ Use scan_opportunities for automated cross-chain looping discovery.`,
           const network = resolveNetwork(chain);
           const morphoId = MORPHO_CHAIN_IDS[network];
           if (!morphoId) {
-            return dual(`No Morpho PT markets are currently tracked for ${chain}. Morpho PT markets exist on: ${Object.keys(MORPHO_CHAIN_IDS).join(", ")}.`, { tool: "get_morpho_markets", ts: Math.floor(Date.now() / 1000), params: { chain, pt_symbol_filter, min_supply_usd, sort_by, top_n }, data: { error: `No Morpho PT markets tracked for ${chain}` } }, { isError: true });
+            const text = `No Morpho PT markets are currently tracked for ${chain}. Morpho PT markets exist on: ${Object.keys(MORPHO_CHAIN_IDS).join(", ")}.`;
+            return { content: [{ type: "text" as const, text }], isError: true };
           }
           chainIds = [morphoId];
         } else {
@@ -107,9 +107,8 @@ Use scan_opportunities for automated cross-chain looping discovery.`,
 
         if (items.length === 0) {
           const scope = chain || "any tracked chain";
-          const ts = Math.floor(Date.now() / 1000);
           const text = `No Morpho PT markets found on ${scope}${pt_symbol_filter ? ` matching "${pt_symbol_filter}"` : ""}. Total PT markets on Morpho: query returned 0 results.`;
-          return dual(text, { tool: "get_morpho_markets", ts, params: { chain, pt_symbol_filter, min_supply_usd, sort_by, top_n }, data: { markets: [], total: 0 } });
+          return { content: [{ type: "text" as const, text }] };
         }
 
         // Cross-reference: tag each market as Spectra or Pendle/Other
@@ -126,10 +125,11 @@ Use scan_opportunities for automated cross-chain looping discovery.`,
         const header = `Found ${items.length} of ${total} Morpho PT market(s) (${scope}${pt_symbol_filter ? `, filter: ${pt_symbol_filter}` : ""}, sorted by ${sort_by}):\n` +
           `  Spectra: ${spectraCount} | Pendle/Other: ${items.length - spectraCount}\n`;
 
-        const ts = Math.floor(Date.now() / 1000);
-        return dual(header + "\n" + summaries.join("\n\n"), { tool: "get_morpho_markets", ts, params: { chain, pt_symbol_filter, min_supply_usd, sort_by, top_n }, data: { markets: items.map(slimMorphoMarket), total } });
+        const text = header + "\n" + summaries.join("\n\n");
+        return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
-        return dual(`Error fetching Morpho markets: ${e.message}`, { tool: "get_morpho_markets", ts: Math.floor(Date.now() / 1000), params: { chain, pt_symbol_filter, min_supply_usd, sort_by, top_n }, data: { error: e.message } }, { isError: true });
+        const text = `Error fetching Morpho markets: ${e.message}`;
+        return { content: [{ type: "text" as const, text }], isError: true };
       }
     }
   );
@@ -162,8 +162,8 @@ Use get_looping_strategy with these rates to calculate leveraged yield projectio
         const network = resolveNetwork(chain);
         const morphoChainId = MORPHO_CHAIN_IDS[network];
         if (!morphoChainId) {
-          const ts = Math.floor(Date.now() / 1000);
-          return dual(`Morpho is not tracked for ${chain}. Supported: ${Object.keys(MORPHO_CHAIN_IDS).join(", ")}.`, { tool: "get_morpho_rate", ts, params: { chain, market_key }, data: { market: null } });
+          const text = `Morpho is not tracked for ${chain}. Supported: ${Object.keys(MORPHO_CHAIN_IDS).join(", ")}.`;
+          return { content: [{ type: "text" as const, text }] };
         }
 
         const query = `{
@@ -176,8 +176,8 @@ Use get_looping_strategy with these rates to calculate leveraged yield projectio
         const market: MorphoMarket | null = data?.marketByUniqueKey;
 
         if (!market) {
-          const ts = Math.floor(Date.now() / 1000);
-          return dual(`No Morpho market found for key ${market_key} on chain ${chain} (chainId ${morphoChainId}). Verify the key and chain match.`, { tool: "get_morpho_rate", ts, params: { chain, market_key }, data: { market: null } });
+          const text = `No Morpho market found for key ${market_key} on chain ${chain} (chainId ${morphoChainId}). Verify the key and chain match.`;
+          return { content: [{ type: "text" as const, text }] };
         }
 
         const summary = formatMorphoMarketSummary(market);
@@ -193,10 +193,11 @@ Use get_looping_strategy with these rates to calculate leveraged yield projectio
           `    in get_looping_strategy to calculate leveraged yield.`,
         ];
 
-        const ts = Math.floor(Date.now() / 1000);
-        return dual(lines.join("\n"), { tool: "get_morpho_rate", ts, params: { chain, market_key }, data: { market: slimMorphoMarket(market) } });
+        const text = lines.join("\n");
+        return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
-        return dual(`Error fetching Morpho rate: ${e.message}`, { tool: "get_morpho_rate", ts: Math.floor(Date.now() / 1000), params: { chain, market_key }, data: { error: e.message } }, { isError: true });
+        const text = `Error fetching Morpho rate: ${e.message}`;
+        return { content: [{ type: "text" as const, text }], isError: true };
       }
     }
   );

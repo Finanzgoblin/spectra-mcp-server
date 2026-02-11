@@ -10,7 +10,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { API_NETWORKS, SUPPORTED_CHAINS } from "../config.js";
-import { dual } from "./dual.js";
 
 const TOPICS: Record<string, string> = {
 
@@ -84,16 +83,14 @@ Omit the topic parameter to get all topics at once.`,
         .describe(`Specific topic to retrieve. Options: ${ALL_TOPIC_NAMES.join(", ")}. Omit for all.`),
     },
     async ({ topic }) => {
-      const ts = Math.floor(Date.now() / 1000);
-
       if (topic) {
         const text = TOPICS[topic];
-        return dual(text, { tool: "get_protocol_context", ts, params: { topic }, data: { topic, topics: [topic] } });
+        return { content: [{ type: "text" as const, text }] };
       }
 
       // Return all topics
       const text = Object.entries(TOPICS).map(([, v]) => v).join("\n\n---\n\n");
-      return dual(text, { tool: "get_protocol_context", ts, params: {}, data: { topics: ALL_TOPIC_NAMES } });
+      return { content: [{ type: "text" as const, text }] };
     }
   );
 }

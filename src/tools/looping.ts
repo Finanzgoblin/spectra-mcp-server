@@ -16,11 +16,7 @@ import {
   cumulativeLeverageAtLoop,
   estimateLoopingEntryCost,
   estimatePriceImpact,
-  slimPt,
-  slimPool,
-  slimMorphoMarket,
 } from "../formatters.js";
-import { dual } from "./dual.js";
 
 export function register(server: McpServer): void {
   server.tool(
@@ -79,24 +75,14 @@ discover the best looping opportunities across all chains with capital-aware siz
         const pt = parsePtResponse(data);
 
         if (!pt) {
-          const ts = Math.floor(Date.now() / 1000);
-          return dual(`No PT found at ${pt_address} on ${chain}`, {
-            tool: "get_looping_strategy",
-            ts,
-            params: { chain, pt_address, morpho_ltv, borrow_rate, max_loops },
-            data: { pt: null },
-          });
+          const text = `No PT found at ${pt_address} on ${chain}`;
+          return { content: [{ type: "text" as const, text }] };
         }
 
         const pool = pt.pools?.[0];
         if (!pool) {
-          const ts = Math.floor(Date.now() / 1000);
-          return dual(`PT has no active pool`, {
-            tool: "get_looping_strategy",
-            ts,
-            params: { chain, pt_address, morpho_ltv, borrow_rate, max_loops },
-            data: { pt, pool: null },
-          });
+          const text = `PT has no active pool`;
+          return { content: [{ type: "text" as const, text }] };
         }
 
         // Try to auto-detect Morpho market for this PT
@@ -251,26 +237,11 @@ discover the best looping opportunities across all chains with capital-aware siz
         lines.push(`     cumulative entry cost increases with capital size and loop count.`);
         lines.push(`     This is NOT financial advice. Do your own research.`);
 
-        const ts = Math.floor(Date.now() / 1000);
-        return dual(lines.join("\n"), {
-          tool: "get_looping_strategy",
-          ts,
-          params: { chain, pt_address, morpho_ltv, borrow_rate, max_loops },
-          data: {
-            pt: slimPt(pt),
-            pool: slimPool(pool),
-            morphoMarket: morphoMarket ? slimMorphoMarket(morphoMarket) : null,
-            morphoDetected,
-            effectiveLtv,
-            effectiveBorrowRate,
-            baseApy,
-            bestLoop,
-            bestNet,
-            rows,
-          },
-        });
+        const text = lines.join("\n");
+        return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
-        return dual(`Error calculating loop strategy: ${e.message}`, { tool: "get_looping_strategy", ts: Math.floor(Date.now() / 1000), params: { chain, pt_address, morpho_ltv, borrow_rate, max_loops }, data: { error: e.message } }, { isError: true });
+        const text = `Error calculating loop strategy: ${e.message}`;
+        return { content: [{ type: "text" as const, text }], isError: true };
       }
     }
   );
