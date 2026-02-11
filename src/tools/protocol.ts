@@ -85,7 +85,7 @@ Use get_ve_info for live veSPECTRA data and boost calculations.`,
           data: { circulating, total, lockRate, weeklyEmissions, weeksSinceStart },
         });
       } catch (e: any) {
-        return { content: [{ type: "text", text: `Error fetching protocol stats: ${e.message}` }], isError: true };
+        return dual(`Error fetching protocol stats: ${e.message}`, { tool: "get_protocol_stats", ts: Math.floor(Date.now() / 1000), params: {}, data: { error: e.message } }, { isError: true });
       }
     }
   );

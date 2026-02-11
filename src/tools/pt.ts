@@ -63,7 +63,7 @@ Use get_pool_activity to see trading patterns on this pool.`,
         const ts = Math.floor(Date.now() / 1000);
         return dual(summary, { tool: "get_pt_details", ts, params: { chain, pt_address }, data: { pt } });
       } catch (e: any) {
-        return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+        return dual(`Error: ${e.message}`, { tool: "get_pt_details", ts: Math.floor(Date.now() / 1000), params: { chain, pt_address }, data: { error: e.message } }, { isError: true });
       }
     }
   );
@@ -145,7 +145,7 @@ Use get_pool_activity on a specific pool to see recent trading patterns.`,
         const ts = Math.floor(Date.now() / 1000);
         return dual(header + "\n" + summaries.join("\n\n"), { tool: "list_pools", ts, params: { chain, sort_by, min_tvl_usd }, data: { pools: expanded } });
       } catch (e: any) {
-        return { content: [{ type: "text", text: `Error listing pools: ${e.message}` }], isError: true };
+        return dual(`Error listing pools: ${e.message}`, { tool: "list_pools", ts: Math.floor(Date.now() / 1000), params: { chain, sort_by, min_tvl_usd }, data: { error: e.message } }, { isError: true });
       }
     }
   );
@@ -216,7 +216,7 @@ instead — it's the strategy tool for deploying real capital.`,
         const ts = Math.floor(Date.now() / 1000);
         return dual(header + chainWarning + "\n" + summaries.join("\n\n"), { tool: "get_best_fixed_yields", ts, params: { asset_filter, min_tvl_usd, min_liquidity_usd, top_n }, data: { opportunities: top, failedChains } });
       } catch (e: any) {
-        return { content: [{ type: "text", text: `Error scanning yields: ${e.message}` }], isError: true };
+        return dual(`Error scanning yields: ${e.message}`, { tool: "get_best_fixed_yields", ts: Math.floor(Date.now() / 1000), params: { asset_filter, min_tvl_usd, min_liquidity_usd, top_n }, data: { error: e.message } }, { isError: true });
       }
     }
   );
@@ -355,7 +355,7 @@ check your current positions. Use scan_opportunities for multi-chain comparison.
         const ts = Math.floor(Date.now() / 1000);
         return dual(lines.join("\n"), { tool: "compare_yield", ts, params: { chain, pt_address, ve_spectra_balance, capital_usd }, data: { pt, pool, fixedApy, variableApr, spread, maturityDays, effectiveFixedApy, lpData, boostInfo } });
       } catch (e: any) {
-        return { content: [{ type: "text", text: `Error comparing yields: ${e.message}` }], isError: true };
+        return dual(`Error comparing yields: ${e.message}`, { tool: "compare_yield", ts: Math.floor(Date.now() / 1000), params: { chain, pt_address, ve_spectra_balance, capital_usd }, data: { error: e.message } }, { isError: true });
       }
     }
   );

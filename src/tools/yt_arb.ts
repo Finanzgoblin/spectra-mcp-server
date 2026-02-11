@@ -293,7 +293,7 @@ Use get_pool_activity to monitor recent trading patterns in the target pool.`,
           data: { opportunities: topOpps, failedChains },
         });
       } catch (e: any) {
-        return { content: [{ type: "text", text: `Error scanning YT arbitrage: ${e.message}` }], isError: true };
+        return dual(`Error scanning YT arbitrage: ${e.message}`, { tool: "scan_yt_arbitrage", ts: Math.floor(Date.now() / 1000), params: { capital_usd, min_spread_pct, asset_filter, min_tvl_usd, min_liquidity_usd, max_price_impact_pct, top_n: rawTopN, ve_spectra_balance }, data: { error: e.message } }, { isError: true });
       }
     }
   );

@@ -268,7 +268,7 @@ discover the best looping opportunities across all chains with capital-aware siz
           },
         });
       } catch (e: any) {
-        return { content: [{ type: "text", text: `Error calculating loop strategy: ${e.message}` }], isError: true };
+        return dual(`Error calculating loop strategy: ${e.message}`, { tool: "get_looping_strategy", ts: Math.floor(Date.now() / 1000), params: { chain, pt_address, morpho_ltv, borrow_rate, max_loops }, data: { error: e.message } }, { isError: true });
       }
     }
   );

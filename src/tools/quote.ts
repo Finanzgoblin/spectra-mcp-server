@@ -87,7 +87,7 @@ makes sense relative to variable rates.`,
         const params = { chain, pt_address, amount, side, slippage_tolerance };
         return dual(formatTradeQuote(quote), { tool: "quote_trade", ts, params, data: { quote } });
       } catch (e: any) {
-        return { content: [{ type: "text", text: `Error quoting trade: ${e.message}` }], isError: true };
+        return dual(`Error quoting trade: ${e.message}`, { tool: "quote_trade", ts: Math.floor(Date.now() / 1000), params: { chain, pt_address, amount, side, slippage_tolerance }, data: { error: e.message } }, { isError: true });
       }
     }
   );

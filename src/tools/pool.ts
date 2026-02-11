@@ -121,7 +121,7 @@ Use quote_trade to estimate price impact for a specific trade size.`,
           data: { entries, totalBuy, totalSell, totalVolume, recentBuy, recentSell, recentTotal, rangeDays, activeDays },
         });
       } catch (e: any) {
-        return { content: [{ type: "text", text: `Error fetching pool volume: ${e.message}` }], isError: true };
+        return dual(`Error fetching pool volume: ${e.message}`, { tool: "get_pool_volume", ts: Math.floor(Date.now() / 1000), params: { chain, pool_address }, data: { error: e.message } }, { isError: true });
       }
     }
   );
@@ -342,7 +342,7 @@ addresses from Address Concentration, and compare_yield or get_pt_details for ra
           data: { entries: shown, allEntries: entries, typeCounts, addressStats, totalValue },
         });
       } catch (e: any) {
-        return { content: [{ type: "text", text: `Error fetching pool activity: ${e.message}` }], isError: true };
+        return dual(`Error fetching pool activity: ${e.message}`, { tool: "get_pool_activity", ts: Math.floor(Date.now() / 1000), params: { chain, pool_address, type_filter, limit }, data: { error: e.message } }, { isError: true });
       }
     }
   );

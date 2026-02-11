@@ -177,7 +177,7 @@ price quote without portfolio context.`,
 
         return dual(text, { tool, ts, params, data: { before, after, quote, isNewPosition, sellExceedsBalance } });
       } catch (e: any) {
-        return { content: [{ type: "text", text: `Error simulating trade: ${e.message}` }], isError: true };
+        return dual(`Error simulating trade: ${e.message}`, { tool: "simulate_portfolio_after_trade", ts: Math.floor(Date.now() / 1000), params: { chain, pt_address, address, amount, side, slippage_tolerance }, data: { error: e.message } }, { isError: true });
       }
     }
   );

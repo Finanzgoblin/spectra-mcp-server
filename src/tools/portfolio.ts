@@ -103,7 +103,7 @@ Protocol context:
           data: { positions: allPositions, totalPortfolioValue, failedChains },
         });
       } catch (e: any) {
-        return { content: [{ type: "text", text: `Error fetching portfolio: ${e.message}` }], isError: true };
+        return dual(`Error fetching portfolio: ${e.message}`, { tool: "get_portfolio", ts: Math.floor(Date.now() / 1000), params: { address, chain }, data: { error: e.message } }, { isError: true });
       }
     }
   );

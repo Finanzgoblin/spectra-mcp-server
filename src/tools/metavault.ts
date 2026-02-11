@@ -254,7 +254,7 @@ will be added.`,
         };
         return dual(text, { tool, ts, params, data });
       } catch (e: any) {
-        return { content: [{ type: "text", text: `Error modeling MetaVault strategy: ${e.message}` }], isError: true };
+        return dual(`Error modeling MetaVault strategy: ${e.message}`, { tool: "model_metavault_strategy", ts: Math.floor(Date.now() / 1000), params: { base_apy, yt_compounding_apy, curator_fee_pct, morpho_ltv, borrow_rate, max_loops, capital_usd, external_deposits_usd, days_to_maturity, compare_pt_apy }, data: { error: e.message } }, { isError: true });
       }
     }
   );

@@ -15,11 +15,12 @@ export interface DualEnvelope<T = unknown> {
   data: T;
 }
 
-export function dual<T>(text: string, envelope: DualEnvelope<T>) {
+export function dual<T>(text: string, envelope: DualEnvelope<T>, opts?: { isError?: boolean }) {
   return {
     content: [
       { type: "text" as const, text },
       { type: "text" as const, text: JSON.stringify(envelope) },
     ],
+    ...(opts?.isError ? { isError: true as const } : {}),
   };
 }

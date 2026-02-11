@@ -65,7 +65,7 @@ Use scan_opportunities for automated cross-chain looping discovery.`,
           const network = resolveNetwork(chain);
           const morphoId = MORPHO_CHAIN_IDS[network];
           if (!morphoId) {
-            return { content: [{ type: "text", text: `No Morpho PT markets are currently tracked for ${chain}. Morpho PT markets exist on: ${Object.keys(MORPHO_CHAIN_IDS).join(", ")}.` }], isError: true };
+            return dual(`No Morpho PT markets are currently tracked for ${chain}. Morpho PT markets exist on: ${Object.keys(MORPHO_CHAIN_IDS).join(", ")}.`, { tool: "get_morpho_markets", ts: Math.floor(Date.now() / 1000), params: { chain, pt_symbol_filter, min_supply_usd, sort_by, top_n }, data: { error: `No Morpho PT markets tracked for ${chain}` } }, { isError: true });
           }
           chainIds = [morphoId];
         } else {
@@ -129,7 +129,7 @@ Use scan_opportunities for automated cross-chain looping discovery.`,
         const ts = Math.floor(Date.now() / 1000);
         return dual(header + "\n" + summaries.join("\n\n"), { tool: "get_morpho_markets", ts, params: { chain, pt_symbol_filter, min_supply_usd, sort_by, top_n }, data: { markets: items, total } });
       } catch (e: any) {
-        return { content: [{ type: "text", text: `Error fetching Morpho markets: ${e.message}` }], isError: true };
+        return dual(`Error fetching Morpho markets: ${e.message}`, { tool: "get_morpho_markets", ts: Math.floor(Date.now() / 1000), params: { chain, pt_symbol_filter, min_supply_usd, sort_by, top_n }, data: { error: e.message } }, { isError: true });
       }
     }
   );
@@ -196,7 +196,7 @@ Use get_looping_strategy with these rates to calculate leveraged yield projectio
         const ts = Math.floor(Date.now() / 1000);
         return dual(lines.join("\n"), { tool: "get_morpho_rate", ts, params: { chain, market_key }, data: { market } });
       } catch (e: any) {
-        return { content: [{ type: "text", text: `Error fetching Morpho rate: ${e.message}` }], isError: true };
+        return dual(`Error fetching Morpho rate: ${e.message}`, { tool: "get_morpho_rate", ts: Math.floor(Date.now() / 1000), params: { chain, market_key }, data: { error: e.message } }, { isError: true });
       }
     }
   );

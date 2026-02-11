@@ -156,7 +156,7 @@ pool at a given deposit size.`,
           data: { veTotalSupply, boostInfo: computedBoost, pt: ptResult, pool: poolResult },
         });
       } catch (e: any) {
-        return { content: [{ type: "text", text: `Error fetching veSPECTRA info: ${e.message}` }], isError: true };
+        return dual(`Error fetching veSPECTRA info: ${e.message}`, { tool: "get_ve_info", ts: Math.floor(Date.now() / 1000), params: { ve_spectra_balance, capital_usd, chain, pt_address }, data: { error: e.message } }, { isError: true });
       }
     }
   );

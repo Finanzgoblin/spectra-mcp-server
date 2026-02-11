@@ -344,7 +344,7 @@ Use get_pool_activity and get_portfolio to investigate trading patterns and posi
           data: { opportunities: topOpps, failedChains },
         });
       } catch (e: any) {
-        return { content: [{ type: "text", text: `Error scanning opportunities: ${e.message}` }], isError: true };
+        return dual(`Error scanning opportunities: ${e.message}`, { tool: "scan_opportunities", ts: Math.floor(Date.now() / 1000), params: { capital_usd, asset_filter, min_tvl_usd, min_liquidity_usd, include_looping, max_price_impact_pct, top_n: rawTopN, ve_spectra_balance }, data: { error: e.message } }, { isError: true });
       }
     }
   );
