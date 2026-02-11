@@ -9,7 +9,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork, VE_SPECTRA } from "../config.js";
 import { fetchVeTotalSupply, fetchSpectra } from "../api.js";
-import { formatUsd, formatPct, parsePtResponse, computeSpectraBoost } from "../formatters.js";
+import { formatUsd, formatPct, parsePtResponse, computeSpectraBoost, slimPt, slimPool } from "../formatters.js";
 import { dual } from "./dual.js";
 
 export function register(server: McpServer): void {
@@ -153,7 +153,7 @@ pool at a given deposit size.`,
           tool: "get_ve_info",
           ts,
           params: { ve_spectra_balance, capital_usd, chain, pt_address },
-          data: { veTotalSupply, boostInfo: computedBoost, pt: ptResult, pool: poolResult },
+          data: { veTotalSupply, boostInfo: computedBoost, pt: ptResult ? slimPt(ptResult) : null, pool: poolResult ? slimPool(poolResult) : null },
         });
       } catch (e: any) {
         return dual(`Error fetching veSPECTRA info: ${e.message}`, { tool: "get_ve_info", ts: Math.floor(Date.now() / 1000), params: { ve_spectra_balance, capital_usd, chain, pt_address }, data: { error: e.message } }, { isError: true });

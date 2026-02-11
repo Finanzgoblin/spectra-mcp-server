@@ -2,7 +2,7 @@
 
 Makes [Spectra Finance](https://spectra.finance) discoverable and usable by AI agents via the [Model Context Protocol](https://modelcontextprotocol.io).
 
-18 tools · 10 chains · read-only · zero dependencies on web3 libraries
+19 tools · 10 chains · read-only · zero dependencies on web3 libraries
 
 ## What This Does
 
@@ -22,8 +22,9 @@ Any AI agent (Claude, GPT, open-source) that supports MCP can now:
 - **Model** MetaVault "double loop" strategies for curators — vault compounding + Morpho leverage with curator economics
 - **Query** Morpho lending markets for PT collateral opportunities
 - **Query** protocol stats, tokenomics, and governance data
+- **Learn** protocol mechanics on-demand via `get_protocol_context` (PT/YT identity, Router batching, minting)
 
-The agent doesn't need to understand PT/YT mechanics -- it just calls `scan_opportunities` with its capital size and gets ranked, actionable data.
+The agent doesn't need to understand PT/YT mechanics -- it just calls `scan_opportunities` with its capital size and gets ranked, actionable data. If it needs to understand *why* something works that way, it calls `get_protocol_context`.
 
 ## Open Emergence Architecture
 
@@ -32,8 +33,9 @@ The server is designed so that AI agents can **discover novel strategies without
 ### The Three Layers
 
 ```
-Layer 1: Resource Context (spectra-overview, curator-strategy-guide)
+Layer 1: Protocol Context (get_protocol_context tool + resources)
   → Teaches the "physics" of the protocol: PT/YT identity, Router batching, minting
+  → Available as a callable tool (on-demand) and as MCP resources
   → Static knowledge — what CAN happen, not what IS happening
 
 Layer 2: Tool Descriptions (every tool's description string)
@@ -71,8 +73,8 @@ This was validated: a subagent spawned with zero priming correctly identified a 
 
 | Tool | Description |
 |------|-------------|
-| `get_best_fixed_yields` | Scan ALL chains for top fixed-rate opportunities. The main discovery tool. |
-| `list_pools` | List all active pools on a specific chain, sorted by APY/TVL/maturity. |
+| `get_best_fixed_yields` | Scan ALL chains for top fixed-rate opportunities. The main discovery tool. Supports `compact` mode. |
+| `list_pools` | List all active pools on a specific chain, sorted by APY/TVL/maturity. Supports `compact` mode. |
 | `get_pt_details` | Deep dive on a specific Principal Token -- full data. |
 | `compare_yield` | Fixed (PT) vs. variable (IBT) yield comparison with recommendation. |
 | `get_looping_strategy` | Calculate leveraged yield via PT + Morpho looping with effective liquidation margins. Auto-fetches live Morpho rates when a matching market exists. |
@@ -81,14 +83,15 @@ This was validated: a subagent spawned with zero priming correctly identified a 
 | `get_protocol_stats` | SPECTRA tokenomics, emissions schedule, fee distribution, governance info. |
 | `get_supported_chains` | List available networks (10 chains). |
 | `get_portfolio` | Wallet positions across PT, YT, and LP with USD values and claimable yield. |
-| `get_pool_volume` | Historical buy/sell trading volume for a specific pool. |
-| `get_pool_activity` | Recent individual transactions (buys, sells, liquidity events) with filtering. |
+| `get_pool_volume` | Historical buy/sell trading volume for a specific pool. Accepts PT address or pool address. |
+| `get_pool_activity` | Recent individual transactions (buys, sells, liquidity events) with filtering. Accepts PT address or pool address. |
 | `quote_trade` | Estimate expected output, price impact (conservative upper bound), and minOut for a PT swap. |
 | `simulate_portfolio_after_trade` | Preview portfolio BEFORE/AFTER a hypothetical PT trade with deltas and warnings. |
-| `scan_opportunities` | Capital-aware opportunity scanner: price impact at your size, effective APY, Morpho looping, pool capacity. The strategy tool for autonomous agents. |
-| `scan_yt_arbitrage` | YT rate vs IBT rate arbitrage scanner -- finds pools where YT is mispriced relative to underlying yield. |
+| `scan_opportunities` | Capital-aware opportunity scanner: price impact at your size, effective APY, Morpho looping, pool capacity. Supports `compact` mode. |
+| `scan_yt_arbitrage` | YT rate vs IBT rate arbitrage scanner -- finds pools where YT is mispriced relative to underlying yield. Supports `compact` mode. |
 | `get_ve_info` | Live veSPECTRA data from Base chain (total supply via on-chain read) + boost calculator with per-pool multipliers. |
 | `model_metavault_strategy` | MetaVault "double loop" strategy modeler for curators. Models YT→LP compounding + Morpho leverage with curator economics (fee revenue, TVL creation, effective ROI). |
+| `get_protocol_context` | Returns protocol mechanics reference (PT/YT identity, Router batching, minting). Callable on-demand instead of always in context. |
 
 ## Supported Chains
 
@@ -139,10 +142,10 @@ npm install
 # Build
 npm run build
 
-# Verify (runs 298 tests against live API)
+# Verify (runs 300 tests against live API)
 npm test
 
-# Schema-only tests (no network required, 96 tests)
+# Schema-only tests (no network required, 98 tests)
 npm run test:offline
 ```
 
@@ -220,15 +223,18 @@ src/
   config.ts         Constants, chain config, Zod schemas, protocol parameters, veSPECTRA constants
   types.ts          TypeScript interfaces (SpectraPt, MorphoMarket, ScanOpportunity, etc.)
   api.ts            Fetch helpers with retry, GraphQL sanitization, Morpho batch lookup,
-                      veSPECTRA RPC with Promise-based dedup cache
+                      veSPECTRA RPC with Promise-based dedup cache, 30s TTL pool data cache,
+                      API response validation at system boundary
   formatters.ts     Formatting, BigInt LLTV parsing, closed-form leverage math,
                       price impact, fractional-day maturity, boost computation,
-                      Layer 3 output hints (Position Shape, LP APY breakdown)
+                      slim envelope helpers, Layer 3 output hints (Position Shape, LP APY breakdown)
   tools/            Layer 2: each tool description teaches domain-specific mechanics
+    dual.ts         Dual-layer response helper (Block 0: human text, Block 1: JSON envelope)
+    context.ts      get_protocol_context (Layer 1 protocol mechanics, callable on-demand)
     pt.ts           get_pt_details, list_pools, get_best_fixed_yields, compare_yield
     looping.ts      get_looping_strategy
     portfolio.ts    get_portfolio (balance ratio strategy signals, cross-ref nudges)
-    pool.ts         get_pool_volume, get_pool_activity (Router batching mechanics, ⚠ hints)
+    pool.ts         get_pool_volume, get_pool_activity (PT address resolution, Router batching, ⚠ hints)
     morpho.ts       get_morpho_markets, get_morpho_rate
     protocol.ts     get_protocol_stats, get_supported_chains
     quote.ts        quote_trade
@@ -239,9 +245,17 @@ src/
     metavault.ts    model_metavault_strategy
 ```
 
-Each tool file exports a `register(server)` function. To add a new tool: create `src/tools/newtool.ts`, export `register()`, import and call it in `index.ts`.
+Each tool file exports a `register(server)` function. To add a new tool: create `src/tools/newtool.ts`, export `register()`, import and call it in `index.ts`. Use `dual()` from `tools/dual.ts` to return dual-layer responses (human text + JSON envelope).
 
 All address parameters are validated (`0x` + 40 hex chars). All API calls have a 15-second timeout with automatic retry on transient failures (5xx, ETIMEDOUT, ENETUNREACH, ENOTFOUND). Cross-chain scans use `Promise.allSettled` so one chain failing doesn't block results from others. GraphQL inputs are sanitized to prevent injection. All error returns use MCP's `isError: true` flag for proper error signaling to agents.
+
+### Dual-Layer Responses
+
+Every tool returns two MCP content blocks:
+- **Block 0 (text/plain):** Human-readable analysis formatted for display
+- **Block 1 (application/json):** Structured envelope with `tool`, `ts`, `params`, and `data` fields
+
+The JSON envelope uses slim interfaces (computed metrics only, no nested API objects) to minimize token cost. Agents can consume either layer depending on whether they need display text or structured data.
 
 ### Type Safety
 
@@ -265,23 +279,26 @@ All address parameters are validated (`0x` + 40 hex chars). All API calls have a
 ### Resilience
 
 - **Retry logic**: Covers `ECONNRESET`, `ETIMEDOUT`, `ENETUNREACH`, `ENOTFOUND`, `EPIPE`, `EHOSTUNREACH`, `EAI_AGAIN`, and `UND_ERR_SOCKET` errors
+- **Pool data cache**: 30-second TTL per-chain with inflight request deduplication — repeated scans within 30s serve cached data
+- **API validation**: `validatePtEntries()` filters malformed API responses at system boundary (validates address, maturity, name fields)
 - **veSPECTRA cache**: Promise-based deduplication prevents duplicate RPC calls when multiple tools run concurrently (5-minute TTL)
 - **Morpho batch limit**: `first` parameter capped at `min(addresses * 3, 500)` to avoid GraphQL response limits
-- **MCP error signaling**: All 18 error catch blocks return `isError: true` so agents can distinguish errors from empty results
+- **MCP error signaling**: All 19 error catch blocks return `isError: true` so agents can distinguish errors from empty results
+- **PT address resolution**: Pool tools (`get_pool_volume`, `get_pool_activity`) accept either pool address or PT address and resolve automatically
 - **Error logging**: Catch blocks in Morpho lookups log to stderr instead of silently swallowing failures
 - **Graceful shutdown**: `server.close()` called before `process.exit()` on SIGTERM/SIGINT
 
 ## Testing
 
 ```bash
-# Full suite (298 tests, requires network)
+# Full suite (300 tests, requires network)
 npm test
 
-# Schema/registration only (96 tests, no network)
+# Schema/registration only (98 tests, no network)
 npm run test:offline
 ```
 
-298 of 298 tests pass (0 failures, 0 skipped).
+300 of 300 tests pass (0 failures, 0 skipped).
 
 The test suite dynamically discovers pool and PT addresses from the live API, so tests won't go stale when pools mature or are deprecated. Includes malformed-address negative tests to verify Zod validation rejects bad input.
 
@@ -291,8 +308,8 @@ This server wraps these endpoints:
 
 | Endpoint | Used By |
 |----------|---------|
-| `GET /v1/{chain}/pools` | `list_pools`, `get_best_fixed_yields`, `scan_opportunities` |
-| `GET /v1/{chain}/pt/{address}` | `get_pt_details`, `compare_yield`, `get_looping_strategy`, `quote_trade`, `simulate_portfolio_after_trade` |
+| `GET /v1/{chain}/pools` | `list_pools`, `get_best_fixed_yields`, `scan_opportunities`, `scan_yt_arbitrage` (30s TTL cache) |
+| `GET /v1/{chain}/pt/{address}` | `get_pt_details`, `compare_yield`, `get_looping_strategy`, `quote_trade`, `simulate_portfolio_after_trade`, `get_pool_volume`/`get_pool_activity` (PT→pool resolution) |
 | `GET /v1/{chain}/portfolio/{wallet}` | `get_portfolio`, `simulate_portfolio_after_trade` |
 | `GET /v1/{chain}/pools/{pool}/volume` | `get_pool_volume` |
 | `GET /v1/{chain}/pools/{pool}/activity` | `get_pool_activity` |

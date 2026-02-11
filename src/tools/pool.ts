@@ -5,9 +5,26 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork } from "../config.js";
+import type { SpectraPt } from "../types.js";
 import { fetchSpectra } from "../api.js";
-import { formatUsd, formatDate, formatActivityType } from "../formatters.js";
+import { formatUsd, formatDate, formatActivityType, parsePtResponse } from "../formatters.js";
 import { dual } from "./dual.js";
+
+/**
+ * Resolve a PT address to its Curve pool address.
+ * Fetches the PT details and extracts the first pool's address.
+ * Returns null if the PT has no pools or doesn't exist.
+ */
+async function resolvePoolAddressFromPt(network: string, address: string): Promise<string | null> {
+  try {
+    const data = await fetchSpectra(`/${network}/pt/${address}`) as any;
+    const pt = parsePtResponse(data);
+    if (!pt?.pools?.[0]?.address) return null;
+    return pt.pools[0].address;
+  } catch {
+    return null;
+  }
+}
 
 export function register(server: McpServer): void {
   // ===========================================================================
@@ -28,17 +45,28 @@ For individual transaction details and whale activity, use get_pool_activity ins
 Use quote_trade to estimate price impact for a specific trade size.`,
     {
       chain: CHAIN_ENUM.describe("The blockchain network"),
-      pool_address: EVM_ADDRESS.describe("The Curve pool contract address (0x...). This is the pool address, not the PT address -- use list_pools to find it."),
+      pool_address: EVM_ADDRESS.describe("The Curve pool address (0x...) OR a PT address. If a PT address is given, it will be resolved to the corresponding pool automatically."),
     },
     async ({ chain, pool_address }) => {
       try {
         const network = resolveNetwork(chain);
-        const raw = await fetchSpectra(`/${network}/pools/${pool_address}/volume`) as any;
-        const entries: Array<{ timestamp: number; buyUsd: number; sellUsd: number }> =
+        let effectivePoolAddr = pool_address;
+        let raw = await fetchSpectra(`/${network}/pools/${effectivePoolAddr}/volume`) as any;
+        let entries: Array<{ timestamp: number; buyUsd: number; sellUsd: number }> =
           Array.isArray(raw) ? raw : raw?.data || [];
 
+        // If empty, the address might be a PT address — try resolving
         if (entries.length === 0) {
-          const text = `No volume data found for pool ${pool_address} on ${chain}. Verify this is a valid Curve pool address (not a PT address).`;
+          const resolved = await resolvePoolAddressFromPt(network, pool_address);
+          if (resolved && resolved.toLowerCase() !== pool_address.toLowerCase()) {
+            effectivePoolAddr = resolved;
+            raw = await fetchSpectra(`/${network}/pools/${effectivePoolAddr}/volume`) as any;
+            entries = Array.isArray(raw) ? raw : raw?.data || [];
+          }
+        }
+
+        if (entries.length === 0) {
+          const text = `No volume data found for ${pool_address} on ${chain}. Verify this is a valid Curve pool or PT address.`;
           return dual(text, {
             tool: "get_pool_volume",
             ts: Math.floor(Date.now() / 1000),
@@ -78,9 +106,12 @@ Use quote_trade to estimate price impact for a specific trade size.`,
         // Non-zero activity days
         const activeDays = entries.filter((e) => (e.buyUsd || 0) > 0 || (e.sellUsd || 0) > 0).length;
 
+        const resolvedNote = effectivePoolAddr.toLowerCase() !== pool_address.toLowerCase()
+          ? `  (Resolved from PT: ${pool_address})\n` : "";
         const lines = [
-          `-- Pool Volume: ${pool_address.slice(0, 10)}...${pool_address.slice(-6)} --`,
+          `-- Pool Volume: ${effectivePoolAddr.slice(0, 10)}...${effectivePoolAddr.slice(-6)} --`,
           `  Chain: ${chain}`,
+          ...(resolvedNote ? [resolvedNote.trimEnd()] : []),
           `  Data Range: ${rangeStart} -> ${rangeEnd} (${rangeDays} days, ${entries.length} data points)`,
           ``,
           `  All-Time Volume:`,
@@ -118,7 +149,7 @@ Use quote_trade to estimate price impact for a specific trade size.`,
           tool: "get_pool_volume",
           ts: Math.floor(Date.now() / 1000),
           params: { chain, pool_address },
-          data: { entries, totalBuy, totalSell, totalVolume, recentBuy, recentSell, recentTotal, rangeDays, activeDays },
+          data: { resolvedPoolAddress: effectivePoolAddr, entries, totalBuy, totalSell, totalVolume, recentBuy, recentSell, recentTotal, rangeDays, activeDays },
         });
       } catch (e: any) {
         return dual(`Error fetching pool volume: ${e.message}`, { tool: "get_pool_volume", ts: Math.floor(Date.now() / 1000), params: { chain, pool_address }, data: { error: e.message } }, { isError: true });
@@ -181,7 +212,7 @@ balances. Most analysis can be done without a block explorer — use get_portfol
 addresses from Address Concentration, and compare_yield or get_pt_details for rate context.`,
     {
       chain: CHAIN_ENUM.describe("The blockchain network"),
-      pool_address: EVM_ADDRESS.describe("The Curve pool contract address (0x...). Use list_pools to find it."),
+      pool_address: EVM_ADDRESS.describe("The Curve pool address (0x...) OR a PT address. If a PT address is given, it will be resolved to the corresponding pool automatically."),
       type_filter: z
         .enum(["BUY_PT", "SELL_PT", "AMM_ADD_LIQUIDITY", "AMM_REMOVE_LIQUIDITY", "all"])
         .default("all")
@@ -195,7 +226,8 @@ addresses from Address Concentration, and compare_yield or get_pt_details for ra
     async ({ chain, pool_address, type_filter, limit }) => {
       try {
         const network = resolveNetwork(chain);
-        const raw = await fetchSpectra(`/${network}/pools/${pool_address}/activity`) as any;
+        let effectivePoolAddr = pool_address;
+        let raw = await fetchSpectra(`/${network}/pools/${effectivePoolAddr}/activity`) as any;
         let entries: Array<{
           hash: string;
           timestamp: number;
@@ -205,13 +237,23 @@ addresses from Address Concentration, and compare_yield or get_pt_details for ra
           from: string;
         }> = Array.isArray(raw) ? raw : raw?.data || [];
 
+        // If empty, the address might be a PT address — try resolving
         if (entries.length === 0) {
-          const text = `No activity found for pool ${pool_address} on ${chain}. Verify this is a valid Curve pool address (not a PT address).`;
+          const resolved = await resolvePoolAddressFromPt(network, pool_address);
+          if (resolved && resolved.toLowerCase() !== pool_address.toLowerCase()) {
+            effectivePoolAddr = resolved;
+            raw = await fetchSpectra(`/${network}/pools/${effectivePoolAddr}/activity`) as any;
+            entries = Array.isArray(raw) ? raw : raw?.data || [];
+          }
+        }
+
+        if (entries.length === 0) {
+          const text = `No activity found for ${pool_address} on ${chain}. Verify this is a valid Curve pool or PT address.`;
           return dual(text, {
             tool: "get_pool_activity",
             ts: Math.floor(Date.now() / 1000),
             params: { chain, pool_address, type_filter, limit },
-            data: { entries: [], typeCounts: {}, addressStats: {} },
+            data: { resolvedPoolAddress: effectivePoolAddr, entries: [], typeCounts: {}, addressStats: {} },
           });
         }
 
@@ -264,9 +306,12 @@ addresses from Address Concentration, and compare_yield or get_pt_details for ra
         const oldest = entries[entries.length - 1];
         const newest = entries[0];
 
+        const resolvedNote = effectivePoolAddr.toLowerCase() !== pool_address.toLowerCase()
+          ? `  (Resolved from PT: ${pool_address})` : "";
         const lines = [
-          `-- Pool Activity: ${pool_address.slice(0, 10)}...${pool_address.slice(-6)} --`,
+          `-- Pool Activity: ${effectivePoolAddr.slice(0, 10)}...${effectivePoolAddr.slice(-6)} --`,
           `  Chain: ${chain}`,
+          ...(resolvedNote ? [resolvedNote] : []),
           `  Filter: ${type_filter === "all" ? "All types" : formatActivityType(type_filter)}`,
           `  Total Entries: ${entries.length}`,
           `  Time Range: ${formatDate(oldest.timestamp)} -> ${formatDate(newest.timestamp)}`,
@@ -339,7 +384,7 @@ addresses from Address Concentration, and compare_yield or get_pt_details for ra
           tool: "get_pool_activity",
           ts: Math.floor(Date.now() / 1000),
           params: { chain, pool_address, type_filter, limit },
-          data: { entries: shown, allEntries: entries, typeCounts, addressStats, totalValue },
+          data: { resolvedPoolAddress: effectivePoolAddr, entries: shown, typeCounts, addressStats, totalValue },
         });
       } catch (e: any) {
         return dual(`Error fetching pool activity: ${e.message}`, { tool: "get_pool_activity", ts: Math.floor(Date.now() / 1000), params: { chain, pool_address, type_filter, limit }, data: { error: e.message } }, { isError: true });

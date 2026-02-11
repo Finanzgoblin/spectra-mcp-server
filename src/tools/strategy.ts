@@ -30,8 +30,10 @@ import {
   formatMorphoLltv,
   cumulativeLeverageAtLoop,
   formatScanResults,
+  formatScanOpportunityCompact,
   extractLpApyBreakdown,
   computeSpectraBoost,
+  slimScanOpportunity,
 } from "../formatters.js";
 import type { BoostInfo } from "../formatters.js";
 import { dual } from "./dual.js";
@@ -40,7 +42,7 @@ export function register(server: McpServer): void {
   server.tool(
     "scan_opportunities",
     `Scan all Spectra chains for the best risk-adjusted yield opportunities, sized to
-your capital. This is the primary tool for autonomous DeFi agents.
+your capital.
 
 Unlike get_best_fixed_yields (which ranks by raw APY), this tool computes:
 - Entry price impact at YOUR capital size (a 50% APY pool with $10K liquidity is useless at $500K)
@@ -54,7 +56,6 @@ Ranking logic: when a profitable Morpho looping market exists, ranks by looping 
 with cumulative entry cost amortized; otherwise ranks by effective APY (base APY minus
 annualized entry cost).
 
-Use this when capital size matters — which is always for an economic agent.
 Use get_looping_strategy to drill into a specific opportunity's leverage details.
 Use get_pool_activity and get_portfolio to investigate trading patterns and positions.`,
     {
@@ -89,6 +90,10 @@ Use get_pool_activity and get_portfolio to investigate trading patterns and posi
         .number()
         .default(10)
         .describe("Number of top results to return (default 10, max 50)"),
+      compact: z
+        .boolean()
+        .default(false)
+        .describe("If true, return one-line-per-opportunity output (much shorter). Omit for full details."),
       ve_spectra_balance: z
         .number()
         .min(0)
@@ -104,6 +109,7 @@ Use get_pool_activity and get_portfolio to investigate trading patterns and posi
       max_price_impact_pct,
       top_n: rawTopN,
       ve_spectra_balance,
+      compact,
     }) => {
       const topN = Math.min(Math.max(1, rawTopN), 50);
 
@@ -320,12 +326,24 @@ Use get_pool_activity and get_portfolio to investigate trading patterns and posi
           return dual(msg, {
             tool: "scan_opportunities",
             ts,
-            params: { capital_usd, asset_filter, min_tvl_usd, min_liquidity_usd, include_looping, max_price_impact_pct, top_n: rawTopN, ve_spectra_balance },
+            params: { capital_usd, asset_filter, min_tvl_usd, min_liquidity_usd, include_looping, max_price_impact_pct, top_n: rawTopN, ve_spectra_balance, compact },
             data: { opportunities: [], failedChains },
           });
         }
 
-        const text = formatScanResults(
+        let text: string;
+        if (compact) {
+          const lines = [`== Opportunity Scan: ${formatUsd(capital_usd)} capital ==`];
+          if (asset_filter) lines.push(`  Asset: ${asset_filter}`);
+          lines.push(`  Results: ${topOpps.length} | Max Impact: ${formatPct(max_price_impact_pct)}`);
+          if (failedChains.length > 0) lines.push(`  Failed: ${failedChains.join(", ")}`);
+          lines.push(``);
+          for (let i = 0; i < topOpps.length; i++) {
+            lines.push(formatScanOpportunityCompact(topOpps[i], i + 1));
+          }
+          text = lines.join("\n");
+        } else {
+          text = formatScanResults(
           topOpps,
           capital_usd,
           max_price_impact_pct,
@@ -335,16 +353,17 @@ Use get_pool_activity and get_portfolio to investigate trading patterns and posi
           ve_spectra_balance,
           topBoostInfos,
         );
+        }
 
         const ts = Math.floor(Date.now() / 1000);
         return dual(text, {
           tool: "scan_opportunities",
           ts,
-          params: { capital_usd, asset_filter, min_tvl_usd, min_liquidity_usd, include_looping, max_price_impact_pct, top_n: rawTopN, ve_spectra_balance },
-          data: { opportunities: topOpps, failedChains },
+          params: { capital_usd, asset_filter, min_tvl_usd, min_liquidity_usd, include_looping, max_price_impact_pct, top_n: rawTopN, ve_spectra_balance, compact },
+          data: { opportunities: topOpps.map(slimScanOpportunity), failedChains },
         });
       } catch (e: any) {
-        return dual(`Error scanning opportunities: ${e.message}`, { tool: "scan_opportunities", ts: Math.floor(Date.now() / 1000), params: { capital_usd, asset_filter, min_tvl_usd, min_liquidity_usd, include_looping, max_price_impact_pct, top_n: rawTopN, ve_spectra_balance }, data: { error: e.message } }, { isError: true });
+        return dual(`Error scanning opportunities: ${e.message}`, { tool: "scan_opportunities", ts: Math.floor(Date.now() / 1000), params: { capital_usd, asset_filter, min_tvl_usd, min_liquidity_usd, include_looping, max_price_impact_pct, top_n: rawTopN, ve_spectra_balance, compact }, data: { error: e.message } }, { isError: true });
       }
     }
   );

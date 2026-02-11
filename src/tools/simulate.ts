@@ -15,6 +15,7 @@ import {
   buildQuoteFromPt,
   formatBalance,
   formatPortfolioSimulation,
+  slimPt,
 } from "../formatters.js";
 import { dual } from "./dual.js";
 
@@ -95,7 +96,7 @@ price quote without portfolio context.`,
         const pool = pt.pools?.[0];
         if (!pool) {
           const text = `No active pool for PT ${pt.name}`;
-          return dual(text, { tool, ts, params, data: { pt, pool: null } });
+          return dual(text, { tool, ts, params, data: { pt: slimPt(pt), pool: null } });
         }
 
         // Build the trade quote

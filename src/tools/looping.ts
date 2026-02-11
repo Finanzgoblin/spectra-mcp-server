@@ -16,6 +16,9 @@ import {
   cumulativeLeverageAtLoop,
   estimateLoopingEntryCost,
   estimatePriceImpact,
+  slimPt,
+  slimPool,
+  slimMorphoMarket,
 } from "../formatters.js";
 import { dual } from "./dual.js";
 
@@ -28,8 +31,7 @@ Strategy: Deposit asset -> mint PT on Spectra -> use PT as collateral on Morpho 
 borrow underlying -> deposit again -> repeat. Each loop multiplies yield exposure.
 
 Returns projected yields at different leverage levels (1x to max safe leverage),
-effective APY, and risk parameters. This is the "killer feature" -- the thing that
-makes Spectra yields significantly higher than competing protocols.
+effective APY, and risk parameters.
 
 Automatically fetches the live Morpho borrow rate and LLTV when a matching market
 exists. You can still override morpho_ltv and borrow_rate manually if needed.
@@ -255,9 +257,9 @@ discover the best looping opportunities across all chains with capital-aware siz
           ts,
           params: { chain, pt_address, morpho_ltv, borrow_rate, max_loops },
           data: {
-            pt,
-            pool,
-            morphoMarket: morphoMarket || null,
+            pt: slimPt(pt),
+            pool: slimPool(pool),
+            morphoMarket: morphoMarket ? slimMorphoMarket(morphoMarket) : null,
             morphoDetected,
             effectiveLtv,
             effectiveBorrowRate,

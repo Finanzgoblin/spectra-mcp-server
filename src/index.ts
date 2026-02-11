@@ -45,6 +45,7 @@ import { register as registerStrategy } from "./tools/strategy.js";
 import { register as registerYtArb } from "./tools/yt_arb.js";
 import { register as registerVe } from "./tools/ve.js";
 import { register as registerMetavault } from "./tools/metavault.js";
+import { register as registerContext } from "./tools/context.js";
 
 // =============================================================================
 // MCP Server Setup
@@ -68,6 +69,7 @@ registerStrategy(server);
 registerYtArb(server);
 registerVe(server);
 registerMetavault(server);
+registerContext(server);
 
 // =============================================================================
 // Resources: Protocol context for agents

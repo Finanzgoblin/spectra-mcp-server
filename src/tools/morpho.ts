@@ -7,7 +7,7 @@ import { z } from "zod";
 import { CHAIN_ENUM, MORPHO_CHAIN_IDS, resolveNetwork } from "../config.js";
 import type { MorphoMarket } from "../types.js";
 import { fetchMorpho, sanitizeGraphQL, MORPHO_MARKET_FIELDS, fetchSpectraPtAddresses } from "../api.js";
-import { formatPct, formatMorphoLltv, formatMorphoMarketSummary } from "../formatters.js";
+import { formatPct, formatMorphoLltv, formatMorphoMarketSummary, slimMorphoMarket } from "../formatters.js";
 import { dual } from "./dual.js";
 
 export function register(server: McpServer): void {
@@ -127,7 +127,7 @@ Use scan_opportunities for automated cross-chain looping discovery.`,
           `  Spectra: ${spectraCount} | Pendle/Other: ${items.length - spectraCount}\n`;
 
         const ts = Math.floor(Date.now() / 1000);
-        return dual(header + "\n" + summaries.join("\n\n"), { tool: "get_morpho_markets", ts, params: { chain, pt_symbol_filter, min_supply_usd, sort_by, top_n }, data: { markets: items, total } });
+        return dual(header + "\n" + summaries.join("\n\n"), { tool: "get_morpho_markets", ts, params: { chain, pt_symbol_filter, min_supply_usd, sort_by, top_n }, data: { markets: items.map(slimMorphoMarket), total } });
       } catch (e: any) {
         return dual(`Error fetching Morpho markets: ${e.message}`, { tool: "get_morpho_markets", ts: Math.floor(Date.now() / 1000), params: { chain, pt_symbol_filter, min_supply_usd, sort_by, top_n }, data: { error: e.message } }, { isError: true });
       }
@@ -194,7 +194,7 @@ Use get_looping_strategy with these rates to calculate leveraged yield projectio
         ];
 
         const ts = Math.floor(Date.now() / 1000);
-        return dual(lines.join("\n"), { tool: "get_morpho_rate", ts, params: { chain, market_key }, data: { market } });
+        return dual(lines.join("\n"), { tool: "get_morpho_rate", ts, params: { chain, market_key }, data: { market: slimMorphoMarket(market) } });
       } catch (e: any) {
         return dual(`Error fetching Morpho rate: ${e.message}`, { tool: "get_morpho_rate", ts: Math.floor(Date.now() / 1000), params: { chain, market_key }, data: { error: e.message } }, { isError: true });
       }
