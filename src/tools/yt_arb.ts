@@ -8,10 +8,6 @@
  *   - IBT APR > YT implied rate → YT is underpriced → BUY YT
  *   - IBT APR < YT implied rate → YT is overpriced  → SELL YT
  *
- * Humans don't exploit this because it requires comparing live variable rates
- * against derived implied rates across many pools and chains. For agents, it's
- * pure computation — scan, size, act.
- *
  * Uses the same 4-phase pipeline pattern as scan_opportunities:
  *   Phase 1: Parallel multi-chain fetch
  *   Phase 2: Per-pool YT arbitrage math
@@ -30,8 +26,10 @@ import {
   fractionalDaysToMaturity,
   estimatePriceImpact,
   formatYtArbitrageResults,
+  formatYtArbCompact,
   extractLpApyBreakdown,
   computeSpectraBoost,
+  slimYtArbOpportunity,
 } from "../formatters.js";
 import type { BoostInfo } from "../formatters.js";
 import { dual } from "./dual.js";
@@ -46,13 +44,6 @@ market price. When these diverge significantly, an arbitrage opportunity exists:
 
   - IBT APR > YT implied rate → YT is UNDERPRICED → Buy YT to capture excess yield
   - IBT APR < YT implied rate → YT is OVERPRICED → Sell YT (or mint PT+YT, sell YT)
-
-This is the "free lunch" that humans miss because:
-  - Requires comparing live variable rates vs derived implied rates across many pools
-  - Needs continuous monitoring — spreads open and close
-  - Must factor in slippage, gas, and time horizon
-
-For autonomous agents, this is pure computation. Scan, size, act.
 
 Returns opportunities ranked by absolute spread, with capital-aware entry sizing
 and break-even analysis.
@@ -102,6 +93,10 @@ Use get_pool_activity to monitor recent trading patterns in the target pool.`,
         .number()
         .default(10)
         .describe("Number of top results to return (default 10, max 50)"),
+      compact: z
+        .boolean()
+        .default(false)
+        .describe("If true, return one-line-per-opportunity output (much shorter). Omit for full details."),
       ve_spectra_balance: z
         .number()
         .min(0)
@@ -117,6 +112,7 @@ Use get_pool_activity to monitor recent trading patterns in the target pool.`,
       max_price_impact_pct,
       top_n: rawTopN,
       ve_spectra_balance,
+      compact,
     }) => {
       const topN = Math.min(Math.max(1, rawTopN), 50);
 
@@ -163,8 +159,6 @@ Use get_pool_activity to monitor recent trading patterns in the target pool.`,
           const ytPriceUnderlying = 1 - ptPriceUnderlying;
 
           // YT implied rate: what APR does the YT market price imply?
-          // ytPriceUnderlying represents the yield-per-unit the market expects over remaining time
-          // Use fractional days to avoid rounding artifacts near maturity
           const ytImpliedRate = ytPriceUnderlying * (365 / fracDays) * 100;
 
           // IBT current APR: what the IBT is actually earning right now
@@ -188,8 +182,6 @@ Use get_pool_activity to monitor recent trading patterns in the target pool.`,
           const capacityUsd = maxImpactFrac * 2 * poolLiqUsd;
 
           // Break-even: how many days must the spread persist to cover entry cost?
-          // Entry cost (as %) = impactPct. Spread earns spreadPct per year.
-          // breakEvenDays = (impactPct / absSpread) * 365
           const breakEvenDays = absSpread > 0
             ? (impactPct / absSpread) * 365
             : Infinity;
@@ -270,30 +262,43 @@ Use get_pool_activity to monitor recent trading patterns in the target pool.`,
           return dual(msg, {
             tool: "scan_yt_arbitrage",
             ts,
-            params: { capital_usd, min_spread_pct, asset_filter, min_tvl_usd, min_liquidity_usd, max_price_impact_pct, top_n: rawTopN, ve_spectra_balance },
+            params: { capital_usd, min_spread_pct, asset_filter, min_tvl_usd, min_liquidity_usd, max_price_impact_pct, top_n: rawTopN, ve_spectra_balance, compact },
             data: { opportunities: [], failedChains },
           });
         }
 
-        const text = formatYtArbitrageResults(
-          topOpps,
-          capital_usd,
-          min_spread_pct,
-          asset_filter,
-          failedChains,
-          ve_spectra_balance,
-          topBoostInfos,
-        );
+        let text: string;
+        if (compact) {
+          const lines = [`== YT Arbitrage Scan: ${formatUsd(capital_usd)} capital ==`];
+          if (asset_filter) lines.push(`  Asset: ${asset_filter}`);
+          lines.push(`  Results: ${topOpps.length} | Min Spread: ${formatPct(min_spread_pct)}`);
+          if (failedChains.length > 0) lines.push(`  Failed: ${failedChains.join(", ")}`);
+          lines.push(``);
+          for (let i = 0; i < topOpps.length; i++) {
+            lines.push(formatYtArbCompact(topOpps[i], i + 1));
+          }
+          text = lines.join("\n");
+        } else {
+          text = formatYtArbitrageResults(
+            topOpps,
+            capital_usd,
+            min_spread_pct,
+            asset_filter,
+            failedChains,
+            ve_spectra_balance,
+            topBoostInfos,
+          );
+        }
 
         const ts = Math.floor(Date.now() / 1000);
         return dual(text, {
           tool: "scan_yt_arbitrage",
           ts,
-          params: { capital_usd, min_spread_pct, asset_filter, min_tvl_usd, min_liquidity_usd, max_price_impact_pct, top_n: rawTopN, ve_spectra_balance },
-          data: { opportunities: topOpps, failedChains },
+          params: { capital_usd, min_spread_pct, asset_filter, min_tvl_usd, min_liquidity_usd, max_price_impact_pct, top_n: rawTopN, ve_spectra_balance, compact },
+          data: { opportunities: topOpps.map(slimYtArbOpportunity), failedChains },
         });
       } catch (e: any) {
-        return dual(`Error scanning YT arbitrage: ${e.message}`, { tool: "scan_yt_arbitrage", ts: Math.floor(Date.now() / 1000), params: { capital_usd, min_spread_pct, asset_filter, min_tvl_usd, min_liquidity_usd, max_price_impact_pct, top_n: rawTopN, ve_spectra_balance }, data: { error: e.message } }, { isError: true });
+        return dual(`Error scanning YT arbitrage: ${e.message}`, { tool: "scan_yt_arbitrage", ts: Math.floor(Date.now() / 1000), params: { capital_usd, min_spread_pct, asset_filter, min_tvl_usd, min_liquidity_usd, max_price_impact_pct, top_n: rawTopN, ve_spectra_balance, compact }, data: { error: e.message } }, { isError: true });
       }
     }
   );

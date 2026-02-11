@@ -6,7 +6,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { CHAIN_ENUM, EVM_ADDRESS, API_NETWORKS, resolveNetwork } from "../config.js";
 import type { SpectraPt } from "../types.js";
 import { fetchSpectra } from "../api.js";
-import { formatUsd, formatPositionSummary } from "../formatters.js";
+import { formatUsd, formatPositionSummary, slimPt } from "../formatters.js";
 import { dual } from "./dual.js";
 
 export function register(server: McpServer): void {
@@ -100,7 +100,7 @@ Protocol context:
           tool: "get_portfolio",
           ts: Math.floor(Date.now() / 1000),
           params: { address, chain },
-          data: { positions: allPositions, totalPortfolioValue, failedChains },
+          data: { positions: allPositions.map(p => ({ pt: slimPt(p.pos), chain: p.chain })), totalPortfolioValue, failedChains },
         });
       } catch (e: any) {
         return dual(`Error fetching portfolio: ${e.message}`, { tool: "get_portfolio", ts: Math.floor(Date.now() / 1000), params: { address, chain }, data: { error: e.message } }, { isError: true });
