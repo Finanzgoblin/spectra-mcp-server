@@ -8,7 +8,6 @@ import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork } from "../config.js";
 import type { SpectraPt } from "../types.js";
 import { fetchSpectra } from "../api.js";
 import { formatUsd, formatDate, formatActivityType, parsePtResponse } from "../formatters.js";
-import { dual } from "./dual.js";
 
 /**
  * Resolve a PT address to its Curve pool address.
@@ -67,12 +66,7 @@ Use quote_trade to estimate price impact for a specific trade size.`,
 
         if (entries.length === 0) {
           const text = `No volume data found for ${pool_address} on ${chain}. Verify this is a valid Curve pool or PT address.`;
-          return dual(text, {
-            tool: "get_pool_volume",
-            ts: Math.floor(Date.now() / 1000),
-            params: { chain, pool_address },
-            data: { entries: [], totalVolume: 0 },
-          });
+          return { content: [{ type: "text" as const, text }] };
         }
 
         // Aggregate totals
@@ -145,14 +139,11 @@ Use quote_trade to estimate price impact for a specific trade size.`,
           }
         }
 
-        return dual(lines.join("\n"), {
-          tool: "get_pool_volume",
-          ts: Math.floor(Date.now() / 1000),
-          params: { chain, pool_address },
-          data: { resolvedPoolAddress: effectivePoolAddr, entries, totalBuy, totalSell, totalVolume, recentBuy, recentSell, recentTotal, rangeDays, activeDays },
-        });
+        const text = lines.join("\n");
+        return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
-        return dual(`Error fetching pool volume: ${e.message}`, { tool: "get_pool_volume", ts: Math.floor(Date.now() / 1000), params: { chain, pool_address }, data: { error: e.message } }, { isError: true });
+        const text = `Error fetching pool volume: ${e.message}`;
+        return { content: [{ type: "text" as const, text }], isError: true };
       }
     }
   );
@@ -249,12 +240,7 @@ addresses from Address Concentration, and compare_yield or get_pt_details for ra
 
         if (entries.length === 0) {
           const text = `No activity found for ${pool_address} on ${chain}. Verify this is a valid Curve pool or PT address.`;
-          return dual(text, {
-            tool: "get_pool_activity",
-            ts: Math.floor(Date.now() / 1000),
-            params: { chain, pool_address, type_filter, limit },
-            data: { resolvedPoolAddress: effectivePoolAddr, entries: [], typeCounts: {}, addressStats: {} },
-          });
+          return { content: [{ type: "text" as const, text }] };
         }
 
         // Filter by type
@@ -265,12 +251,7 @@ addresses from Address Concentration, and compare_yield or get_pt_details for ra
         // Guard against empty array after filtering
         if (entries.length === 0) {
           const text = `No ${formatActivityType(type_filter)} activity found for pool ${pool_address} on ${chain}. The pool has activity of other types -- try type_filter "all".`;
-          return dual(text, {
-            tool: "get_pool_activity",
-            ts: Math.floor(Date.now() / 1000),
-            params: { chain, pool_address, type_filter, limit },
-            data: { entries: [], typeCounts: {}, addressStats: {} },
-          });
+          return { content: [{ type: "text" as const, text }] };
         }
 
         // Sort by timestamp descending (most recent first)
@@ -380,14 +361,11 @@ addresses from Address Concentration, and compare_yield or get_pt_details for ra
           lines.push(`  ${date.padEnd(12)} ${actType.padEnd(18)} ${value.padEnd(16)} ${from.padEnd(14)} ${hash}`);
         }
 
-        return dual(lines.join("\n"), {
-          tool: "get_pool_activity",
-          ts: Math.floor(Date.now() / 1000),
-          params: { chain, pool_address, type_filter, limit },
-          data: { resolvedPoolAddress: effectivePoolAddr, entries: shown, typeCounts, addressStats, totalValue },
-        });
+        const text = lines.join("\n");
+        return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
-        return dual(`Error fetching pool activity: ${e.message}`, { tool: "get_pool_activity", ts: Math.floor(Date.now() / 1000), params: { chain, pool_address, type_filter, limit }, data: { error: e.message } }, { isError: true });
+        const text = `Error fetching pool activity: ${e.message}`;
+        return { content: [{ type: "text" as const, text }], isError: true };
       }
     }
   );

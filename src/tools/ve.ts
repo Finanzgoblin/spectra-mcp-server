@@ -9,8 +9,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork, VE_SPECTRA } from "../config.js";
 import { fetchVeTotalSupply, fetchSpectra } from "../api.js";
-import { formatUsd, formatPct, parsePtResponse, computeSpectraBoost, slimPt, slimPool } from "../formatters.js";
-import { dual } from "./dual.js";
+import { formatUsd, formatPct, parsePtResponse, computeSpectraBoost } from "../formatters.js";
 
 export function register(server: McpServer): void {
   server.tool(
@@ -148,15 +147,11 @@ pool at a given deposit size.`,
         lines.push(`  Max boost condition: v/V >= d/D`);
         lines.push(`  In words: your share of total veSPECTRA must be >= your share of pool TVL.`);
 
-        const ts = Math.floor(Date.now() / 1000);
-        return dual(lines.join("\n"), {
-          tool: "get_ve_info",
-          ts,
-          params: { ve_spectra_balance, capital_usd, chain, pt_address },
-          data: { veTotalSupply, boostInfo: computedBoost, pt: ptResult ? slimPt(ptResult) : null, pool: poolResult ? slimPool(poolResult) : null },
-        });
+        const text = lines.join("\n");
+        return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
-        return dual(`Error fetching veSPECTRA info: ${e.message}`, { tool: "get_ve_info", ts: Math.floor(Date.now() / 1000), params: { ve_spectra_balance, capital_usd, chain, pt_address }, data: { error: e.message } }, { isError: true });
+        const text = `Error fetching veSPECTRA info: ${e.message}`;
+        return { content: [{ type: "text" as const, text }], isError: true };
       }
     }
   );

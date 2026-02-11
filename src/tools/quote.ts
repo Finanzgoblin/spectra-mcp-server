@@ -11,8 +11,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork } from "../config.js";
 import { fetchSpectra } from "../api.js";
-import { parsePtResponse, buildQuoteFromPt, formatTradeQuote, slimPt } from "../formatters.js";
-import { dual } from "./dual.js";
+import { parsePtResponse, buildQuoteFromPt, formatTradeQuote } from "../formatters.js";
 
 export function register(server: McpServer): void {
   server.tool(
@@ -63,31 +62,28 @@ makes sense relative to variable rates.`,
         const pt = parsePtResponse(data);
 
         if (!pt) {
-          const ts = Math.floor(Date.now() / 1000);
-          const params = { chain, pt_address, amount, side, slippage_tolerance };
-          return dual(`No PT found at ${pt_address} on ${chain}`, { tool: "quote_trade", ts, params, data: { pt: null } });
+          const text = `No PT found at ${pt_address} on ${chain}`;
+          return { content: [{ type: "text" as const, text }] };
         }
 
         const pool = pt.pools?.[0];
         if (!pool) {
-          const ts = Math.floor(Date.now() / 1000);
-          const params = { chain, pt_address, amount, side, slippage_tolerance };
-          return dual(`No active pool for PT ${pt.name}`, { tool: "quote_trade", ts, params, data: { pt: slimPt(pt), pool: null } });
+          const text = `No active pool for PT ${pt.name}`;
+          return { content: [{ type: "text" as const, text }] };
         }
 
         const quote = buildQuoteFromPt(pt, pool, amount, side, slippage_tolerance);
         if (!quote) {
           const ptName = pt.name || "PT";
-          const ts = Math.floor(Date.now() / 1000);
-          const params = { chain, pt_address, amount, side, slippage_tolerance };
-          return dual(`Cannot quote: PT price data unavailable for ${ptName}. The pool may have no liquidity.`, { tool: "quote_trade", ts, params, data: { quote: null } });
+          const text = `Cannot quote: PT price data unavailable for ${ptName}. The pool may have no liquidity.`;
+          return { content: [{ type: "text" as const, text }] };
         }
 
-        const ts = Math.floor(Date.now() / 1000);
-        const params = { chain, pt_address, amount, side, slippage_tolerance };
-        return dual(formatTradeQuote(quote), { tool: "quote_trade", ts, params, data: { quote } });
+        const text = formatTradeQuote(quote);
+        return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
-        return dual(`Error quoting trade: ${e.message}`, { tool: "quote_trade", ts: Math.floor(Date.now() / 1000), params: { chain, pt_address, amount, side, slippage_tolerance }, data: { error: e.message } }, { isError: true });
+        const text = `Error quoting trade: ${e.message}`;
+        return { content: [{ type: "text" as const, text }], isError: true };
       }
     }
   );

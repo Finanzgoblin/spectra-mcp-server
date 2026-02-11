@@ -29,10 +29,8 @@ import {
   formatYtArbCompact,
   extractLpApyBreakdown,
   computeSpectraBoost,
-  slimYtArbOpportunity,
 } from "../formatters.js";
 import type { BoostInfo } from "../formatters.js";
-import { dual } from "./dual.js";
 
 export function register(server: McpServer): void {
   server.tool(
@@ -258,13 +256,7 @@ Use get_pool_activity to monitor recent trading patterns in the target pool.`,
             ` Try lowering min_spread_pct or min_tvl_usd/min_liquidity_usd.` +
             (failedChains.length > 0 ? `\nNote: ${failedChains.length} chain(s) failed (${failedChains.join(", ")}).` : "");
 
-          const ts = Math.floor(Date.now() / 1000);
-          return dual(msg, {
-            tool: "scan_yt_arbitrage",
-            ts,
-            params: { capital_usd, min_spread_pct, asset_filter, min_tvl_usd, min_liquidity_usd, max_price_impact_pct, top_n: rawTopN, ve_spectra_balance, compact },
-            data: { opportunities: [], failedChains },
-          });
+          return { content: [{ type: "text" as const, text: msg }] };
         }
 
         let text: string;
@@ -290,15 +282,10 @@ Use get_pool_activity to monitor recent trading patterns in the target pool.`,
           );
         }
 
-        const ts = Math.floor(Date.now() / 1000);
-        return dual(text, {
-          tool: "scan_yt_arbitrage",
-          ts,
-          params: { capital_usd, min_spread_pct, asset_filter, min_tvl_usd, min_liquidity_usd, max_price_impact_pct, top_n: rawTopN, ve_spectra_balance, compact },
-          data: { opportunities: topOpps.map(slimYtArbOpportunity), failedChains },
-        });
+        return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
-        return dual(`Error scanning YT arbitrage: ${e.message}`, { tool: "scan_yt_arbitrage", ts: Math.floor(Date.now() / 1000), params: { capital_usd, min_spread_pct, asset_filter, min_tvl_usd, min_liquidity_usd, max_price_impact_pct, top_n: rawTopN, ve_spectra_balance, compact }, data: { error: e.message } }, { isError: true });
+        const text = `Error scanning YT arbitrage: ${e.message}`;
+        return { content: [{ type: "text" as const, text }], isError: true };
       }
     }
   );

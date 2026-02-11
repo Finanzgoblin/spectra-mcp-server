@@ -47,7 +47,6 @@ import {
   cumulativeLeverageAtLoop,
   formatMetavaultStrategy,
 } from "../formatters.js";
-import { dual } from "./dual.js";
 
 function computeLoopRows(
   baseApy: number,
@@ -229,32 +228,10 @@ will be added.`,
           comparePtBestNetApy: comparePtBest?.netApy,
         });
 
-        const tool = "model_metavault_strategy";
-        const ts = Math.floor(Date.now() / 1000);
-        const params = {
-          base_apy,
-          yt_compounding_apy,
-          curator_fee_pct,
-          morpho_ltv,
-          borrow_rate,
-          max_loops,
-          capital_usd,
-          external_deposits_usd,
-          days_to_maturity,
-          compare_pt_apy,
-        };
-        const data = {
-          rows,
-          optimal: { loop: optimal.loop, netApy: optimal.netApy, leverage: optimal.leverage },
-          curator: curator || null,
-          comparePtRows: comparePtRows || null,
-          comparePtBest: comparePtBest || null,
-          grossVaultApy,
-          netVaultApy,
-        };
-        return dual(text, { tool, ts, params, data });
+        return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
-        return dual(`Error modeling MetaVault strategy: ${e.message}`, { tool: "model_metavault_strategy", ts: Math.floor(Date.now() / 1000), params: { base_apy, yt_compounding_apy, curator_fee_pct, morpho_ltv, borrow_rate, max_loops, capital_usd, external_deposits_usd, days_to_maturity, compare_pt_apy }, data: { error: e.message } }, { isError: true });
+        const text = `Error modeling MetaVault strategy: ${e.message}`;
+        return { content: [{ type: "text" as const, text }], isError: true };
       }
     }
   );

@@ -6,7 +6,6 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SUPPORTED_CHAINS, API_NETWORKS, PROTOCOL_CONSTANTS } from "../config.js";
 import { fetchSpectraAppNumber } from "../api.js";
 import { formatPct } from "../formatters.js";
-import { dual } from "./dual.js";
 
 export function register(server: McpServer): void {
   // ===========================================================================
@@ -77,15 +76,11 @@ Use get_ve_info for live veSPECTRA data and boost calculations.`,
           `    Governance: https://gov.spectra.finance`,
         ];
 
-        const ts = Math.floor(Date.now() / 1000);
-        return dual(lines.join("\n"), {
-          tool: "get_protocol_stats",
-          ts,
-          params: {},
-          data: { circulating, total, lockRate, weeklyEmissions, weeksSinceStart },
-        });
+        const text = lines.join("\n");
+        return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
-        return dual(`Error fetching protocol stats: ${e.message}`, { tool: "get_protocol_stats", ts: Math.floor(Date.now() / 1000), params: {}, data: { error: e.message } }, { isError: true });
+        const text = `Error fetching protocol stats: ${e.message}`;
+        return { content: [{ type: "text" as const, text }], isError: true };
       }
     }
   );
@@ -116,13 +111,8 @@ on mainnet, base, arbitrum, and katana. veSPECTRA governance lives on Base.`,
         `or list_pools with a specific chain to see available pools.`,
       ];
 
-      const ts = Math.floor(Date.now() / 1000);
-      return dual(lines.join("\n"), {
-        tool: "get_supported_chains",
-        ts,
-        params: {},
-        data: { chains: API_NETWORKS },
-      });
+      const text = lines.join("\n");
+      return { content: [{ type: "text" as const, text }] };
     }
   );
 }
