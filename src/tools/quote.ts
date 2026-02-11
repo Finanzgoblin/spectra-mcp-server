@@ -12,6 +12,7 @@ import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork } from "../config.js";
 import { fetchSpectra } from "../api.js";
 import { parsePtResponse, buildQuoteFromPt, formatTradeQuote } from "../formatters.js";
+import { dual } from "./dual.js";
 
 export function register(server: McpServer): void {
   server.tool(
@@ -62,27 +63,31 @@ makes sense relative to variable rates.`,
         const pt = parsePtResponse(data);
 
         if (!pt) {
-          return { content: [{ type: "text", text: `No PT found at ${pt_address} on ${chain}` }] };
+          const ts = Math.floor(Date.now() / 1000);
+          const params = { chain, pt_address, amount, side, slippage_tolerance };
+          return dual(`No PT found at ${pt_address} on ${chain}`, { tool: "quote_trade", ts, params, data: { pt: null } });
         }
 
         const pool = pt.pools?.[0];
         if (!pool) {
-          return { content: [{ type: "text", text: `No active pool for PT ${pt.name}` }] };
+          const ts = Math.floor(Date.now() / 1000);
+          const params = { chain, pt_address, amount, side, slippage_tolerance };
+          return dual(`No active pool for PT ${pt.name}`, { tool: "quote_trade", ts, params, data: { pt, pool: null } });
         }
 
         const quote = buildQuoteFromPt(pt, pool, amount, side, slippage_tolerance);
         if (!quote) {
           const ptName = pt.name || "PT";
-          return {
-            content: [{ type: "text", text: `Cannot quote: PT price data unavailable for ${ptName}. The pool may have no liquidity.` }],
-          };
+          const ts = Math.floor(Date.now() / 1000);
+          const params = { chain, pt_address, amount, side, slippage_tolerance };
+          return dual(`Cannot quote: PT price data unavailable for ${ptName}. The pool may have no liquidity.`, { tool: "quote_trade", ts, params, data: { quote: null } });
         }
 
-        return {
-          content: [{ type: "text", text: formatTradeQuote(quote) }],
-        };
+        const ts = Math.floor(Date.now() / 1000);
+        const params = { chain, pt_address, amount, side, slippage_tolerance };
+        return dual(formatTradeQuote(quote), { tool: "quote_trade", ts, params, data: { quote } });
       } catch (e: any) {
-        return { content: [{ type: "text", text: `Error quoting trade: ${e.message}` }], isError: true };
+        return dual(`Error quoting trade: ${e.message}`, { tool: "quote_trade", ts: Math.floor(Date.now() / 1000), params: { chain, pt_address, amount, side, slippage_tolerance }, data: { error: e.message } }, { isError: true });
       }
     }
   );
