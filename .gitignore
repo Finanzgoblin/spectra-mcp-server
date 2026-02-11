@@ -1,0 +1,22 @@
+node_modules/
+build/
+*.tgz
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+*_output.txt
+
+# Archives
+*.zip
+
+# Claude Code project memory (local only)
+.claude/

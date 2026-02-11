@@ -1,0 +1,48 @@
+{
+  "name": "spectra-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP Server for Spectra Finance — makes Spectra discoverable by AI agents",
+  "type": "module",
+  "bin": {
+    "spectra-mcp": "./build/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node build/index.js",
+    "dev": "tsc --watch",
+    "test": "npm run build && node test.cjs",
+    "test:offline": "npm run build && node test.cjs --offline",
+    "test:unit": "npm run build && node --test build/config.test.js build/formatters.test.js build/api.test.js"
+  },
+  "files": ["build"],
+  "keywords": [
+    "mcp",
+    "spectra",
+    "defi",
+    "yield",
+    "ai-agent",
+    "model-context-protocol",
+    "principal-token",
+    "morpho"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/spectra-finance/spectra-mcp-server.git"
+  },
+  "homepage": "https://github.com/spectra-finance/spectra-mcp-server#readme",
+  "bugs": {
+    "url": "https://github.com/spectra-finance/spectra-mcp-server/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "license": "MIT"
+}
