@@ -11,6 +11,7 @@ import {
   API_NETWORKS,
   resolveNetwork,
   VE_SPECTRA,
+  CHAIN_RPC_URLS,
 } from "./config.js";
 import type { MorphoMarket, SpectraPt, SpectraPool, RawPoolOpportunity, ChainScanResult } from "./types.js";
 
@@ -488,4 +489,69 @@ export async function fetchVeTotalSupply(): Promise<number> {
   })();
 
   return _veTotalSupplyInflight;
+}
+
+// =============================================================================
+// On-Chain Address Type Detection
+// =============================================================================
+
+// Cache: address type doesn't change (contracts don't un-deploy).
+// Use a simple Map cache — no TTL needed.
+const _addressTypeCache = new Map<string, "contract" | "eoa">();
+
+/**
+ * Detect whether an address is a contract or EOA via eth_getCode.
+ * Returns "contract" if code exists, "eoa" if no code, "unknown" on RPC failure.
+ * Best-effort — errors are swallowed. Cached permanently (code doesn't change).
+ *
+ * @param address - EVM address (0x...)
+ * @param chainSlug - Spectra chain slug (e.g., "mainnet", "base")
+ */
+export async function fetchAddressType(
+  address: string,
+  chainSlug: string,
+): Promise<"contract" | "eoa" | "unknown"> {
+  const network = resolveNetwork(chainSlug);
+  const cacheKey = `${network}:${address.toLowerCase()}`;
+
+  const cached = _addressTypeCache.get(cacheKey);
+  if (cached) return cached;
+
+  const rpcUrl = CHAIN_RPC_URLS[network];
+  if (!rpcUrl) return "unknown"; // No RPC configured for this chain
+
+  try {
+    const res = await fetchWithRetry(() =>
+      fetch(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "eth_getCode",
+          params: [address, "latest"],
+        }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      })
+    );
+
+    if (!res.ok) return "unknown";
+
+    let json: any;
+    try {
+      json = await res.json();
+    } catch {
+      return "unknown";
+    }
+
+    if (json.error) return "unknown";
+
+    const code: string = json.result || "0x";
+    // "0x" or empty means no contract code (EOA)
+    const result: "contract" | "eoa" = code.length > 2 ? "contract" : "eoa";
+    _addressTypeCache.set(cacheKey, result);
+    return result;
+  } catch {
+    return "unknown"; // Best-effort — don't block the caller
+  }
 }

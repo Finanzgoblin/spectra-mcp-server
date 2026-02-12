@@ -22,6 +22,9 @@ import {
   estimatePriceImpact,
   estimateLoopingEntryCost,
   buildQuoteFromPt,
+  detectActivityCycles,
+  formatCycleAnalysis,
+  formatFlowAccounting,
 } from "./formatters.js";
 
 // =============================================================================
@@ -677,5 +680,275 @@ describe("buildQuoteFromPt", () => {
     const result = buildQuoteFromPt(makePt() as any, makePool() as any, 1000, "buy", 0.5);
     assert.ok(result !== null);
     assert.equal(result!.poolLiquidityUsd, 1_000_000);
+  });
+});
+
+// =============================================================================
+// detectActivityCycles
+// =============================================================================
+
+describe("detectActivityCycles", () => {
+  const entry = (type: string, valueUsd = 100) => ({ type, valueUsd });
+
+  it("returns null for fewer than 6 entries", () => {
+    const entries = [entry("SELL_PT"), entry("SELL_PT"), entry("SELL_PT")];
+    assert.equal(detectActivityCycles(entries), null);
+  });
+
+  it("detects a simple 2-action repeating cycle", () => {
+    // ADD→SELL repeated 4 times = 8 entries
+    const entries = [
+      entry("AMM_ADD_LIQUIDITY", 200), entry("SELL_PT", 180),
+      entry("AMM_ADD_LIQUIDITY", 200), entry("SELL_PT", 180),
+      entry("AMM_ADD_LIQUIDITY", 200), entry("SELL_PT", 180),
+      entry("AMM_ADD_LIQUIDITY", 200), entry("SELL_PT", 180),
+    ];
+    const result = detectActivityCycles(entries);
+    assert.ok(result !== null);
+    assert.deepEqual(result!.pattern, ["AMM_ADD_LIQUIDITY", "SELL_PT"]);
+    assert.equal(result!.count, 4);
+    assert.ok(result!.coverageFraction === 1);
+  });
+
+  it("detects a 3-action repeating cycle", () => {
+    // ADD→REMOVE→SELL repeated 3 times = 9 entries
+    const entries = [
+      entry("AMM_ADD_LIQUIDITY", 300), entry("AMM_REMOVE_LIQUIDITY", 280), entry("SELL_PT", 270),
+      entry("AMM_ADD_LIQUIDITY", 300), entry("AMM_REMOVE_LIQUIDITY", 280), entry("SELL_PT", 270),
+      entry("AMM_ADD_LIQUIDITY", 300), entry("AMM_REMOVE_LIQUIDITY", 280), entry("SELL_PT", 270),
+    ];
+    const result = detectActivityCycles(entries);
+    assert.ok(result !== null);
+    assert.deepEqual(result!.pattern, ["AMM_ADD_LIQUIDITY", "AMM_REMOVE_LIQUIDITY", "SELL_PT"]);
+    assert.equal(result!.count, 3);
+    assert.ok(result!.coverageFraction === 1);
+  });
+
+  it("handles uncovered entries at edges", () => {
+    // Leading BUY_PT + 3 cycles of ADD→SELL
+    const entries = [
+      entry("BUY_PT", 50),
+      entry("AMM_ADD_LIQUIDITY", 200), entry("SELL_PT", 180),
+      entry("AMM_ADD_LIQUIDITY", 200), entry("SELL_PT", 180),
+      entry("AMM_ADD_LIQUIDITY", 200), entry("SELL_PT", 180),
+    ];
+    const result = detectActivityCycles(entries);
+    assert.ok(result !== null);
+    assert.deepEqual(result!.pattern, ["AMM_ADD_LIQUIDITY", "SELL_PT"]);
+    assert.equal(result!.count, 3);
+    assert.equal(result!.uncoveredCount, 1);
+  });
+
+  it("returns null when no pattern repeats 3+ times", () => {
+    const entries = [
+      entry("AMM_ADD_LIQUIDITY"), entry("SELL_PT"),
+      entry("AMM_ADD_LIQUIDITY"), entry("SELL_PT"),
+      entry("BUY_PT"), entry("AMM_REMOVE_LIQUIDITY"),
+      entry("BUY_PT"), entry("AMM_REMOVE_LIQUIDITY"),
+    ];
+    // Each pattern repeats only 2× — below threshold
+    const result = detectActivityCycles(entries);
+    // Could be null or find a 2-count (below threshold)
+    if (result !== null) {
+      assert.ok(result.count >= 3);
+    }
+  });
+
+  it("prefers higher-coverage cycles", () => {
+    // 5 cycles of SELL_PT→SELL_PT (len 2, coverage 10/12) vs
+    // 3 cycles of ADD→SELL→SELL (len 3, coverage 9/12)
+    const entries = [
+      entry("AMM_ADD_LIQUIDITY"), entry("SELL_PT"), entry("SELL_PT"),
+      entry("AMM_ADD_LIQUIDITY"), entry("SELL_PT"), entry("SELL_PT"),
+      entry("AMM_ADD_LIQUIDITY"), entry("SELL_PT"), entry("SELL_PT"),
+      entry("AMM_ADD_LIQUIDITY"), entry("SELL_PT"), entry("SELL_PT"),
+    ];
+    const result = detectActivityCycles(entries);
+    assert.ok(result !== null);
+    // Should pick whichever has highest coverage
+    assert.ok(result!.coverageFraction >= 0.75);
+  });
+
+  it("computes correct total and avg value", () => {
+    const entries = [
+      entry("AMM_ADD_LIQUIDITY", 100), entry("SELL_PT", 200),
+      entry("AMM_ADD_LIQUIDITY", 100), entry("SELL_PT", 200),
+      entry("AMM_ADD_LIQUIDITY", 100), entry("SELL_PT", 200),
+    ];
+    const result = detectActivityCycles(entries);
+    assert.ok(result !== null);
+    assert.equal(result!.totalValueUsd, 900); // 3 * (100+200)
+    assert.equal(result!.avgValueUsd, 300);   // 900 / 3
+  });
+});
+
+// =============================================================================
+// formatCycleAnalysis
+// =============================================================================
+
+describe("formatCycleAnalysis", () => {
+  it("produces output lines for ADD→REMOVE→SELL cycle", () => {
+    const cycle = {
+      pattern: ["AMM_ADD_LIQUIDITY", "AMM_REMOVE_LIQUIDITY", "SELL_PT"],
+      count: 8,
+      totalValueUsd: 12000,
+      avgValueUsd: 1500,
+      coverageFraction: 0.85,
+      uncoveredCount: 4,
+    };
+    const lines = formatCycleAnalysis(cycle, 15000);
+    assert.ok(lines.length >= 3);
+    // Should contain the pattern
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("Add Liquidity"), "Should format activity types");
+    assert.ok(joined.includes("Remove Liquidity"));
+    assert.ok(joined.includes("Sell PT"));
+    assert.ok(joined.includes("8×"), "Should show repetition count");
+    assert.ok(joined.includes("mint→LP→unwind→sell"), "Should include interpretive hint for ADD→REMOVE→SELL");
+    assert.ok(joined.includes("get_portfolio"), "Should cross-reference portfolio");
+  });
+
+  it("hints at flash-mint for SELL_PT-only cycle", () => {
+    const cycle = {
+      pattern: ["SELL_PT", "SELL_PT"],
+      count: 10,
+      totalValueUsd: 5000,
+      avgValueUsd: 500,
+      coverageFraction: 0.9,
+      uncoveredCount: 2,
+    };
+    const lines = formatCycleAnalysis(cycle, 6000);
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("flash-mint") || joined.includes("PT dumping"), "Should hint at flash-mint or PT dumping");
+  });
+
+  it("hints at PT accumulation for BUY_PT-only cycle", () => {
+    const cycle = {
+      pattern: ["BUY_PT", "BUY_PT"],
+      count: 5,
+      totalValueUsd: 10000,
+      avgValueUsd: 2000,
+      coverageFraction: 0.8,
+      uncoveredCount: 3,
+    };
+    const lines = formatCycleAnalysis(cycle, 12000);
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("PT accumulation") || joined.includes("flash-redeem"), "Should hint at PT accumulation or YT selling");
+  });
+
+  it("includes uncovered count when present", () => {
+    const cycle = {
+      pattern: ["AMM_ADD_LIQUIDITY", "SELL_PT"],
+      count: 4,
+      totalValueUsd: 4000,
+      avgValueUsd: 1000,
+      coverageFraction: 0.8,
+      uncoveredCount: 2,
+    };
+    const lines = formatCycleAnalysis(cycle, 5000);
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("2 txn(s) outside"), "Should mention uncovered transactions");
+  });
+});
+
+// =============================================================================
+// formatFlowAccounting
+// =============================================================================
+
+describe("formatFlowAccounting", () => {
+  const baseOpts = {
+    ytBalance: 0,
+    ptBalance: 0,
+    lpBalance: 0,
+    ptSellCount: 0,
+    ptSellVolumeUsd: 0,
+    addLiqCount: 0,
+    addLiqVolumeUsd: 0,
+    buyPtCount: 0,
+    buyPtVolumeUsd: 0,
+    removeLiqCount: 0,
+    removeLiqVolumeUsd: 0,
+    ptPriceUsd: 1.0,
+    ytPriceUsd: 0.05,
+  };
+
+  it("flags yield-directional for YT-only position with PT sells", () => {
+    const lines = formatFlowAccounting({
+      ...baseOpts,
+      ytBalance: 18000,
+      ptBalance: 0,
+      ptSellCount: 12,
+      ptSellVolumeUsd: 17500,
+    });
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("Flow Accounting"), "Should have header");
+    assert.ok(joined.includes("18000.00 YT"), "Should show YT balance");
+    assert.ok(joined.includes("Estimated Minimum Mints"), "Should infer mints from YT");
+    assert.ok(joined.includes("SELL_PT: 12 txns"), "Should show PT sell count");
+    assert.ok(joined.includes("yield-directional"), "Should flag yield-directional strategy");
+  });
+
+  it("flags fixed-rate for PT-only position with PT buys", () => {
+    const lines = formatFlowAccounting({
+      ...baseOpts,
+      ptBalance: 5000,
+      ytBalance: 0,
+      buyPtCount: 8,
+      buyPtVolumeUsd: 4800,
+    });
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("5000.00 PT"), "Should show PT balance");
+    assert.ok(joined.includes("fixed-rate"), "Should flag fixed-rate accumulation");
+    assert.ok(joined.includes("BUY_PT: 8 txns"), "Should show PT buy count");
+    // Should NOT infer mints (no YT balance)
+    assert.ok(!joined.includes("Estimated Minimum Mints"), "Should not infer mints when no YT");
+  });
+
+  it("shows high YT/PT ratio for imbalanced position", () => {
+    const lines = formatFlowAccounting({
+      ...baseOpts,
+      ytBalance: 10000,
+      ptBalance: 500,
+      ptSellCount: 5,
+      ptSellVolumeUsd: 9000,
+    });
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("YT/PT ratio: 20.0:1"), "Should show the YT/PT ratio");
+    assert.ok(joined.includes("yield-directional"), "Should flag yield-directional");
+  });
+
+  it("shows full outflow breakdown including ADD_LIQ and REMOVE_LIQ", () => {
+    const lines = formatFlowAccounting({
+      ...baseOpts,
+      ytBalance: 8000,
+      ptBalance: 200,
+      lpBalance: 1.5,
+      ptSellCount: 6,
+      ptSellVolumeUsd: 5500,
+      addLiqCount: 8,
+      addLiqVolumeUsd: 7200,
+      buyPtCount: 2,
+      buyPtVolumeUsd: 1800,
+      removeLiqCount: 7,
+      removeLiqVolumeUsd: 6800,
+    });
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("SELL_PT: 6 txns"), "Should show SELL_PT outflow");
+    assert.ok(joined.includes("ADD_LIQ: 8 txns"), "Should show ADD_LIQ outflow");
+    assert.ok(joined.includes("BUY_PT: 2 txns"), "Should show BUY_PT inflow");
+    assert.ok(joined.includes("LP Removals: 7 txns"), "Should show LP removals");
+    assert.ok(joined.includes("LP: 1.5000"), "Should show LP balance");
+  });
+
+  it("handles zero activity gracefully", () => {
+    const lines = formatFlowAccounting({ ...baseOpts });
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("Flow Accounting"), "Should have header");
+    assert.ok(joined.includes("0.00 YT"), "Should show zero YT");
+    assert.ok(joined.includes("0.00 PT"), "Should show zero PT");
+    assert.ok(joined.includes("approximate"), "Should include disclaimer");
+    // Should not have PT outflows/inflows sections
+    assert.ok(!joined.includes("PT Outflows"), "Should not show outflows with zero activity");
+    assert.ok(!joined.includes("PT Inflows"), "Should not show inflows with zero activity");
   });
 });
