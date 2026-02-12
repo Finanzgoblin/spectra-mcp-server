@@ -215,9 +215,9 @@ discover the best looping opportunities across all chains with capital-aware siz
         }
 
         lines.push(``);
-        lines.push(`  * Optimal: ${bestLoop} loops -> ${formatPct(bestNet)} net APY`);
+        lines.push(`  * Highest net APY: ${bestLoop} loops -> ${formatPct(bestNet)} (but see margin column — fewer loops may suit tighter risk tolerance)`);
 
-        // Show cumulative entry cost at optimal loop count
+        // Show cumulative entry cost at that loop count
         if (hasLiq && bestLoop > 0) {
           const { totalImpactPct } = estimateLoopingEntryCost(refCapital, poolLiqUsd, effectiveLtv, bestLoop);
           const annualizedDrag = maturityDays > 0
@@ -235,7 +235,6 @@ discover the best looping opportunities across all chains with capital-aware siz
         lines.push(`  Risks: Liquidation if PT depegs, smart contract risk on Morpho + Spectra,`);
         lines.push(`     borrow rate may increase, PT illiquidity near maturity,`);
         lines.push(`     cumulative entry cost increases with capital size and loop count.`);
-        lines.push(`     This is NOT financial advice. Do your own research.`);
 
         const text = lines.join("\n");
         return { content: [{ type: "text" as const, text }] };

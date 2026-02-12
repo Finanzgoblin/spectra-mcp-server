@@ -192,8 +192,8 @@ export interface ScanOpportunity {
     boostedRewards: Record<string, { min: number; max: number }>; // SPECTRA gauge
   };
 
-  // Ranking score — the single number used for final sort
-  rankApy: number;            // looping?.optimalEffectiveNetApy || effectiveApy
+  // Sort key — used internally for default ordering; agents see all yield dimensions
+  sortApy: number;            // looping?.optimalEffectiveNetApy || effectiveApy
 
   // Metadata
   underlying: string;
@@ -220,8 +220,7 @@ export interface YtArbitrageOpportunity {
   ytLeverage: number;
   ibtCurrentApr: number;       // what IBT actually earns (%)
   ytImpliedRate: number;        // what market prices in (%)
-  spreadPct: number;            // ibtCurrentApr - ytImpliedRate (positive = YT cheap)
-  direction: "buy_yt" | "sell_yt";
+  spreadPct: number;            // ibtCurrentApr - ytImpliedRate (positive = IBT earns more than market prices in)
 
   // Maturity
   maturityTimestamp: number;

@@ -70,9 +70,8 @@ Returns concise explanations of how PT/YT work, how Router batching affects
 pool activity interpretation, how to read wallet strategies from holdings,
 and how looping works.
 
-Call this tool FIRST when starting a new analysis task — the mechanics it
-teaches prevent common misinterpretations (e.g., assuming SELL_PT means
-someone is selling PT, when it could be a flash-mint to acquire YT).
+Covers mechanics that are easy to misinterpret without context — for example,
+SELL_PT in pool activity could be a flash-mint to acquire YT, not a PT sale.
 
 Available topics: ${ALL_TOPIC_NAMES.join(", ")}
 Omit the topic parameter to get all topics at once.`,

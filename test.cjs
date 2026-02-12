@@ -618,7 +618,7 @@ async function testGetLoopingStrategy(client) {
   assert(text.includes("Base Fixed APY"), "has base APY", "missing");
   assert(text.includes("Morpho LTV"), "has LTV", "missing");
   assert(text.includes("Loop Analysis") || text.includes("Loop"), "has loop table", "missing");
-  assert(text.includes("Optimal"), "has optimal recommendation", "missing");
+  assert(text.includes("Highest net APY"), "has highest net APY row", "missing");
   assert(text.includes("Risks") || text.includes("risk"), "has risk warning", "missing");
 
   // Should have "Eff. Margin" column instead of old "Liq. Buffer"
@@ -1332,9 +1332,9 @@ async function testScanYtArbitrage(client) {
     assert(text.includes("YT Implied Rate"), "has YT implied rate", "missing");
     assert(text.includes("Spread"), "has spread", "missing");
     assert(
-      text.includes("BUY YT") || text.includes("SELL YT"),
-      "has direction signal",
-      "missing direction"
+      text.includes("positive spread") || text.includes("negative spread") || text.includes("Spread"),
+      "has spread info",
+      "missing spread"
     );
     assert(text.includes("Break-Even") || text.includes("Capacity"), "has capital-aware metrics", "missing");
     assert(text.includes("PT Address"), "has PT address", "missing");
@@ -1463,7 +1463,7 @@ async function testModelMetavaultStrategy(client) {
   assert(basic.includes("Net Vault APY"), "has net vault APY", "missing");
   assert(basic.includes("Curator Fee"), "has curator fee", "missing");
   assert(basic.includes("Looping Table"), "has looping table", "missing");
-  assert(basic.includes("Optimal:"), "has optimal loop", "missing");
+  assert(basic.includes("Highest net APY:"), "has highest net APY loop", "missing");
   assert(basic.includes("Rollover Advantage"), "has rollover advantage", "missing");
   assert(basic.includes("Risks"), "has risk notes", "missing");
 
@@ -1507,7 +1507,7 @@ async function testModelMetavaultStrategy(client) {
   });
   assert(unprofitable.includes("MetaVault Strategy Model"), "unprofitable case still returns", "missing");
   // At loop 0 there's no borrow cost, so loop 0 should be optimal
-  assert(unprofitable.includes("Optimal: 0 loops"), "optimal is 0 loops when borrow > base", `got: ${unprofitable.match(/Optimal:.*/)?.[0]}`);
+  assert(unprofitable.includes("Highest net APY: 0 loops"), "highest net APY is 0 loops when borrow > base", `got: ${unprofitable.match(/Highest net APY:.*/)?.[0]}`);
 
   // No YT compounding, no external deposits (minimal params)
   const { text: minimal } = await client.callTool("model_metavault_strategy", {

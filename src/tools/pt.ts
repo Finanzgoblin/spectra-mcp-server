@@ -171,10 +171,10 @@ Scans all supported networks and returns the top opportunities ranked by implied
 Filters by asset type if specified.
 
 Important: This ranks by raw implied APY without considering your capital size or pool
-liquidity. A 50% APY pool with $10K liquidity is unusable at $500K capital (entry impact
-would destroy the yield). For capital-aware sizing that accounts for price impact,
-effective APY after entry cost, and Morpho looping availability, use scan_opportunities
-instead.`,
+liquidity. High APY on thin liquidity can be misleading — entry price impact grows
+with trade size relative to pool depth, and annualizes more aggressively on short
+maturities. For capital-aware sizing that accounts for price impact, effective APY
+after entry cost, and Morpho looping availability, use scan_opportunities instead.`,
     {
       asset_filter: z
         .string()
@@ -341,11 +341,9 @@ check your current positions. Use scan_opportunities for multi-chain comparison.
           `    Est. Price Impact: ~${formatPct(impactPct)} (conservative upper bound)`,
           `    Effective Fixed APY: ${formatPct(effectiveFixedApy)} (after amortizing entry cost over ${maturityDays} days)`,
           ``,
-          effectiveFixedApy > variableApr
-            ? `  Fixed rate is HIGHER than variable (even after entry cost). Locking in via PT is currently favorable.`
-            : fixedApy > variableApr
-              ? `  Fixed rate is higher than variable, but entry cost narrows the advantage. Consider trade size vs pool depth.`
-              : `  Variable rate is HIGHER than fixed. PT lock only makes sense if you expect rates to drop.`,
+          `  Spread after entry cost: ${effectiveFixedApy > variableApr ? "+" : ""}${formatPct(effectiveFixedApy - variableApr)} (effective fixed minus variable)`,
+          `  Spread before entry cost: ${fixedApy > variableApr ? "+" : ""}${formatPct(fixedApy - variableApr)} (raw fixed minus variable)`,
+          `  Entry cost narrows spread by ${formatPct(annualizedEntryCost)} annualized — scales with trade size relative to pool depth.`,
           ``,
           `  LP Alternative: ${formatPct(lpData.lpApy)} APY (${lpParts.join(" + ")})`,
         ];
