@@ -310,10 +310,15 @@ has interacted with in a single call.`,
           const filterDesc = addressFilter
             ? `address ${address} with ${type_filter === "all" ? "any" : formatActivityType(type_filter)} activity`
             : `${formatActivityType(type_filter)} activity`;
+          const addressHint = addressFilter
+            ? `No visible pool activity for ${address} on this pool. ` +
+              `This address may have entered via Spectra Router (atomic mint + LP), which is invisible in pool activity data. ` +
+              `Use get_portfolio to verify holdings, or get_address_activity to scan all pools.`
+            : `The pool may have activity of other types -- try type_filter "all".`;
           return {
             content: [{
               type: "text" as const,
-              text: `No ${filterDesc} found for pool ${pool_address} on ${chain}. ${addressFilter ? "This address may not have interacted with this pool." : "The pool may have activity of other types -- try type_filter \"all\"."}`,
+              text: `No ${filterDesc} found for pool ${pool_address} on ${chain}. ${addressHint}`,
             }],
           };
         }

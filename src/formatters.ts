@@ -222,6 +222,14 @@ export function formatPositionSummary(pos: SpectraPt, chain: string): PositionRe
     lines.push(`  Current Rates:`);
     lines.push(`    Implied APY: ${formatPct(pool.impliedApy || 0)}`);
     lines.push(`    LP APY: ${formatPct(pool.lpApy?.total || 0)}`);
+    // Gauge boost range: surface the yield range so agents know to check veSPECTRA
+    if (lpBal > 0) {
+      const { lpApy, lpApyBoostedTotal, lpApyBreakdown } = extractLpApyBreakdown(pool, 0);
+      const hasBoostedRewards = Object.keys(lpApyBreakdown.boostedRewards).length > 0;
+      if (hasBoostedRewards && lpApyBoostedTotal > lpApy) {
+        lines.push(`    Gauge boost range: LP APY ${formatPct(lpApy)} (min) → ${formatPct(lpApyBoostedTotal)} (max 2.5x). Actual boost unknown — use get_ve_info to determine.`);
+      }
+    }
     lines.push(`    IBT Variable APR: ${formatPct(pos.ibt?.apr?.total || 0)}`);
   }
 
@@ -246,6 +254,10 @@ export function formatPositionSummary(pos: SpectraPt, chain: string): PositionRe
     if (lpBal > 0) parts.push(`LP: ${lpBal.toLocaleString("en-US", { maximumFractionDigits: 2 })}`);
     lines.push(``);
     lines.push(`  Position Shape: ${parts.join(" | ")}`);
+    // Navigational hint: surface the temporal blind spot
+    if (totalValue > 100) {
+      lines.push(`    Entry timing and cost basis unknown from portfolio alone. Use get_pool_activity with address parameter to reconstruct.`);
+    }
   }
 
   return { text: lines.join("\n"), totalValue };
@@ -521,6 +533,14 @@ export function formatFlowAccounting(opts: {
     const estimatedMinMints = ytBalance;
     lines.push(`    Estimated Minimum Mints: ~${estimatedMinMints.toFixed(2)} units (inferred from YT balance)`);
     lines.push(`      Each mint creates 1 PT + 1 YT. YT balance is a lower bound on total mints.`);
+    // Confidence signal: surface the reliability boundary of this inference
+    if (buyPtCount === 0) {
+      lines.push(`      Confidence: moderate (no BUY_PT events suggesting flash-redeem YT selling)`);
+    } else {
+      lines.push(`      Confidence: low (BUY_PT events could indicate flash-redeem YT selling — actual mints may exceed YT balance)`);
+    }
+  } else if (ytBalance === 0 && ptBalance > 0) {
+    lines.push(`    Mint inference unavailable (YT balance is zero — minting may not have occurred, or all YT was sold). Cannot distinguish from portfolio alone.`);
   }
 
   // PT flow analysis
@@ -1038,7 +1058,8 @@ export function formatMorphoMarketHints(m: MorphoMarket): string[] {
 
 /**
  * Layer 3 output hint: portfolio-level signals when viewing all positions.
- * Concentration analysis, maturity proximity warnings, strategy shape.
+ * Concentration analysis, maturity proximity warnings, strategy shape,
+ * and negative signals (observable absences).
  *
  * Dissolution condition: When Spectra adds a native portfolio analytics
  * endpoint that computes these metrics server-side, this function becomes
@@ -1048,47 +1069,84 @@ export function formatPortfolioHints(
   positions: Array<{
     totalValue: number; chain: string; maturityDays: number;
     ptBalance: number; ytBalance: number; lpBalance: number; name: string;
+    ptAddress?: string; maturityTs?: number;
+    morphoAvailable?: boolean; // true=market exists, false=checked but none, undefined=lookup failed
   }>,
   totalPortfolioValue: number,
 ): string[] {
-  if (positions.length < 2) return [];
-
   const lines: string[] = [];
   lines.push(``);
   lines.push(`  Portfolio Signals:`);
 
-  // Concentration
-  const sorted = [...positions].sort((a, b) => b.totalValue - a.totalValue);
-  if (totalPortfolioValue > 0) {
-    const largestPct = (sorted[0].totalValue / totalPortfolioValue) * 100;
-    if (largestPct > 80) {
-      lines.push(`    Concentration: ${largestPct.toFixed(0)}% in ${sorted[0].name} -- portfolio is heavily concentrated in a single position.`);
+  // --- Multi-position hints (require 2+ positions) ---
+  if (positions.length >= 2) {
+    // Concentration
+    const sorted = [...positions].sort((a, b) => b.totalValue - a.totalValue);
+    if (totalPortfolioValue > 0) {
+      const largestPct = (sorted[0].totalValue / totalPortfolioValue) * 100;
+      if (largestPct > 80) {
+        lines.push(`    Concentration: ${largestPct.toFixed(0)}% in ${sorted[0].name} -- portfolio is heavily concentrated in a single position.`);
+      }
+    }
+
+    // Maturity proximity
+    const maturingSoon = positions.filter(p => p.maturityDays > 0 && p.maturityDays < 14);
+    if (maturingSoon.length > 0) {
+      const names = maturingSoon.map(p => p.name).join(", ");
+      lines.push(`    Maturity alert: ${maturingSoon.length} position(s) maturing within 14 days (${names}). Consider redemption or rollover.`);
+    }
+
+    // Cross-chain diversification
+    const uniqueChains = new Set(positions.map(p => p.chain));
+    if (uniqueChains.size === 1 && positions.length > 2) {
+      lines.push(`    All ${positions.length} positions are on a single chain. Could indicate intentional concentration or an opportunity for cross-chain diversification.`);
+    }
+
+    // Strategy shape
+    const totalPt = positions.reduce((s, p) => s + p.ptBalance, 0);
+    const totalYt = positions.reduce((s, p) => s + p.ytBalance, 0);
+    if (totalYt > 0 && totalPt > 0) {
+      const ytPtRatio = totalYt / totalPt;
+      if (ytPtRatio > 3) {
+        lines.push(`    Portfolio shape: YT-heavy (${ytPtRatio.toFixed(1)}:1 YT/PT). Could indicate aggregate yield-directional positioning.`);
+      } else if (ytPtRatio < 0.3) {
+        lines.push(`    Portfolio shape: PT-heavy (${(1 / ytPtRatio).toFixed(1)}:1 PT/YT). Could indicate aggregate fixed-rate accumulation.`);
+      }
     }
   }
 
-  // Maturity proximity
-  const maturingSoon = positions.filter(p => p.maturityDays > 0 && p.maturityDays < 14);
-  if (maturingSoon.length > 0) {
-    const names = maturingSoon.map(p => p.name).join(", ");
-    lines.push(`    Maturity alert: ${maturingSoon.length} position(s) maturing within 14 days (${names}). Consider redemption or rollover.`);
-  }
+  // --- Negative signals (valuable even for single positions) ---
 
-  // Cross-chain diversification
-  const uniqueChains = new Set(positions.map(p => p.chain));
-  if (uniqueChains.size === 1 && positions.length > 2) {
-    lines.push(`    All ${positions.length} positions are on a single chain. Could indicate intentional concentration or an opportunity for cross-chain diversification.`);
-  }
+  // Morpho looping availability
+  const positionsWithMorphoData = positions.filter(p => p.morphoAvailable !== undefined);
+  if (positionsWithMorphoData.length > 0) {
+    const withMorpho = positionsWithMorphoData.filter(p => p.morphoAvailable === true);
+    const withoutMorpho = positionsWithMorphoData.filter(p => p.morphoAvailable === false);
 
-  // Strategy shape
-  const totalPt = positions.reduce((s, p) => s + p.ptBalance, 0);
-  const totalYt = positions.reduce((s, p) => s + p.ytBalance, 0);
-  if (totalYt > 0 && totalPt > 0) {
-    const ytPtRatio = totalYt / totalPt;
-    if (ytPtRatio > 3) {
-      lines.push(`    Portfolio shape: YT-heavy (${ytPtRatio.toFixed(1)}:1 YT/PT). Could indicate aggregate yield-directional positioning.`);
-    } else if (ytPtRatio < 0.3) {
-      lines.push(`    Portfolio shape: PT-heavy (${(1 / ytPtRatio).toFixed(1)}:1 PT/YT). Could indicate aggregate fixed-rate accumulation.`);
+    if (withMorpho.length > 0) {
+      const names = withMorpho.map(p => p.name).join(", ");
+      lines.push(`    Morpho markets exist for: ${names}. No looping detected in portfolio — could indicate risk-averse strategy or uninvestigated opportunity. Use get_looping_strategy to evaluate.`);
     }
+    if (withoutMorpho.length > 0) {
+      const names = withoutMorpho.map(p => p.name).join(", ");
+      lines.push(`    No Morpho markets found for: ${names}. Looping unavailable for these positions.`);
+    }
+  }
+
+  // Expired positions aggregate
+  const expired = positions.filter(p =>
+    p.maturityTs && p.maturityTs * 1000 <= Date.now() && p.totalValue > 10
+  );
+  if (expired.length > 0) {
+    const totalExpiredValue = expired.reduce((s, p) => s + p.totalValue, 0);
+    const names = expired.map(p => p.name).join(", ");
+    lines.push(`    ${expired.length} expired position(s) with ~${formatUsd(totalExpiredValue)} (${names}). Consider redemption.`);
+  }
+
+  // Gauge exposure without boost context (portfolio-level reminder)
+  const lpPositions = positions.filter(p => p.lpBalance > 0 && p.totalValue > 100);
+  if (lpPositions.length > 0) {
+    lines.push(`    ${lpPositions.length} LP position(s) detected. If gauge-boosted, veSPECTRA affects effective yield — use get_ve_info to check boost status.`);
   }
 
   if (lines.length <= 2) return []; // Only header, no actual hints
