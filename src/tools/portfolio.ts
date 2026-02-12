@@ -6,7 +6,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { CHAIN_ENUM, EVM_ADDRESS, API_NETWORKS, resolveNetwork } from "../config.js";
 import type { SpectraPt } from "../types.js";
 import { fetchSpectra } from "../api.js";
-import { formatUsd, formatPositionSummary } from "../formatters.js";
+import { formatUsd, formatPositionSummary, formatPortfolioHints, daysToMaturity, formatBalance } from "../formatters.js";
+import type { SpectraPool } from "../types.js";
 
 export function register(server: McpServer): void {
   server.tool(
@@ -71,12 +72,28 @@ Protocol context:
         // Format only positions with non-zero balances, collecting totalValue from each
         let totalPortfolioValue = 0;
         const summaries: string[] = [];
+        const hintData: Array<{
+          totalValue: number; chain: string; maturityDays: number;
+          ptBalance: number; ytBalance: number; lpBalance: number; name: string;
+        }> = [];
 
         for (const { pos, chain: c } of allPositions) {
           const result = formatPositionSummary(pos, c);
           if (result) {
             summaries.push(result.text);
             totalPortfolioValue += result.totalValue;
+            // Collect data for portfolio-level hints
+            const decimals = pos.decimals ?? 18;
+            hintData.push({
+              totalValue: result.totalValue,
+              chain: c,
+              maturityDays: daysToMaturity(pos.maturity),
+              ptBalance: formatBalance(pos.balance, decimals),
+              ytBalance: formatBalance(pos.yt?.balance, pos.yt?.decimals ?? decimals),
+              lpBalance: pos.pools?.reduce((sum: number, p: SpectraPool) =>
+                sum + formatBalance(p.lpt?.balance, p.lpt?.decimals ?? 18), 0) || 0,
+              name: pos.name,
+            });
           }
         }
 
@@ -89,7 +106,13 @@ Protocol context:
         const scope = chain || "all chains";
         const header = `Spectra Portfolio for ${address} (${scope}):\n` +
           `Total Positions: ${summaries.length} | Estimated Value: ${formatUsd(totalPortfolioValue)}\n`;
-        const text = header + chainWarning + "\n" + summaries.join("\n\n");
+        let text = header + chainWarning + "\n" + summaries.join("\n\n");
+
+        // Layer 3: Portfolio-level hints for multi-position portfolios
+        const portfolioHintLines = formatPortfolioHints(hintData, totalPortfolioValue);
+        if (portfolioHintLines.length > 0) {
+          text += "\n" + portfolioHintLines.join("\n");
+        }
 
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {

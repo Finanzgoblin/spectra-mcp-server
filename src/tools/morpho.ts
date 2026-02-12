@@ -7,7 +7,8 @@ import { z } from "zod";
 import { CHAIN_ENUM, MORPHO_CHAIN_IDS, resolveNetwork } from "../config.js";
 import type { MorphoMarket } from "../types.js";
 import { fetchMorpho, sanitizeGraphQL, MORPHO_MARKET_FIELDS, fetchSpectraPtAddresses } from "../api.js";
-import { formatPct, formatMorphoLltv, formatMorphoMarketSummary } from "../formatters.js";
+import { formatPct, formatMorphoLltv, formatMorphoMarketSummary, formatMorphoMarketHints, parsePtResponse } from "../formatters.js";
+import { fetchSpectra } from "../api.js";
 
 export function register(server: McpServer): void {
   // ===========================================================================
@@ -115,7 +116,9 @@ Use scan_opportunities for automated cross-chain looping discovery.`,
         const summaries = items.map((m) => {
           const collateralAddr = m.collateralAsset?.address?.toLowerCase() || "";
           const protocol = spectraPtAddrs.has(collateralAddr) ? "Spectra" : "Pendle/Other";
-          return formatMorphoMarketSummary(m, protocol);
+          const summary = formatMorphoMarketSummary(m, protocol);
+          const hints = formatMorphoMarketHints(m);
+          return hints.length > 0 ? summary + "\n" + hints.join("\n") : summary;
         });
 
         const spectraCount = items.filter(
@@ -187,11 +190,39 @@ Use get_looping_strategy with these rates to calculate leveraged yield projectio
         const borrowApy = market.state?.borrowApy || 0;
         const lines = [
           summary,
-          ``,
-          `  For Looping:`,
-          `    Use morpho_ltv = ${lltv.toFixed(4)} and borrow_rate = ${formatPct(borrowApy * 100)}`,
-          `    in get_looping_strategy to calculate leveraged yield.`,
         ];
+
+        // Layer 3: Best-effort PT spread analysis
+        // Dissolution condition: Dissolves when the Morpho API itself returns
+        // the PT's implied APY or a unified "looping readiness" endpoint exists.
+        try {
+          const ptAddress = market.collateralAsset?.address;
+          if (ptAddress) {
+            const ptData = await fetchSpectra(`/${network}/pt/${ptAddress}`).catch(() => null) as any;
+            const pt = ptData ? parsePtResponse(ptData) : null;
+            const impliedApy = pt?.pools?.[0]?.impliedApy;
+            if (impliedApy !== undefined && impliedApy > 0) {
+              const spread = impliedApy - borrowApy * 100;
+              lines.push(``);
+              lines.push(`  PT Spread Analysis:`);
+              lines.push(`    PT Implied APY: ${formatPct(impliedApy)}`);
+              lines.push(`    Borrow Rate: ${formatPct(borrowApy * 100)}`);
+              lines.push(`    Spread: ${spread >= 0 ? "+" : ""}${formatPct(spread)}`);
+              if (spread > 0) {
+                lines.push(`    Spread is positive -- looping could be profitable at this borrow rate. Use get_looping_strategy to model leverage.`);
+              } else {
+                lines.push(`    Spread is negative -- borrowing costs exceed PT yield at current rates. Looping would reduce returns.`);
+              }
+            }
+          }
+        } catch {
+          // Best-effort, don't block core output
+        }
+
+        lines.push(``);
+        lines.push(`  For Looping:`);
+        lines.push(`    Use morpho_ltv = ${lltv.toFixed(4)} and borrow_rate = ${formatPct(borrowApy * 100)}`);
+        lines.push(`    in get_looping_strategy to calculate leveraged yield.`);
 
         const text = lines.join("\n");
         return { content: [{ type: "text" as const, text }] };
