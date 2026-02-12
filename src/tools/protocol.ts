@@ -107,8 +107,9 @@ on mainnet, base, arbitrum, and katana. veSPECTRA governance lives on Base.`,
         ``,
         `  Tip: "ethereum" is also accepted as an alias for "mainnet".`,
         ``,
-        `Tip: Use get_best_fixed_yields to scan all chains at once,`,
-        `or list_pools with a specific chain to see available pools.`,
+        `Tip: Use get_best_fixed_yields to scan all chains at once (raw APY ranking),`,
+        `or scan_opportunities for capital-aware analysis with price impact and looping.`,
+        `Use list_pools with a specific chain to see available pools.`,
       ];
 
       const text = lines.join("\n");

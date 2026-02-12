@@ -171,10 +171,11 @@ Scans all supported networks and returns the top opportunities ranked by implied
 Filters by asset type if specified.
 
 Important: This ranks by raw implied APY without considering your capital size or pool
-liquidity. High APY on thin liquidity can be misleading — entry price impact grows
-with trade size relative to pool depth, and annualizes more aggressively on short
-maturities. For capital-aware sizing that accounts for price impact, effective APY
-after entry cost, and Morpho looping availability, use scan_opportunities instead.`,
+liquidity. These rankings will often disagree with scan_opportunities (which ranks by
+effective APY after entry cost). That disagreement is intentional -- raw APY reflects
+the pool's headline rate while effective APY reflects what you actually capture at your
+capital size. Neither ranking is "correct" -- they measure different things. Use both to
+develop conviction about which pools genuinely serve your strategy.`,
     {
       asset_filter: z
         .string()

@@ -7,7 +7,7 @@ import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork, API_NETWORKS, CHAIN_GAS_ESTIMATES } from "../config.js";
 import type { SpectraPt } from "../types.js";
 import { fetchSpectra, fetchAddressType } from "../api.js";
-import { formatUsd, formatDate, formatActivityType, parsePtResponse, detectActivityCycles, formatCycleAnalysis, formatFlowAccounting, formatBalance } from "../formatters.js";
+import { formatUsd, formatDate, formatActivityType, parsePtResponse, detectActivityCycles, formatCycleAnalysis, formatFlowAccounting, formatBalance, formatVolumeHints } from "../formatters.js";
 
 /**
  * Resolve a PT address to its Curve pool address.
@@ -40,7 +40,8 @@ Context: Volume alone doesn't indicate capital efficiency — $1M volume in a $5
 pool is very different from $1M in a $500K pool. Combine volume data with pool liquidity
 (from list_pools or get_pt_details) to assess real trading conditions.
 
-For individual transaction details and whale activity, use get_pool_activity instead.
+Output includes volume/liquidity ratio analysis when pool data is available. For
+individual transaction details and whale activity, use get_pool_activity instead.
 Use quote_trade to estimate price impact for a specific trade size.`,
     {
       chain: CHAIN_ENUM.describe("The blockchain network"),
@@ -137,6 +138,27 @@ Use quote_trade to estimate price impact for a specific trade size.`,
               `  ${formatDate(e.timestamp).padEnd(14)} ${formatUsd(e.buyUsd || 0).padEnd(16)} ${formatUsd(e.sellUsd || 0).padEnd(16)}`
             );
           }
+        }
+
+        // Layer 3: Volume context hints (best-effort liquidity fetch)
+        try {
+          const ptData = await fetchSpectra(`/${network}/pt/${pool_address}`).catch(() => null) as any;
+          const ptParsed = ptData ? parsePtResponse(ptData) : null;
+          const poolLiq = ptParsed?.pools?.[0]?.liquidity?.usd || 0;
+
+          const volumeHints = formatVolumeHints({
+            totalVolume,
+            totalBuy,
+            totalSell,
+            recentTotal,
+            recentBuy,
+            recentSell,
+            rangeDays,
+            poolLiquidityUsd: poolLiq > 0 ? poolLiq : undefined,
+          });
+          lines.push(...volumeHints);
+        } catch {
+          // Best-effort: swallow errors, don't block core output
         }
 
         const text = lines.join("\n");
