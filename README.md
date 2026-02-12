@@ -45,9 +45,10 @@ Layer 2: Tool Descriptions (every tool's description string)
   → Calls out hidden mechanics that could mislead (e.g., AMM_ADD_LIQUIDITY can mint YT)
 
 Layer 3: Structured Output Hints (computed at runtime in tool output)
-  → Position Shape analysis in portfolio: "YT-only: leveraged yield bull"
+  → Position Shape analysis in portfolio: balance ratios (e.g., "YT/PT 4:1")
   → Pattern hints (⚠ warnings) in activity data per-address
   → Capital-aware warnings: short maturity, low liquidity, negative effective APY
+  → Yield Dimensions in scan output: fixed, variable, LP, looping side-by-side
   → Makes key signals SALIENT without prescribing interpretation
 ```
 
@@ -63,7 +64,7 @@ Layer 3: Structured Output Hints (computed at runtime in tool output)
 
 A cold-start agent with zero prior knowledge of Spectra can:
 1. Call `get_pool_activity` — see trading patterns with ⚠ hints about ambiguous events
-2. Call `get_portfolio` on flagged addresses — see Position Shape ("YT-only: leveraged yield bull")
+2. Call `get_portfolio` on flagged addresses — see Position Shape (balance ratios like "YT/PT 4:1")
 3. Read the cross-reference nudges — compose its own analytical workflow
 4. Identify novel strategies the server was never explicitly programmed to detect
 
@@ -76,7 +77,7 @@ This was validated: a subagent spawned with zero priming correctly identified a 
 | `get_best_fixed_yields` | Scan ALL chains for top fixed-rate opportunities. The main discovery tool. Supports `compact` mode. |
 | `list_pools` | List all active pools on a specific chain, sorted by APY/TVL/maturity. Supports `compact` mode. |
 | `get_pt_details` | Deep dive on a specific Principal Token -- full data. |
-| `compare_yield` | Fixed (PT) vs. variable (IBT) yield comparison with recommendation. |
+| `compare_yield` | Fixed (PT) vs. variable (IBT) yield comparison with spread mechanics and entry cost analysis. |
 | `get_looping_strategy` | Calculate leveraged yield via PT + Morpho looping with effective liquidation margins. Auto-fetches live Morpho rates when a matching market exists. |
 | `get_morpho_markets` | Find Morpho lending markets that accept Spectra PTs as collateral. Filter by chain or symbol. |
 | `get_morpho_rate` | Get live borrow rate and state for a specific Morpho market. |
@@ -229,7 +230,6 @@ src/
                       price impact, fractional-day maturity, boost computation,
                       slim envelope helpers, Layer 3 output hints (Position Shape, LP APY breakdown)
   tools/            Layer 2: each tool description teaches domain-specific mechanics
-    dual.ts         Dual-layer response helper (Block 0: human text, Block 1: JSON envelope)
     context.ts      get_protocol_context (Layer 1 protocol mechanics, callable on-demand)
     pt.ts           get_pt_details, list_pools, get_best_fixed_yields, compare_yield
     looping.ts      get_looping_strategy
@@ -245,17 +245,9 @@ src/
     metavault.ts    model_metavault_strategy
 ```
 
-Each tool file exports a `register(server)` function. To add a new tool: create `src/tools/newtool.ts`, export `register()`, import and call it in `index.ts`. Use `dual()` from `tools/dual.ts` to return dual-layer responses (human text + JSON envelope).
+Each tool file exports a `register(server)` function. To add a new tool: create `src/tools/newtool.ts`, export `register()`, import and call it in `index.ts`.
 
 All address parameters are validated (`0x` + 40 hex chars). All API calls have a 15-second timeout with automatic retry on transient failures (5xx, ETIMEDOUT, ENETUNREACH, ENOTFOUND). Cross-chain scans use `Promise.allSettled` so one chain failing doesn't block results from others. GraphQL inputs are sanitized to prevent injection. All error returns use MCP's `isError: true` flag for proper error signaling to agents.
-
-### Dual-Layer Responses
-
-Every tool returns two MCP content blocks:
-- **Block 0 (text/plain):** Human-readable analysis formatted for display
-- **Block 1 (application/json):** Structured envelope with `tool`, `ts`, `params`, and `data` fields
-
-The JSON envelope uses slim interfaces (computed metrics only, no nested API objects) to minimize token cost. Agents can consume either layer depending on whether they need display text or structured data.
 
 ### Type Safety
 

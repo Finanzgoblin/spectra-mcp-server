@@ -20,11 +20,8 @@ Protocol context:
 - Depositing IBT always mints BOTH PT and YT in equal amounts. If a wallet holds
   YT but no PT, it sold or LPed its PT. If it holds PT but no YT, it sold its YT.
 - PT + YT = 1 underlying at maturity. This identity is fundamental to all strategies.
-- The balance ratios reveal the strategy:
-    * High YT, low PT → leveraged yield bull (mint + sell PT loop)
-    * High PT, low YT → fixed-rate lock (sold YT or never minted)
-    * High LP, low PT/YT → pure liquidity provider
-    * Balanced PT + YT → recently minted, hasn't taken a directional position yet
+- Balance ratios are the key signal. Output shows Position Shape (e.g., "YT/PT 4:1")
+  so you can reason about what the holder's position implies given the mechanics above.
 - When investigating a strategy, ALWAYS cross-reference portfolio with
   get_pool_activity. Activity shows the HOW (transaction patterns), portfolio
   shows the WHAT (resulting position). Neither alone tells the full story.
