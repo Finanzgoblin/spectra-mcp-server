@@ -26,11 +26,7 @@ Protocol context:
   get_pool_activity. Activity shows the HOW (transaction patterns), portfolio
   shows the WHAT (resulting position). Neither alone tells the full story.
 - Strategies often span multiple wallets. If get_pool_activity shows concentrated
-  activity from several addresses, check each one to build the full picture.
-- For activity analysis, use get_pool_activity with the address parameter — it will
-  automatically cross-reference portfolio data and provide flow accounting, contract
-  detection, gas estimates, and pool impact analysis.
-- Use get_address_activity to scan all pools for an address's activity in one call.`,
+  activity from several addresses, check each one to build the full picture.`,
     {
       address: EVM_ADDRESS.describe("The wallet address (0x...)"),
       chain: CHAIN_ENUM
