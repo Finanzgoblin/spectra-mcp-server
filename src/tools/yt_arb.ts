@@ -184,9 +184,6 @@ Use get_pool_activity to monitor recent trading patterns in the target pool.`,
             ? (impactPct / absSpread) * 365
             : Infinity;
 
-          // Direction
-          const direction: "buy_yt" | "sell_yt" = spreadPct > 0 ? "buy_yt" : "sell_yt";
-
           // Warnings
           const warnings: string[] = [];
           if (days < 14) warnings.push("Very short maturity (<14 days)");
@@ -215,7 +212,6 @@ Use get_pool_activity to monitor recent trading patterns in the target pool.`,
             ibtCurrentApr,
             ytImpliedRate,
             spreadPct,
-            direction,
             maturityTimestamp: pt.maturity,
             daysToMaturity: days,
             tvlUsd,
