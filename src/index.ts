@@ -17,7 +17,8 @@
  *   - get_supported_chains   -> List all supported blockchain networks
  *   - get_portfolio           -> Wallet positions (PT, YT, LP balances & claimable yield)
  *   - get_pool_volume         -> Historical trading volume for a specific pool
- *   - get_pool_activity       -> Recent trade and liquidity activity for a pool
+ *   - get_pool_activity       -> Recent trade and liquidity activity for a pool (with flow accounting, contract detection, gas estimates)
+ *   - get_address_activity    -> Cross-pool activity scan for a specific address
  *   - get_morpho_markets      -> Find Morpho markets that accept Spectra PTs as collateral
  *   - get_morpho_rate         -> Get live borrow rate for a specific Morpho market
  *   - quote_trade             -> Estimate expected output, price impact, and minOut for a PT swap
@@ -114,11 +115,21 @@ full intent. Common Router patterns:
 - Any SELL_PT, BUY_PT, or AMM_ADD_LIQUIDITY event might be one step of these larger
   operations. Always check portfolio holdings to see the resulting position.
 
-Reading a wallet's holdings:
-- Minting always produces equal PT and YT. Any imbalance means tokens were traded.
-- YT but no PT → sold or LPed PT after minting. PT but no YT → sold YT or bought PT directly.
-- Balanced PT + YT = recently minted, no directional trade yet.
-- High LP = tokens absorbed into pool (check if YT balance is also high).
+Known Limitation — Mint Visibility:
+- Standalone mints (deposit IBT → PT+YT) do NOT appear in pool activity data at all.
+  Pool activity only captures Curve AMM events (swaps and LP adds/removes).
+- This means the critical first step of most strategies — the mint — is invisible.
+- You can INFER mints from the pattern (e.g., a wallet with 18K YT and 0 PT must have
+  minted and then sold the PT), but you cannot OBSERVE them directly.
+- If your analysis depends on confirming mints, this is a known data gap.
+  Cross-reference portfolio holdings (the "what") with activity patterns (the "how")
+  to build the most complete picture possible within available data.
+
+Reading a wallet's strategy from its holdings:
+- A wallet holding YT but no PT has sold/LPed its PT (yield bull, leveraged long variable rate).
+- A wallet holding PT but no YT has sold its YT (fixed rate lock).
+- Balanced PT + YT = recently minted, no directional position yet.
+- High LP = liquidity provider (but check if YT balance is also high — could be mint+LP loop).
 
 Key Integrations:
 - AMM: Curve Finance (PT/IBT pools)
