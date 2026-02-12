@@ -362,7 +362,7 @@ check your current positions. Use scan_opportunities for multi-chain comparison.
             }
           }
         }
-        lines.push(`  YT Leverage: ${(pool.ytLeverage || 0).toFixed(1)}x (for yield bulls)`);
+        lines.push(`  YT Leverage: ${(pool.ytLeverage || 0).toFixed(1)}x`);
 
         const text = lines.join("\n");
         return { content: [{ type: "text" as const, text }] };

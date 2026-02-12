@@ -33,12 +33,14 @@ const TOPICS: Record<string, string> = {
   Always cross-reference with get_portfolio to see resulting holdings.`,
 
   "position_analysis": `Reading Wallet Strategy from Holdings
-- High YT, low PT → leveraged yield bull (mint + sell PT or flash-mint loop)
-- High PT, low YT → fixed-rate lock (bought PT, sold or never minted YT)
-- High LP, low PT/YT → pure liquidity provider
-- Balanced PT + YT → recently minted, no directional position yet
-- High LP + high YT → mint+LP loop (minted PT+YT, LPed PT+IBT, kept YT)
-- Large activity volume with small current holdings → capital recycling (looping)
+- Minting always produces equal PT and YT. Any imbalance means tokens were traded.
+- get_portfolio shows Position Shape as a balance ratio (e.g., "YT/PT 4:1" or "PT only").
+- Key ratios to reason about:
+    YT >> PT: the holder sold or LPed PT after minting
+    PT >> YT: the holder sold YT, or bought PT without minting
+    LP present with low PT/YT: tokens were absorbed into the pool
+    Balanced PT + YT: recently minted, no directional trade yet
+- Large activity volume with small current holdings → capital recycled through the position
 - Strategies often span multiple wallets — check all concentrated addresses.`,
 
   "looping": `Looping Strategy (leveraged fixed yield via Morpho)
