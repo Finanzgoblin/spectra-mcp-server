@@ -29,6 +29,7 @@
     "type": "git",
     "url": "git+https://github.com/Finanzgoblin/spectra-mcp-server.git"
   },
+  "mcpName": "io.github.Finanzgoblin/spectra-mcp-server",
   "homepage": "https://github.com/Finanzgoblin/spectra-mcp-server#readme",
   "bugs": {
     "url": "https://github.com/Finanzgoblin/spectra-mcp-server/issues"
