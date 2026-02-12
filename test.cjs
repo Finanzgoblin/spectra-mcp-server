@@ -1519,6 +1519,136 @@ async function testModelMetavaultStrategy(client) {
   assert(!minimal.includes("Curator Economics"), "no curator economics without capital_usd", "should be absent");
 }
 
+async function testGetAddressActivity(client) {
+  console.log("\n--- get_address_activity ---");
+
+  // Use zero address (should find no activity, but shouldn't crash)
+  const { text: noActivity } = await client.callTool("get_address_activity", {
+    address: ZERO_ADDRESS,
+    chain: "mainnet",
+  }, 30_000);
+
+  assert(
+    noActivity.includes("No pool activity found") || noActivity.includes("Address Activity Scan"),
+    "zero address returns no activity or scan results",
+    `unexpected: ${noActivity.slice(0, 100)}`
+  );
+
+  // Schema check: must have address param with regex
+  const tools = await client.listTools();
+  const addrActTool = tools.find((t) => t.name === "get_address_activity");
+  assert(addrActTool, "get_address_activity registered", "missing");
+
+  if (addrActTool) {
+    const props = addrActTool.inputSchema.properties;
+    assert(props.address && props.address.pattern, "get_address_activity address has regex", "missing");
+    assert(props.chain, "get_address_activity has optional chain param", "missing");
+    assert(props.min_volume_usd, "get_address_activity has min_volume_usd param", "missing");
+
+    const required = addrActTool.inputSchema.required || [];
+    assert(required.includes("address"), "get_address_activity requires address", `required: ${JSON.stringify(required)}`);
+    assert(!required.includes("chain"), "get_address_activity: chain is optional", `required: ${JSON.stringify(required)}`);
+    assert(!required.includes("min_volume_usd"), "get_address_activity: min_volume_usd is optional", `required: ${JSON.stringify(required)}`);
+  }
+
+  // Test all-chain scan with zero address (should complete without crash, may be slow)
+  const { text: allChain } = await client.callTool("get_address_activity", {
+    address: ZERO_ADDRESS,
+  }, 60_000);
+
+  assert(
+    allChain.includes("No pool activity found") || allChain.includes("Address Activity Scan"),
+    "all-chain address scan completes without crash",
+    `unexpected: ${allChain.slice(0, 100)}`
+  );
+
+  // If we have a known pool with activity, try scanning mainnet for a real active address
+  // We'll pick an address from get_pool_activity's Address Concentration if available
+  if (KNOWN_POOL) {
+    const { text: poolAct } = await client.callTool("get_pool_activity", {
+      chain: "mainnet",
+      pool_address: KNOWN_POOL,
+      limit: 5,
+    });
+
+    // Extract an active address from the Address Concentration section
+    const addrMatch = poolAct.match(/\s+(0x[a-fA-F0-9]{40})\s+\d+ txns/);
+    if (addrMatch) {
+      const activeAddr = addrMatch[1];
+      const { text: realScan } = await client.callTool("get_address_activity", {
+        address: activeAddr,
+        chain: "mainnet",
+      }, 30_000);
+
+      assert(
+        realScan.includes("Address Activity Scan") || realScan.includes("No pool activity"),
+        "real address scan returns valid output",
+        `unexpected: ${realScan.slice(0, 100)}`
+      );
+
+      if (realScan.includes("Address Activity Scan")) {
+        assert(realScan.includes("Pools with Activity"), "shows pool count", "missing");
+        assert(realScan.includes("Volume:"), "shows volume per pool", "missing");
+        assert(realScan.includes("Cross-Pool Totals"), "shows cross-pool totals", "missing");
+        assert(realScan.includes("get_pool_activity"), "shows tip for deep analysis", "missing");
+        pass("real address activity scan verified");
+      } else {
+        pass("real address had no activity on mainnet (valid empty result)");
+      }
+    } else {
+      skip("could not extract active address from pool activity");
+    }
+  }
+}
+
+async function testOnChainQuoting(client) {
+  console.log("\n--- on-chain Curve get_dy() quoting ---");
+
+  if (!KNOWN_PT) {
+    skip("on-chain quoting (no PT address discovered)");
+    return;
+  }
+
+  // A normal-sized buy should attempt on-chain quoting
+  const { text: buy } = await client.callTool("quote_trade", {
+    chain: "mainnet",
+    pt_address: KNOWN_PT,
+    amount: 100,
+    side: "buy",
+  });
+
+  // Either on-chain or estimated — both are valid
+  const isOnChain = buy.includes("on-chain");
+  const isEstimated = buy.includes("estimated") || buy.includes("constant-product");
+  assert(
+    isOnChain || isEstimated,
+    "quote indicates source (on-chain or estimated)",
+    `no source indicator found`
+  );
+
+  if (isOnChain) {
+    pass("on-chain Curve get_dy() quote returned successfully");
+    assert(buy.includes("StableSwap-NG"), "on-chain quote mentions StableSwap-NG source", "missing");
+    assert(buy.includes("derived from on-chain"), "on-chain price impact is derived", "missing");
+  } else {
+    pass("on-chain quoting fell back to math estimate (RPC may be unavailable)");
+  }
+
+  // A sell should also work
+  const { text: sell } = await client.callTool("quote_trade", {
+    chain: "mainnet",
+    pt_address: KNOWN_PT,
+    amount: 100,
+    side: "sell",
+  });
+
+  assert(
+    sell.includes("on-chain") || sell.includes("estimated") || sell.includes("constant-product"),
+    "sell quote also indicates source",
+    "missing source indicator"
+  );
+}
+
 async function testMalformedAddresses(client) {
   console.log("\n--- Malformed address validation ---");
 
@@ -1626,6 +1756,7 @@ async function main() {
       await testGetPoolVolume(client);
       await testGetPoolActivity(client);
       await testActivityEmptyFilter(client);
+      await testGetAddressActivity(client);
 
       // Tools that need a PT address (discovered from list_pools)
       await testGetPtDetails(client);
@@ -1645,6 +1776,7 @@ async function main() {
 
       // Trade quoting & simulation
       await testQuoteTrade(client);
+      await testOnChainQuoting(client);
       await testSimulatePortfolioAfterTrade(client);
 
       // Strategy scanner

@@ -492,6 +492,89 @@ export async function fetchVeTotalSupply(): Promise<number> {
 }
 
 // =============================================================================
+// On-Chain Curve Pool Quoting (get_dy)
+// =============================================================================
+
+// Curve StableSwap-NG function selectors (from keccak256 of signatures)
+const CURVE_SELECTORS = {
+  get_dy: "0x5e0d443f",  // get_dy(int128,int128,uint256)
+} as const;
+
+/**
+ * Encode a Curve get_dy(i, j, dx) call as raw calldata.
+ * i, j are int128 pool indices (0=IBT, 1=PT). dx is uint256 in token raw units.
+ */
+function encodeCurveGetDy(i: number, j: number, dx: bigint): string {
+  const iHex = i.toString(16).padStart(64, "0");
+  const jHex = j.toString(16).padStart(64, "0");
+  const dxHex = dx.toString(16).padStart(64, "0");
+  return CURVE_SELECTORS.get_dy + iHex + jHex + dxHex;
+}
+
+/**
+ * Call Curve pool's get_dy(i, j, dx) on-chain via eth_call.
+ * Returns the expected output in raw token units (bigint), or null on failure.
+ *
+ * Best-effort — returns null if RPC is unavailable or call reverts.
+ * Used to get exact on-chain quotes instead of the conservative constant-product estimate.
+ *
+ * @param poolAddress - Curve pool contract address
+ * @param i - Input coin index (0=IBT, 1=PT)
+ * @param j - Output coin index (0=IBT, 1=PT)
+ * @param dx - Input amount in raw token units (before decimals)
+ * @param chainSlug - Spectra chain slug (e.g., "mainnet", "base")
+ */
+export async function fetchCurveGetDy(
+  poolAddress: string,
+  i: number,
+  j: number,
+  dx: bigint,
+  chainSlug: string,
+): Promise<bigint | null> {
+  const network = resolveNetwork(chainSlug);
+  const rpcUrl = CHAIN_RPC_URLS[network];
+  if (!rpcUrl) return null;
+
+  try {
+    const calldata = encodeCurveGetDy(i, j, dx);
+    const res = await fetchWithRetry(() =>
+      fetch(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "eth_call",
+          params: [
+            { to: poolAddress, data: calldata },
+            "latest",
+          ],
+        }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      })
+    );
+
+    if (!res.ok) return null;
+
+    let json: any;
+    try {
+      json = await res.json();
+    } catch {
+      return null;
+    }
+
+    if (json.error) return null;
+
+    const hex: string = json.result;
+    if (!hex || hex === "0x" || hex === "0x0") return null;
+
+    return BigInt(hex);
+  } catch {
+    return null; // Best-effort — fall back to math estimate
+  }
+}
+
+// =============================================================================
 // On-Chain Address Type Detection
 // =============================================================================
 

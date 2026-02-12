@@ -8,8 +8,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork } from "../config.js";
-import type { SpectraPt, SpectraPool, PositionSnapshot } from "../types.js";
-import { fetchSpectra } from "../api.js";
+import type { SpectraPt, SpectraPool, PositionSnapshot, TradeQuote } from "../types.js";
+import { fetchSpectra, fetchCurveGetDy } from "../api.js";
 import {
   parsePtResponse,
   buildQuoteFromPt,
@@ -93,11 +93,35 @@ price quote without portfolio context.`,
           return { content: [{ type: "text" as const, text }] };
         }
 
-        // Build the trade quote
-        const quote = buildQuoteFromPt(pt, pool, amount, side, slippage_tolerance);
-        if (!quote) {
+        // Build the trade quote (math estimate first, then try on-chain)
+        const mathQuote = buildQuoteFromPt(pt, pool, amount, side, slippage_tolerance);
+        if (!mathQuote) {
           const text = `Cannot quote: PT price data unavailable for ${pt.name}. The pool may have no liquidity.`;
           return { content: [{ type: "text" as const, text }] };
+        }
+
+        // Try on-chain Curve get_dy() for exact output (best-effort)
+        let quote: TradeQuote = mathQuote;
+        if (pool.address) {
+          const ibtDec = pt.ibt?.decimals ?? pt.decimals ?? 18;
+          const ptDec = pt.decimals ?? 18;
+          const i = side === "buy" ? 0 : 1;
+          const j = side === "buy" ? 1 : 0;
+          const inputDec = side === "buy" ? ibtDec : ptDec;
+          const outputDec = side === "buy" ? ptDec : ibtDec;
+          const dx = BigInt(Math.round(amount * 10 ** inputDec));
+          if (dx > 0n) {
+            const dyRaw = await fetchCurveGetDy(pool.address, i, j, dx, chain);
+            if (dyRaw !== null && dyRaw > 0n) {
+              const expectedOut = Number(dyRaw) / 10 ** outputDec;
+              if (expectedOut > 0 && Number.isFinite(expectedOut)) {
+                const spotOut = amount * mathQuote.spotRate;
+                const priceImpactPct = spotOut > 0 ? Math.max(0, (1 - expectedOut / spotOut) * 100) : 0;
+                const minOut = expectedOut * (1 - slippage_tolerance / 100);
+                quote = { ...mathQuote, expectedOut, effectiveRate: expectedOut / amount, priceImpactPct, minOut, onChain: true };
+              }
+            }
+          }
         }
 
         // Extract prices from pool

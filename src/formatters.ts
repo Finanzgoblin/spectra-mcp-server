@@ -882,15 +882,22 @@ export function formatTradeQuote(q: TradeQuote): string {
         ? "  * Moderate price impact -- verify on-chain quote before executing *"
         : "";
 
+  const sourceTag = q.onChain
+    ? "(on-chain Curve get_dy)"
+    : "(estimated — constant-product upper bound)";
+  const impactLabel = q.onChain
+    ? `~${formatPct(q.priceImpactPct)} (derived from on-chain quote vs spot)`
+    : `~${formatPct(q.priceImpactPct)} (conservative constant-product upper bound)`;
+
   const lines = [
-    `-- Trade Quote: ${sideLabel} --`,
+    `-- Trade Quote: ${sideLabel} ${sourceTag} --`,
     ``,
     `  Input:  ${q.amountIn.toLocaleString("en-US", { maximumFractionDigits: 6 })} ${q.inputToken}`,
     `  Output: ${q.expectedOut.toLocaleString("en-US", { maximumFractionDigits: 6 })} ${q.outputToken} (expected)`,
     ``,
     `  Spot Rate:      1 ${q.inputToken} = ${q.spotRate.toFixed(6)} ${q.outputToken}`,
     `  Effective Rate:  1 ${q.inputToken} = ${q.effectiveRate.toFixed(6)} ${q.outputToken}`,
-    `  Price Impact:   ~${formatPct(q.priceImpactPct)} (conservative constant-product upper bound)`,
+    `  Price Impact:   ${impactLabel}`,
     ``,
     `  Slippage Tolerance: ${formatPct(q.slippageTolerancePct)}`,
     `  Min Output:     ${q.minOut.toLocaleString("en-US", { maximumFractionDigits: 6 })} ${q.outputToken}`,
@@ -903,11 +910,17 @@ export function formatTradeQuote(q: TradeQuote): string {
     lines.push(impactWarn);
   }
 
-  lines.push(``);
-  lines.push(`  Note: Estimate only. Actual Curve StableSwap-NG pools are more capital-efficient,`);
-  lines.push(`  so real impact will likely be lower. For exact on-chain quotes use:`);
-  lines.push(`    - Curve pool: get_dy(i, j, amount)  [coins(0)=IBT, coins(1)=PT]`);
-  lines.push(`    - Spectra Router: previewRate(commands, inputs)`);
+  if (q.onChain) {
+    lines.push(``);
+    lines.push(`  Source: Live on-chain Curve StableSwap-NG get_dy() quote.`);
+    lines.push(`  This reflects actual pool state including amplification parameter.`);
+  } else {
+    lines.push(``);
+    lines.push(`  Note: Estimate only. Actual Curve StableSwap-NG pools are more capital-efficient,`);
+    lines.push(`  so real impact will likely be lower. For exact on-chain quotes use:`);
+    lines.push(`    - Curve pool: get_dy(i, j, amount)  [coins(0)=IBT, coins(1)=PT]`);
+    lines.push(`    - Spectra Router: previewRate(commands, inputs)`);
+  }
 
   return lines.join("\n");
 }
