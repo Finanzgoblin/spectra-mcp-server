@@ -79,8 +79,7 @@ export function formatScanOpportunityCompact(opp: ScanOpportunity, rank: number)
 
 /** One-line YT arb opportunity summary for compact output. */
 export function formatYtArbCompact(opp: YtArbitrageOpportunity, rank: number): string {
-  const dir = opp.direction === "buy_yt" ? "BUY" : "SELL";
-  return `#${rank} ${dir} ${opp.pt.name} (${opp.chain}) | Spread ${opp.spreadPct >= 0 ? "+" : ""}${formatPct(opp.spreadPct)} | IBT ${formatPct(opp.ibtCurrentApr)} vs YT ${formatPct(opp.ytImpliedRate)} | Impact ${formatPct(opp.entryImpactPct)} | ${opp.daysToMaturity}d | PT: ${opp.ptAddress}`;
+  return `#${rank} ${opp.pt.name} (${opp.chain}) | Spread ${opp.spreadPct >= 0 ? "+" : ""}${formatPct(opp.spreadPct)} | IBT ${formatPct(opp.ibtCurrentApr)} vs YT ${formatPct(opp.ytImpliedRate)} | Impact ${formatPct(opp.entryImpactPct)} | ${opp.daysToMaturity}d | PT: ${opp.ptAddress}`;
 }
 
 // =============================================================================
@@ -231,25 +230,22 @@ export function formatPositionSummary(pos: SpectraPt, chain: string): PositionRe
     lines.push(`  MATURED -- PT redeemable 1:1. Consider claiming.`);
   }
 
-  // Position shape analysis — flag imbalances to guide strategy identification
+  // Position shape — show balance ratios so the agent can reason about strategy
   if (!expired && (ptBal > 0 || ytBal > 0)) {
-    const signals: string[] = [];
-    if (ytBal > 0 && ptBal === 0) {
-      signals.push("YT-only: sold/LPed all PT (leveraged yield bull)");
-    } else if (ytBal > ptBal * 10 && ptBal > 0) {
-      signals.push(`YT/PT ratio: ${Math.round(ytBal / ptBal)}:1 — heavily yield-directional`);
-    } else if (ptBal > 0 && ytBal === 0) {
-      signals.push("PT-only: sold all YT (pure fixed-rate position)");
-    } else if (ptBal > ytBal * 10 && ytBal > 0) {
-      signals.push(`PT/YT ratio: ${Math.round(ptBal / ytBal)}:1 — heavily fixed-rate`);
+    const parts: string[] = [];
+    if (ptBal > 0 && ytBal > 0) {
+      const ratio = ptBal > ytBal
+        ? `PT/YT ${Math.round(ptBal / ytBal)}:1`
+        : `YT/PT ${Math.round(ytBal / ptBal)}:1`;
+      parts.push(ratio);
+    } else if (ytBal > 0) {
+      parts.push("YT only (no PT)");
+    } else {
+      parts.push("PT only (no YT)");
     }
-    if (lpBal > 0 && ytBal > 0 && ptBal === 0) {
-      signals.push("LP + YT but no PT: likely mint→LP loop (PT absorbed into pool)");
-    }
-    if (signals.length > 0) {
-      lines.push(``);
-      lines.push(`  Position Shape: ${signals.join(". ")}`);
-    }
+    if (lpBal > 0) parts.push(`LP: ${lpBal.toLocaleString("en-US", { maximumFractionDigits: 2 })}`);
+    lines.push(``);
+    lines.push(`  Position Shape: ${parts.join(" | ")}`);
   }
 
   return { text: lines.join("\n"), totalValue };
@@ -843,7 +839,7 @@ export function formatScanOpportunity(opp: ScanOpportunity, rank: number, boostI
   // Looping section
   if (opp.looping) {
     lines.push(`    Looping: Morpho market found (LLTV ${formatPct(opp.looping.lltv * 100)}, borrow ${formatPct(opp.looping.borrowRatePct)})`);
-    lines.push(`      Optimal: ${opp.looping.optimalLoops} loops -> ${formatPct(opp.looping.optimalNetApy)} net APY (${opp.looping.optimalLeverage.toFixed(2)}x leverage)`);
+    lines.push(`      Peak net APY: ${opp.looping.optimalLoops} loops -> ${formatPct(opp.looping.optimalNetApy)} (${opp.looping.optimalLeverage.toFixed(2)}x leverage)`);
     lines.push(`      Cumulative entry cost: ~${formatPct(opp.looping.cumulativeEntryImpactPct)} -> ${formatPct(opp.looping.optimalEffectiveNetApy)} effective net APY`);
     lines.push(`      Morpho Liquidity: ${formatUsd(opp.looping.morphoLiquidityUsd)}`);
   } else {
@@ -854,9 +850,15 @@ export function formatScanOpportunity(opp: ScanOpportunity, rank: number, boostI
   const lpLines = formatLpApyLines(opp.lpApy, opp.lpApyBoostedTotal, opp.lpApyAtBoost, opp.lpApyBreakdown, boostInfo);
   for (const ll of lpLines) lines.push(ll);
 
-  // Fixed vs Variable
-  const spreadSign = opp.fixedVsVariableSpread >= 0 ? "+" : "";
-  lines.push(`    Fixed vs Variable: ${formatPct(opp.impliedApy)} fixed vs ${formatPct(opp.variableApr)} variable (${spreadSign}${formatPct(opp.fixedVsVariableSpread)} spread)`);
+  // Yield dimensions — all strategies side by side so the agent sees the tension
+  const dims: string[] = [
+    `Fixed: ${formatPct(opp.effectiveApy)}`,
+    `Variable: ${formatPct(opp.variableApr)}`,
+    `LP: ${formatPct(opp.lpApy)}`,
+  ];
+  if (opp.looping) dims.push(`Loop: ${formatPct(opp.looping.optimalEffectiveNetApy)}`);
+  if (opp.lpApyBoostedTotal > opp.lpApy) dims.push(`LP(max boost): ${formatPct(opp.lpApyBoostedTotal)}`);
+  lines.push(`    Yield Dimensions: ${dims.join(" | ")}`);
 
   // Underlying info
   lines.push(`    Underlying: ${opp.underlying} | IBT: ${opp.ibtSymbol} (${opp.ibtProtocol})`);
@@ -892,7 +894,7 @@ export function formatScanResults(
   if (veSpectraBalance !== undefined && veSpectraBalance > 0) {
     lines.push(`  veSPECTRA: ${veSpectraBalance.toLocaleString("en-US")} tokens (boost varies per pool)`);
   }
-  lines.push(`  Results: ${opportunities.length} opportunities ranked by ${includeLooping ? "looping net APY (where available) or " : ""}effective APY`);
+  lines.push(`  Results: ${opportunities.length} opportunities sorted by ${includeLooping ? "looping net APY / " : ""}effective APY (see Yield Dimensions for other strategies)`);
 
   if (failedChains.length > 0) {
     lines.push(`  Note: ${failedChains.length} chain(s) failed (${failedChains.join(", ")}). Results may be partial.`);
@@ -909,9 +911,7 @@ export function formatScanResults(
 
   // Footer
   lines.push(``);
-  lines.push(`  Disclaimer: Estimates only. Price impact uses constant-product upper bound.`);
-  lines.push(`  Actual Curve StableSwap-NG pools are more capital-efficient. Verify on-chain before executing.`);
-  lines.push(`  This is NOT financial advice.`);
+  lines.push(`  Estimates use constant-product upper bound. Actual Curve StableSwap-NG pools are more capital-efficient.`);
 
   return lines.join("\n");
 }
@@ -923,14 +923,13 @@ export function formatScanResults(
 export function formatYtArbitrageOpportunity(opp: YtArbitrageOpportunity, rank: number, boostInfo?: BoostInfo): string {
   const lines: string[] = [];
 
-  const dirLabel = opp.direction === "buy_yt" ? "BUY YT" : "SELL YT";
   const absSpread = Math.abs(opp.spreadPct);
-  lines.push(`#${rank}  ${dirLabel}  ${opp.pt.name} (${opp.chain}) -- ${formatPct(absSpread)} spread`);
+  lines.push(`#${rank}  ${opp.pt.name} (${opp.chain}) -- ${formatPct(absSpread)} spread`);
 
-  // Rates
-  lines.push(`    IBT Current APR: ${formatPct(opp.ibtCurrentApr)}  (what the IBT actually earns)`);
-  lines.push(`    YT Implied Rate: ${formatPct(opp.ytImpliedRate)}  (what the market prices in)`);
-  lines.push(`    Spread: ${opp.spreadPct >= 0 ? "+" : ""}${formatPct(opp.spreadPct)} (${opp.direction === "buy_yt" ? "YT underpriced" : "YT overpriced"})`);
+  // Rates — the raw mechanics for the agent to interpret
+  lines.push(`    IBT Current APR: ${formatPct(opp.ibtCurrentApr)}  (what the IBT actually earns now)`);
+  lines.push(`    YT Implied Rate: ${formatPct(opp.ytImpliedRate)}  (what the YT market price implies)`);
+  lines.push(`    Spread: ${opp.spreadPct >= 0 ? "+" : ""}${formatPct(opp.spreadPct)} (IBT APR minus YT implied rate)`);
 
   // YT price context
   lines.push(`    YT Price: ${formatUsd(opp.ytPriceUsd)} (${opp.ytPriceUnderlying.toFixed(4)} underlying) | Leverage: ${opp.ytLeverage.toFixed(1)}x`);
@@ -976,8 +975,8 @@ export function formatYtArbitrageResults(
 ): string {
   const lines: string[] = [];
 
-  const buyCount = opportunities.filter((o) => o.direction === "buy_yt").length;
-  const sellCount = opportunities.filter((o) => o.direction === "sell_yt").length;
+  const positiveSpread = opportunities.filter((o) => o.spreadPct > 0).length;
+  const negativeSpread = opportunities.filter((o) => o.spreadPct <= 0).length;
 
   // Header
   lines.push(`== YT Arbitrage Scan: ${formatUsd(capitalUsd)} capital ==`);
@@ -986,7 +985,7 @@ export function formatYtArbitrageResults(
   if (veSpectraBalance !== undefined && veSpectraBalance > 0) {
     lines.push(`  veSPECTRA: ${veSpectraBalance.toLocaleString("en-US")} tokens (boost varies per pool)`);
   }
-  lines.push(`  Results: ${opportunities.length} opportunities (${buyCount} buy YT, ${sellCount} sell YT)`);
+  lines.push(`  Results: ${opportunities.length} opportunities (${positiveSpread} positive spread, ${negativeSpread} negative spread)`);
 
   if (failedChains.length > 0) {
     lines.push(`  Note: ${failedChains.length} chain(s) failed (${failedChains.join(", ")}). Results may be partial.`);
@@ -1003,13 +1002,12 @@ export function formatYtArbitrageResults(
 
   // Footer
   lines.push(``);
-  lines.push(`  How it works:`);
-  lines.push(`    BUY YT  = IBT yields more than market expects. Buy YT to capture excess yield.`);
-  lines.push(`    SELL YT = IBT yields less than market expects. Sell YT (or mint PT+YT, sell YT) to lock in spread.`);
+  lines.push(`  Reading the spread:`);
+  lines.push(`    Positive spread = IBT currently earns more than YT price implies.`);
+  lines.push(`    Negative spread = IBT currently earns less than YT price implies.`);
   lines.push(``);
-  lines.push(`  Disclaimer: Spreads reflect current conditions only. IBT rates are variable and can change.`);
-  lines.push(`  Break-even assumes the spread persists. Price impact is a conservative upper bound.`);
-  lines.push(`  This is NOT financial advice.`);
+  lines.push(`  Spreads reflect current conditions only. IBT rates are variable. Break-even assumes the spread persists.`);
+  lines.push(`  Price impact is a conservative upper bound (constant-product model).`);
 
   return lines.join("\n");
 }
@@ -1088,7 +1086,7 @@ export function formatMetavaultStrategy(opts: {
   }
 
   lines.push(``);
-  lines.push(`  * Optimal: ${opts.bestLoop} loops -> ${formatPct(opts.bestNetApy)} net APY (${opts.bestLeverage.toFixed(2)}x leverage)`);
+  lines.push(`  * Highest net APY: ${opts.bestLoop} loops -> ${formatPct(opts.bestNetApy)} (${opts.bestLeverage.toFixed(2)}x leverage). Margin column shows liquidation buffer per row.`);
 
   // ── PT Comparison ──────────────────────────────────────────
   if (opts.comparePtApy !== undefined && opts.comparePtRows) {
@@ -1113,8 +1111,8 @@ export function formatMetavaultStrategy(opts: {
     if (opts.comparePtBestNetApy !== undefined) {
       const totalPremium = opts.bestNetApy - opts.comparePtBestNetApy;
       lines.push(``);
-      lines.push(`  PT Optimal: ${opts.comparePtBestLoop} loops -> ${formatPct(opts.comparePtBestNetApy)}`);
-      lines.push(`  MV Optimal: ${opts.bestLoop} loops -> ${formatPct(opts.bestNetApy)}`);
+      lines.push(`  PT peak: ${opts.comparePtBestLoop} loops -> ${formatPct(opts.comparePtBestNetApy)}`);
+      lines.push(`  MV peak: ${opts.bestLoop} loops -> ${formatPct(opts.bestNetApy)}`);
       lines.push(`  Double-Loop Premium: ${totalPremium >= 0 ? "+" : ""}${formatPct(totalPremium)}`);
     }
   }
@@ -1142,8 +1140,7 @@ export function formatMetavaultStrategy(opts: {
   lines.push(`  - Borrow rate: Morpho rates are variable — can spike and erode looping margin`);
   lines.push(`  - Curator risk: Misconfigured rollovers, bad allocations, or delayed actions`);
   lines.push(`  - Liquidity: MetaVault shares may not have deep secondary market for unwinding`);
-  lines.push(`  - This is a STRATEGY MODEL with hypothetical parameters. Verify all inputs before deploying.`);
-  lines.push(`  - NOT financial advice.`);
+  lines.push(`  - This is a strategy model with hypothetical parameters. Verify all inputs before deploying.`);
 
   return lines.join("\n");
 }

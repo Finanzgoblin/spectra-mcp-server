@@ -156,51 +156,16 @@ Use quote_trade to estimate price impact for a specific trade size.`,
     "get_pool_activity",
     `Get recent trade and liquidity activity for a specific Spectra pool.
 Returns individual transactions: buys, sells, and liquidity adds/removes with
-USD values, timestamps, and tx hashes. Use list_pools first to find pool addresses.
-Useful for monitoring trading patterns and whale activity.
+USD values, timestamps, and tx hashes.
 
-CRITICAL: Pool activity only shows the Curve pool's perspective (IBT ↔ PT swaps and
-LP events). It does NOT show the full picture of what users are doing. The Spectra
-Router's execute() batches multiple operations atomically, so a single pool event
-may be one step of a larger strategy that is invisible in the activity data.
+Pool activity shows only the Curve pool's perspective (IBT ↔ PT swaps and LP
+events). The Spectra Router batches operations atomically, so any single pool
+event may be one step of a multi-step strategy. There is no BUY_YT or SELL_YT
+event type — the pool never touches YT directly. Use get_protocol_context for
+the full mechanics of how Router batching maps to pool activity types.
 
-Protocol mechanics that affect how activity appears:
-- BUY_PT and SELL_PT are Curve pool swaps between IBT and PT.
-- There is NO "BUY_YT" or "SELL_YT" type. The pool never touches YT directly.
-- YT selling via the Router's flash-redeem internally buys PT from the pool to
-  pair with YT for redemption — so YT sells show up as BUY_PT in the activity log.
-- A standalone mint (deposit IBT → PT+YT) does NOT appear in pool activity.
-  However, the Router can batch a mint + LP add in one atomic execute() call.
-  The minted PT + remaining IBT enter the pool as AMM_ADD_LIQUIDITY while the
-  minted YT goes directly to the user's wallet. So AMM_ADD_LIQUIDITY events
-  may ALSO represent YT acquisition — the YT minting is invisible in pool data.
-- The Router can also flash-mint atomically: flash-borrow IBT → mint PT+YT →
-  sell PT on the pool → user tops up the shortfall → user receives YT. This
-  shows up as SELL_PT but the user's net action is acquiring YT, not selling PT.
-- AMM_REMOVE_LIQUIDITY returns IBT + PT from the pool. Users often follow up by
-  selling the PT (SELL_PT) to recover capital, completing a mint→LP→remove→sell
-  loop that nets them YT at the cost of the PT discount (~1 - ptPrice).
-
-Key principle: any pool event type can be one step of a multi-step Router operation.
-Do not assume SELL_PT means "user is bearish on PT" or AMM_ADD_LIQUIDITY means
-"user is providing liquidity for yield." Always cross-reference with get_portfolio
-to see what the address actually holds (PT, YT, LP balances) — the holdings reveal
-the true strategy better than the activity log alone.
-
-Analysis tips:
-- If an address has high SELL_PT count but holds mostly YT → mint-and-sell loop
-  (YT accumulation via PT discount). Check if YT balance >> PT balance.
-- If an address has BUY_PT events → could be YT flash-redeem (selling YT).
-  Check if their YT balance is low/zero relative to activity volume.
-- If an address has paired ADD/REMOVE liquidity → likely cycling through LP as
-  part of a mint loop, not long-term liquidity provision.
-- Compare activity volume to current position size. Large activity volume with
-  small current holdings = capital recycling (looping strategy).
-
-Output includes an Address Concentration section with full addresses and per-address
-type breakdowns. Use get_portfolio on those addresses to see their PT, YT, and LP
-balances. Most analysis can be done without a block explorer — use get_portfolio on
-addresses from Address Concentration, and compare_yield or get_pt_details for rate context.`,
+Cross-reference with get_portfolio on active addresses to see resulting holdings
+(PT, YT, LP balances). Holdings reveal strategy better than activity alone.`,
     {
       chain: CHAIN_ENUM.describe("The blockchain network"),
       pool_address: EVM_ADDRESS.describe("The Curve pool address (0x...) OR a PT address. If a PT address is given, it will be resolved to the corresponding pool automatically."),
