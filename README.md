@@ -141,22 +141,25 @@ The MetaVault API (`/v1/{network}/metavaults`) is not yet live. This tool uses c
 
 ## Setup
 
+### Install from npm (recommended)
+
 ```bash
-# Clone
-git clone <this-repo>
+npm install -g spectra-mcp-server
+```
+
+Or run directly without installing:
+
+```bash
+npx spectra-mcp-server
+```
+
+### Install from source
+
+```bash
+git clone https://github.com/Finanzgoblin/spectra-mcp-server.git
 cd spectra-mcp-server
-
-# Install
 npm install
-
-# Build
 npm run build
-
-# Verify (runs 322 tests against live API)
-npm test
-
-# Schema-only tests (no network required, 98 tests)
-npm run test:offline
 ```
 
 ## Connect to Claude Desktop
@@ -167,8 +170,8 @@ Add to your `claude_desktop_config.json`:
 {
   "mcpServers": {
     "spectra-finance": {
-      "command": "node",
-      "args": ["/absolute/path/to/spectra-mcp-server/build/index.js"]
+      "command": "npx",
+      "args": ["spectra-mcp-server"]
     }
   }
 }
@@ -179,7 +182,7 @@ Restart Claude Desktop. You'll see the Spectra tools available.
 ## Connect to Claude Code
 
 ```bash
-claude mcp add spectra-finance node /absolute/path/to/spectra-mcp-server/build/index.js
+claude mcp add spectra-finance -- npx spectra-mcp-server
 ```
 
 ## Example Queries
@@ -303,6 +306,8 @@ All address parameters are validated (`0x` + 40 hex chars). All API calls have a
 - **Graceful shutdown**: `server.close()` called before `process.exit()` on SIGTERM/SIGINT
 
 ## Testing
+
+From a source checkout:
 
 ```bash
 # Full suite (322 tests, requires network)
