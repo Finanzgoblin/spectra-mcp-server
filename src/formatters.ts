@@ -926,6 +926,176 @@ export function formatTradeQuote(q: TradeQuote): string {
 }
 
 // =============================================================================
+// Layer 3 Output Hints
+// =============================================================================
+
+/**
+ * Layer 3 output hint: volume context relative to pool liquidity.
+ * Computes volume/liquidity ratio, trend direction, buy/sell imbalance.
+ * Returns lines to append to get_pool_volume output.
+ *
+ * Dissolution condition: This hint exists because volume data alone is
+ * ambiguous without liquidity context. If a future API returns
+ * pre-computed volume-to-liquidity ratios, this function becomes redundant
+ * and should be removed.
+ */
+export function formatVolumeHints(opts: {
+  totalVolume: number;
+  totalBuy: number;
+  totalSell: number;
+  recentTotal: number;
+  recentBuy: number;
+  recentSell: number;
+  rangeDays: number;
+  poolLiquidityUsd?: number;
+}): string[] {
+  const lines: string[] = [];
+  lines.push(``);
+  lines.push(`  Volume Signals:`);
+
+  // Volume/liquidity ratio
+  if (opts.poolLiquidityUsd && opts.poolLiquidityUsd > 0) {
+    const dailyAvg = opts.totalVolume / Math.max(1, opts.rangeDays);
+    const volLiqRatio = dailyAvg / opts.poolLiquidityUsd;
+    const recentDailyAvg = opts.recentTotal / 7;
+    const recentVolLiqRatio = recentDailyAvg / opts.poolLiquidityUsd;
+
+    lines.push(`    Pool Liquidity: ${formatUsd(opts.poolLiquidityUsd)}`);
+    lines.push(`    Daily Avg / Liquidity: ${(volLiqRatio * 100).toFixed(2)}% (all-time) | ${(recentVolLiqRatio * 100).toFixed(2)}% (7d)`);
+
+    if (recentVolLiqRatio > 0.1) {
+      lines.push(`    High turnover -- daily volume exceeds 10% of pool depth. Could indicate active looping or large position entries.`);
+    } else if (recentVolLiqRatio < 0.005 && opts.recentTotal > 0) {
+      lines.push(`    Low turnover -- volume well below 1% of pool depth. Could indicate a mature/stable pool or declining interest.`);
+    }
+  } else {
+    lines.push(`    Pool liquidity unavailable -- use get_pt_details to get liquidity context.`);
+  }
+
+  // Buy/sell imbalance (recent)
+  if (opts.recentTotal > 0) {
+    const buyPct = (opts.recentBuy / opts.recentTotal) * 100;
+    const sellPct = (opts.recentSell / opts.recentTotal) * 100;
+    if (Math.abs(buyPct - sellPct) > 20) {
+      const skew = buyPct > sellPct ? "buy" : "sell";
+      lines.push(`    7d skew: ${skew}-heavy (${buyPct.toFixed(0)}% buy / ${sellPct.toFixed(0)}% sell). Could indicate ${skew === "buy" ? "PT accumulation or YT flash-redeem selling" : "PT distribution or YT flash-mint acquisition"}.`);
+    }
+  }
+
+  // Trend: compare recent to all-time daily average
+  if (opts.rangeDays > 14 && opts.totalVolume > 0) {
+    const allTimeDaily = opts.totalVolume / opts.rangeDays;
+    const recentDaily = opts.recentTotal / 7;
+    if (allTimeDaily > 0) {
+      const trendRatio = recentDaily / allTimeDaily;
+      if (trendRatio > 2) {
+        lines.push(`    Trend: Recent daily volume is ${trendRatio.toFixed(1)}x the all-time average -- activity could be accelerating.`);
+      } else if (trendRatio < 0.3 && opts.recentTotal > 0) {
+        lines.push(`    Trend: Recent daily volume is ${(trendRatio * 100).toFixed(0)}% of all-time average -- activity could be declining.`);
+      }
+    }
+  }
+
+  return lines;
+}
+
+/**
+ * Layer 3 output hint: is the spread between a Morpho market's borrow rate
+ * and typical PT yields worth looping? Appended per-market in get_morpho_markets.
+ *
+ * Dissolution condition: When scan_opportunities becomes the default entry
+ * point for all looping decisions (i.e., agents never call get_morpho_markets
+ * directly for strategy), these hints are redundant and should be removed.
+ */
+export function formatMorphoMarketHints(m: MorphoMarket): string[] {
+  const lines: string[] = [];
+  const s = m.state;
+  if (!s) return lines;
+
+  const borrowApy = (s.borrowApy || 0) * 100;
+  const utilization = (s.utilization || 0) * 100;
+  const availableLiq = s.liquidityAssetsUsd || 0;
+
+  // Capacity warning
+  if (availableLiq < 50000) {
+    lines.push(`  Hint: Available liquidity is ${formatUsd(availableLiq)} -- looping at scale could exhaust borrowable supply.`);
+  }
+
+  // Utilization warning
+  if (utilization > 90) {
+    lines.push(`  Hint: Utilization is ${formatPct(utilization)} -- borrow rate could spike further. Looping margin may compress.`);
+  }
+
+  // Spread hint
+  if (borrowApy > 8) {
+    lines.push(`  Hint: Borrow rate ${formatPct(borrowApy)} is high. Looping is only profitable when PT implied APY exceeds this. Verify spread with get_looping_strategy.`);
+  } else if (borrowApy < 3) {
+    lines.push(`  Hint: Borrow rate ${formatPct(borrowApy)} is low -- could indicate a favorable looping environment if PT APY is above this.`);
+  }
+
+  return lines;
+}
+
+/**
+ * Layer 3 output hint: portfolio-level signals when viewing all positions.
+ * Concentration analysis, maturity proximity warnings, strategy shape.
+ *
+ * Dissolution condition: When Spectra adds a native portfolio analytics
+ * endpoint that computes these metrics server-side, this function becomes
+ * redundant and should be removed.
+ */
+export function formatPortfolioHints(
+  positions: Array<{
+    totalValue: number; chain: string; maturityDays: number;
+    ptBalance: number; ytBalance: number; lpBalance: number; name: string;
+  }>,
+  totalPortfolioValue: number,
+): string[] {
+  if (positions.length < 2) return [];
+
+  const lines: string[] = [];
+  lines.push(``);
+  lines.push(`  Portfolio Signals:`);
+
+  // Concentration
+  const sorted = [...positions].sort((a, b) => b.totalValue - a.totalValue);
+  if (totalPortfolioValue > 0) {
+    const largestPct = (sorted[0].totalValue / totalPortfolioValue) * 100;
+    if (largestPct > 80) {
+      lines.push(`    Concentration: ${largestPct.toFixed(0)}% in ${sorted[0].name} -- portfolio is heavily concentrated in a single position.`);
+    }
+  }
+
+  // Maturity proximity
+  const maturingSoon = positions.filter(p => p.maturityDays > 0 && p.maturityDays < 14);
+  if (maturingSoon.length > 0) {
+    const names = maturingSoon.map(p => p.name).join(", ");
+    lines.push(`    Maturity alert: ${maturingSoon.length} position(s) maturing within 14 days (${names}). Consider redemption or rollover.`);
+  }
+
+  // Cross-chain diversification
+  const uniqueChains = new Set(positions.map(p => p.chain));
+  if (uniqueChains.size === 1 && positions.length > 2) {
+    lines.push(`    All ${positions.length} positions are on a single chain. Could indicate intentional concentration or an opportunity for cross-chain diversification.`);
+  }
+
+  // Strategy shape
+  const totalPt = positions.reduce((s, p) => s + p.ptBalance, 0);
+  const totalYt = positions.reduce((s, p) => s + p.ytBalance, 0);
+  if (totalYt > 0 && totalPt > 0) {
+    const ytPtRatio = totalYt / totalPt;
+    if (ytPtRatio > 3) {
+      lines.push(`    Portfolio shape: YT-heavy (${ytPtRatio.toFixed(1)}:1 YT/PT). Could indicate aggregate yield-directional positioning.`);
+    } else if (ytPtRatio < 0.3) {
+      lines.push(`    Portfolio shape: PT-heavy (${(1 / ytPtRatio).toFixed(1)}:1 PT/YT). Could indicate aggregate fixed-rate accumulation.`);
+    }
+  }
+
+  if (lines.length <= 2) return []; // Only header, no actual hints
+  return lines;
+}
+
+// =============================================================================
 // Portfolio Simulation Formatting
 // =============================================================================
 
@@ -1060,8 +1230,8 @@ export function formatScanOpportunity(opp: ScanOpportunity, rank: number, boostI
 
   // Header with rank and headline APY
   const headline = opp.looping
-    ? `${formatPct(opp.impliedApy)} base -> ${formatPct(opp.looping.optimalEffectiveNetApy)} effective with ${opp.looping.optimalLoops}x loop`
-    : `${formatPct(opp.impliedApy)} base -> ${formatPct(opp.effectiveApy)} effective`;
+    ? `${formatPct(opp.impliedApy)} base -> ~${formatPct(opp.looping.optimalEffectiveNetApy)} effective with ${opp.looping.optimalLoops}x loop (at current rates)`
+    : `${formatPct(opp.impliedApy)} base -> ~${formatPct(opp.effectiveApy)} effective (at current rates)`;
   lines.push(`#${rank}  ${opp.pt.name} (${opp.chain}) -- ${headline}`);
 
   // Maturity
@@ -1099,6 +1269,16 @@ export function formatScanOpportunity(opp: ScanOpportunity, rank: number, boostI
   if (opp.looping) dims.push(`Loop: ${formatPct(opp.looping.optimalEffectiveNetApy)}`);
   if (opp.lpApyBoostedTotal > opp.lpApy) dims.push(`LP(max boost): ${formatPct(opp.lpApyBoostedTotal)}`);
   lines.push(`    Yield Dimensions: ${dims.join(" | ")}`);
+
+  // Strategy tension: present competing interpretations (generative friction)
+  // Dissolution condition: Dissolves when agents reliably surface competing
+  // strategies without explicit prompting.
+  if (opp.variableApr > 0 && opp.looping) {
+    const ytExposure = opp.variableApr * (opp.pool.ytLeverage || 1);
+    if (ytExposure > opp.looping.optimalEffectiveNetApy * 0.7) {
+      lines.push(`    Strategy Tension: YT accumulation at ${(opp.pool.ytLeverage || 0).toFixed(1)}x leverage could yield ~${formatPct(ytExposure)} if variable rates persist -- which competes with the looping fixed ~${formatPct(opp.looping.optimalEffectiveNetApy)}. The right choice depends on rate direction conviction.`);
+    }
+  }
 
   // Underlying info
   lines.push(`    Underlying: ${opp.underlying} | IBT: ${opp.ibtSymbol} (${opp.ibtProtocol})`);
@@ -1152,6 +1332,8 @@ export function formatScanResults(
   // Footer
   lines.push(``);
   lines.push(`  Estimates use constant-product upper bound. Actual Curve StableSwap-NG pools are more capital-efficient.`);
+  lines.push(`  Rankings reflect one dimension of a multi-dimensional space. A lower-ranked pool could be better`);
+  lines.push(`  for a different strategy (YT accumulation, LP farming) or time horizon. See Yield Dimensions per opportunity.`);
 
   return lines.join("\n");
 }
@@ -1170,6 +1352,9 @@ export function formatYtArbitrageOpportunity(opp: YtArbitrageOpportunity, rank: 
   lines.push(`    IBT Current APR: ${formatPct(opp.ibtCurrentApr)}  (what the IBT actually earns now)`);
   lines.push(`    YT Implied Rate: ${formatPct(opp.ytImpliedRate)}  (what the YT market price implies)`);
   lines.push(`    Spread: ${opp.spreadPct >= 0 ? "+" : ""}${formatPct(opp.spreadPct)} (IBT APR minus YT implied rate)`);
+  if (Math.abs(opp.spreadPct) > 5) {
+    lines.push(`    Note: Large spread could indicate a genuine mispricing or could reflect stale IBT APR data. Verify IBT rate freshness before acting.`);
+  }
 
   // YT price context
   lines.push(`    YT Price: ${formatUsd(opp.ytPriceUsd)} (${opp.ytPriceUnderlying.toFixed(4)} underlying) | Leverage: ${opp.ytLeverage.toFixed(1)}x`);
@@ -1248,6 +1433,7 @@ export function formatYtArbitrageResults(
   lines.push(``);
   lines.push(`  Spreads reflect current conditions only. IBT rates are variable. Break-even assumes the spread persists.`);
   lines.push(`  Price impact is a conservative upper bound (constant-product model).`);
+  lines.push(`  These are snapshots, not predictions. A spread that exists now could narrow before your transaction confirms.`);
 
   return lines.join("\n");
 }

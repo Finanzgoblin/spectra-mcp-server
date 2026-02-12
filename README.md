@@ -46,12 +46,17 @@ Layer 2: Tool Descriptions (every tool's description string)
 
 Layer 3: Structured Output Hints (computed at runtime in tool output)
   → Position Shape analysis in portfolio: balance ratios (e.g., "YT/PT 4:1")
+  → Portfolio Signals: concentration, maturity alerts, strategy shape across positions
+  → Volume Signals: volume/liquidity ratio, buy/sell skew, trend detection
+  → Morpho Market Hints: capacity warnings, utilization alerts, spread analysis
   → Pattern hints (⚠ warnings) in activity data per-address
   → Address isolation mode: cycle detection, flow accounting, contract/EOA detection,
     pool impact warnings, gas estimates, pool context
   → Capital-aware warnings: short maturity, low liquidity, negative effective APY
   → Yield Dimensions in scan output: fixed, variable, LP, looping side-by-side
+  → Strategy Tension: competing PT looping vs YT accumulation on same pool
   → On-chain quote source indicators: "(on-chain Curve get_dy)" vs "(estimated)"
+  → "Could be" / "at current rates" language: preserves ambiguity in ranked output
   → Makes key signals SALIENT without prescribing interpretation
 ```
 
@@ -237,23 +242,27 @@ src/
                       API response validation at system boundary
   formatters.ts     Formatting, BigInt LLTV parsing, closed-form leverage math,
                       price impact, fractional-day maturity, boost computation,
-                      slim envelope helpers, Layer 3 output hints (Position Shape, LP APY breakdown)
+                      slim envelope helpers, Layer 3 output hints (Position Shape, LP APY breakdown,
+                      volume signals, Morpho market hints, portfolio signals, cycle detection)
   tools/            Layer 2: each tool description teaches domain-specific mechanics
     context.ts      get_protocol_context (Layer 1 protocol mechanics, callable on-demand)
     pt.ts           get_pt_details, list_pools, get_best_fixed_yields, compare_yield
     looping.ts      get_looping_strategy
-    portfolio.ts    get_portfolio (balance ratio strategy signals, cross-ref nudges)
-    pool.ts         get_pool_volume, get_pool_activity (PT address resolution, Router batching,
+    portfolio.ts    get_portfolio (balance ratio strategy signals, portfolio-level hints, cross-ref nudges)
+    pool.ts         get_pool_volume (with volume/liquidity hints), get_pool_activity (PT address resolution, Router batching,
                       address isolation w/ cycle detection, flow accounting, contract detection,
                       gas estimates, pool impact warnings), get_address_activity (cross-pool scanner)
-    morpho.ts       get_morpho_markets, get_morpho_rate
+    morpho.ts       get_morpho_markets (with capacity/utilization hints), get_morpho_rate (with PT spread analysis)
     protocol.ts     get_protocol_stats, get_supported_chains
     quote.ts        quote_trade (on-chain Curve get_dy() with math fallback)
     simulate.ts     simulate_portfolio_after_trade (also uses on-chain quoting)
-    strategy.ts     scan_opportunities (capital-aware, batch Morpho, negative-APY filtering)
+    strategy.ts     scan_opportunities (capital-aware, batch Morpho, negative-APY filtering, strategy tension)
     yt_arb.ts       scan_yt_arbitrage (YT execution mechanics, flash-mint/flash-redeem)
     ve.ts           get_ve_info
     metavault.ts    model_metavault_strategy
+docs/
+  recursive-meta-process.md    Open Emergence metaframework specification
+  dissolution-conditions.md    Dissolution conditions for every structural decision
 ```
 
 Each tool file exports a `register(server)` function. To add a new tool: create `src/tools/newtool.ts`, export `register()`, import and call it in `index.ts`.
@@ -336,6 +345,7 @@ When adding new tools, follow the three-layer architecture:
 1. **Description (Layer 2):** Teach any protocol mechanics that affect interpretation of the tool's data. Use "could be" language for ambiguous signals. Add cross-reference nudges to at least one related tool.
 2. **Output (Layer 3):** If the data contains signals that require domain knowledge to notice (e.g., a ratio that implies a strategy, an event that could mean different things), compute a structured hint and include it in the output. Make it salient but not prescriptive.
 3. **Resource (Layer 1):** If the new tool introduces fundamental protocol concepts not covered by existing resources, update `spectra-overview` in `index.ts`.
+4. **Dissolution condition:** Document when the new structure would no longer serve, in `docs/dissolution-conditions.md`. Every Layer 3 hint, architectural pattern, and generative friction point carries a dissolution condition — a prompt for re-evaluation when circumstances change.
 
 The goal: a cold-start agent reading only the tool descriptions and output hints should be able to use the tool correctly and compose it with other tools into novel analytical workflows.
 

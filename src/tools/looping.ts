@@ -215,7 +215,7 @@ discover the best looping opportunities across all chains with capital-aware siz
         }
 
         lines.push(``);
-        lines.push(`  * Highest net APY: ${bestLoop} loops -> ${formatPct(bestNet)} (but see margin column — fewer loops may suit tighter risk tolerance)`);
+        lines.push(`  * Highest net APY at current rates: ${bestLoop} loops -> ~${formatPct(bestNet)} (borrow rates are variable -- this could shift. See margin column for liquidation buffer at each level.)`);
 
         // Show cumulative entry cost at that loop count
         if (hasLiq && bestLoop > 0) {
