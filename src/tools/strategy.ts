@@ -203,7 +203,7 @@ Use get_pool_activity and get_portfolio to investigate trading patterns and posi
             lpApyBoostedTotal: lpData.lpApyBoostedTotal,
             lpApyAtBoost: lpData.lpApyAtBoost,
             lpApyBreakdown: lpData.lpApyBreakdown,
-            rankApy: effectiveApy,   // updated in Phase 3 if looping profitable
+            sortApy: effectiveApy,   // updated in Phase 3 if looping profitable
             underlying: pt.underlying?.symbol || "?",
             ibtSymbol: pt.ibt?.symbol || "?",
             ibtProtocol: pt.ibt?.protocol || "Unknown",
@@ -294,7 +294,7 @@ Use get_pool_activity and get_portfolio to investigate trading patterns and posi
                   morphoLiquidityUsd: morphoLiqUsd,
                 };
                 // Rank by effective net APY (steady-state yield minus cumulative entry cost)
-                opp.rankApy = effectiveNetApy;
+                opp.sortApy = effectiveNetApy;
               }
             }
           }
@@ -305,11 +305,11 @@ Use get_pool_activity and get_portfolio to investigate trading patterns and posi
         // ================================================================
 
         // Build indexed pairs so we can sort boostInfos in sync
-        // Filter out negative-rankApy opportunities — entry cost exceeds yield
+        // Filter out negative-sortApy opportunities — entry cost exceeds yield
         const indexed = opportunities
           .map((opp, i) => ({ opp, bi: boostInfoPerOpp[i] }))
-          .filter(({ opp }) => opp.rankApy >= 0);
-        indexed.sort((a, b) => b.opp.rankApy - a.opp.rankApy);
+          .filter(({ opp }) => opp.sortApy >= 0);
+        indexed.sort((a, b) => b.opp.sortApy - a.opp.sortApy);
         const topIndexed = indexed.slice(0, topN);
         const topOpps = topIndexed.map((e) => e.opp);
         const topBoostInfos = topIndexed.map((e) => e.bi);
