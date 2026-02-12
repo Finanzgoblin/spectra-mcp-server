@@ -114,11 +114,11 @@ full intent. Common Router patterns:
 - Any SELL_PT, BUY_PT, or AMM_ADD_LIQUIDITY event might be one step of these larger
   operations. Always check portfolio holdings to see the resulting position.
 
-Reading a wallet's strategy from its holdings:
-- A wallet holding YT but no PT has sold/LPed its PT (yield bull, leveraged long variable rate).
-- A wallet holding PT but no YT has sold its YT (fixed rate lock).
-- Balanced PT + YT = recently minted, no directional position yet.
-- High LP = liquidity provider (but check if YT balance is also high — could be mint+LP loop).
+Reading a wallet's holdings:
+- Minting always produces equal PT and YT. Any imbalance means tokens were traded.
+- YT but no PT → sold or LPed PT after minting. PT but no YT → sold YT or bought PT directly.
+- Balanced PT + YT = recently minted, no directional trade yet.
+- High LP = tokens absorbed into pool (check if YT balance is also high).
 
 Key Integrations:
 - AMM: Curve Finance (PT/IBT pools)

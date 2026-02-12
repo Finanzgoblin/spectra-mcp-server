@@ -3,10 +3,10 @@
  *
  * Scans all Spectra chains for YT (Yield Token) arbitrage opportunities.
  * Compares the IBT's actual current APR against the rate implied by the
- * YT's market price. When these diverge, an arbitrage exists:
+ * YT's market price. When these diverge, an arbitrage opportunity may exist:
  *
- *   - IBT APR > YT implied rate → YT is underpriced → BUY YT
- *   - IBT APR < YT implied rate → YT is overpriced  → SELL YT
+ *   - Positive spread: IBT APR > YT implied rate
+ *   - Negative spread: IBT APR < YT implied rate
  *
  * Uses the same 4-phase pipeline pattern as scan_opportunities:
  *   Phase 1: Parallel multi-chain fetch
@@ -38,12 +38,12 @@ export function register(server: McpServer): void {
     `Scan all Spectra chains for YT (Yield Token) arbitrage opportunities.
 
 Compares the IBT's actual current variable APR against the rate implied by the YT's
-market price. When these diverge significantly, an arbitrage opportunity exists:
+market price. When these diverge significantly, an arbitrage opportunity may exist:
 
-  - IBT APR > YT implied rate → YT is UNDERPRICED → Buy YT to capture excess yield
-  - IBT APR < YT implied rate → YT is OVERPRICED → Sell YT (or mint PT+YT, sell YT)
+  - Positive spread (IBT APR > YT implied rate): IBT earns more than the YT price implies
+  - Negative spread (IBT APR < YT implied rate): IBT earns less than the YT price implies
 
-Returns opportunities ranked by absolute spread, with capital-aware entry sizing
+Returns opportunities sorted by absolute spread, with capital-aware entry sizing
 and break-even analysis.
 
 Execution mechanics:
