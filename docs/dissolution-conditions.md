@@ -157,3 +157,80 @@ Dissolution: If MetaVaults launch with fundamentally different economics
 wrong and should be rebuilt from the actual implementation. If MetaVaults
 don't launch within 6 months of the initial build, question whether the
 tool's existence creates false confidence in a hypothetical.
+
+---
+
+## Intelligence Boundary Enhancements (Feb 2026)
+
+These enhancements surface the boundaries of what's known — confidence signals,
+navigational hints, negative signals, and Router invisibility warnings — so
+autonomous agents can determine where to explore next without prescriptive
+conclusions. They follow Open Emergence Layer 3 principles: "could be" language,
+best-effort enrichment, and clear navigation paths.
+
+### Flow accounting confidence signals (formatFlowAccounting)
+
+Surfaces the reliability boundary of mint estimation. When YT balance is used
+to infer minimum mints, the confidence qualifier tells the agent how much to
+trust the inference based on whether BUY_PT events (which could mask flash-redeem
+YT selling) are present.
+
+Dissolution: When the Spectra Router API provides a transaction history endpoint
+that explicitly tags flash-redeem and flash-mint operations, eliminating the need
+for inference from YT balance alone.
+
+### Position Shape navigational hints (formatPositionSummary)
+
+Surfaces the temporal blind spot in portfolio data. Position Shape shows current
+balance ratios but says nothing about entry timing or cost basis. The hint creates
+a navigation path to get_pool_activity for temporal reconstruction.
+
+Dissolution: When the Spectra portfolio API returns acquisition timestamps, entry
+prices, or cost basis data for each position component (PT/YT/LP).
+
+### Gauge boost cross-reference (formatPositionSummary)
+
+Surfaces the yield range for LP positions in gauge-boosted pools and creates a
+navigation path to get_ve_info. Without this, an agent seeing "LP APY: 70.89%"
+has no signal that the actual yield could be 199% with veSPECTRA boost.
+
+Dissolution: When the Spectra portfolio API returns the user's actual boost level
+(computed server-side from their veSPECTRA balance vs pool TVL).
+
+### Negative signals: Morpho looping availability (formatPortfolioHints)
+
+Surfaces whether Morpho markets exist for the user's PT positions. An absence
+of looping in the portfolio combined with available Morpho markets is meaningful
+information — it could indicate a risk-averse strategy or an uninvestigated
+opportunity. The signal explicitly labels both presence and absence.
+
+Dissolution: When the portfolio API returns Morpho leverage ratio directly
+(server-side detection of active looping positions).
+
+### Negative signals: expired positions aggregate (formatPortfolioHints)
+
+Aggregates expired positions at the portfolio level with total unclaimed value.
+While individual positions already show "MATURED", the aggregate makes the total
+unredeemed capital visible across all positions.
+
+Dissolution: When Spectra adds a portfolio-level maturity summary endpoint that
+aggregates unclaimed redemptions.
+
+### Negative signals: gauge exposure reminder (formatPortfolioHints)
+
+Portfolio-level reminder that LP positions may be affected by veSPECTRA boost.
+Complements the per-position gauge boost range (Enhancement 3) with a single
+aggregate signal that navigates to get_ve_info.
+
+Dissolution: When the portfolio API returns the user's veSPECTRA balance and
+computed boost for each LP position.
+
+### Improved no-activity messaging for address filter (get_pool_activity)
+
+When an address has no visible activity on a pool, the previous message suggested
+the address "may not have interacted." The improved message explains that Spectra
+Router operations (atomic mint + LP) are invisible in pool activity data, and
+navigates to get_portfolio and get_address_activity as alternatives.
+
+Dissolution: When the Spectra API provides a unified transaction history endpoint
+that includes Router-batched operations alongside pool activity.

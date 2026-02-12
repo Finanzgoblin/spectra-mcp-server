@@ -4,8 +4,8 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { CHAIN_ENUM, EVM_ADDRESS, API_NETWORKS, resolveNetwork } from "../config.js";
-import type { SpectraPt } from "../types.js";
-import { fetchSpectra } from "../api.js";
+import type { SpectraPt, MorphoMarket } from "../types.js";
+import { fetchSpectra, findMorphoMarketsForPts } from "../api.js";
 import { formatUsd, formatPositionSummary, formatPortfolioHints, daysToMaturity, formatBalance } from "../formatters.js";
 import type { SpectraPool } from "../types.js";
 
@@ -75,7 +75,34 @@ Protocol context:
         const hintData: Array<{
           totalValue: number; chain: string; maturityDays: number;
           ptBalance: number; ytBalance: number; lpBalance: number; name: string;
+          ptAddress?: string; maturityTs?: number;
+          morphoAvailable?: boolean; // true=market exists, false=checked but none, undefined=lookup failed
         }> = [];
+
+        // Batch Morpho market lookup (best-effort, parallel with formatting)
+        const chainPtMap = new Map<string, string[]>();
+        for (const { pos, chain: c } of allPositions) {
+          const net = resolveNetwork(c);
+          if (!chainPtMap.has(net)) chainPtMap.set(net, []);
+          chainPtMap.get(net)!.push(pos.address);
+        }
+
+        const morphoAvailability = new Map<string, boolean>();
+        const morphoResults = await Promise.allSettled(
+          Array.from(chainPtMap.entries()).map(async ([net, ptAddrs]) => {
+            const markets = await findMorphoMarketsForPts(ptAddrs, net);
+            return { net, markets, ptAddrs };
+          })
+        );
+        for (const result of morphoResults) {
+          if (result.status === "fulfilled") {
+            const { markets, ptAddrs } = result.value;
+            for (const addr of ptAddrs) {
+              morphoAvailability.set(addr.toLowerCase(), markets.has(addr.toLowerCase()));
+            }
+          }
+          // On failure: ptAddrs stay absent from map → morphoAvailable remains undefined
+        }
 
         for (const { pos, chain: c } of allPositions) {
           const result = formatPositionSummary(pos, c);
@@ -84,6 +111,7 @@ Protocol context:
             totalPortfolioValue += result.totalValue;
             // Collect data for portfolio-level hints
             const decimals = pos.decimals ?? 18;
+            const ptAddrLower = pos.address.toLowerCase();
             hintData.push({
               totalValue: result.totalValue,
               chain: c,
@@ -93,6 +121,9 @@ Protocol context:
               lpBalance: pos.pools?.reduce((sum: number, p: SpectraPool) =>
                 sum + formatBalance(p.lpt?.balance, p.lpt?.decimals ?? 18), 0) || 0,
               name: pos.name,
+              ptAddress: ptAddrLower,
+              maturityTs: pos.maturity,
+              morphoAvailable: morphoAvailability.get(ptAddrLower),
             });
           }
         }
