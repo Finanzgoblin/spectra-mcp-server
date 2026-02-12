@@ -121,6 +121,8 @@ export interface TradeQuote {
   minOut: number;
   slippageTolerancePct: number;
   poolLiquidityUsd: number;
+  /** True if expectedOut came from on-chain Curve get_dy(), false if math estimate. */
+  onChain?: boolean;
 }
 
 // =============================================================================
