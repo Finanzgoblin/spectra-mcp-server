@@ -1,0 +1,42 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Finanzgoblin/spectra-mcp-server",
+  "description": "Makes Spectra Finance discoverable and usable by AI agents via MCP. 20 tools, 10 chains, read-only. Covers yield discovery, PT/YT analysis, looping strategies, Morpho integration, portfolio tracking, on-chain Curve quoting, and more.",
+  "repository": {
+    "url": "https://github.com/Finanzgoblin/spectra-mcp-server.git",
+    "source": "github"
+  },
+  "version": "1.0.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "spectra-mcp-server",
+      "version": "1.0.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ],
+  "tools": [
+    { "name": "get_best_fixed_yields", "description": "Scan all chains for top fixed-rate yield opportunities" },
+    { "name": "list_pools", "description": "List active pools on a specific chain" },
+    { "name": "get_pt_details", "description": "Deep dive on a specific Principal Token" },
+    { "name": "compare_yield", "description": "Fixed vs variable yield comparison" },
+    { "name": "get_looping_strategy", "description": "Calculate leveraged yield via PT + Morpho looping" },
+    { "name": "get_morpho_markets", "description": "Find Morpho markets accepting Spectra PTs as collateral" },
+    { "name": "get_morpho_rate", "description": "Live borrow rate for a Morpho market" },
+    { "name": "get_protocol_stats", "description": "SPECTRA tokenomics, emissions, governance" },
+    { "name": "get_supported_chains", "description": "List available networks" },
+    { "name": "get_portfolio", "description": "Wallet positions across PT, YT, LP" },
+    { "name": "get_pool_volume", "description": "Historical trading volume for a pool" },
+    { "name": "get_pool_activity", "description": "Recent transactions with address isolation and cycle detection" },
+    { "name": "get_address_activity", "description": "Cross-pool address scanner" },
+    { "name": "quote_trade", "description": "PT trade quoting with on-chain Curve get_dy()" },
+    { "name": "simulate_portfolio_after_trade", "description": "Preview portfolio before/after a hypothetical trade" },
+    { "name": "scan_opportunities", "description": "Capital-aware opportunity scanner with price impact" },
+    { "name": "scan_yt_arbitrage", "description": "YT arbitrage scanner for IBT/YT rate divergence" },
+    { "name": "get_ve_info", "description": "Live veSPECTRA data and boost calculator" },
+    { "name": "model_metavault_strategy", "description": "MetaVault double-loop strategy modeler" },
+    { "name": "get_protocol_context", "description": "On-demand protocol mechanics explainer" }
+  ]
+}
