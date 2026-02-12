@@ -185,7 +185,7 @@ async function testToolRegistration(client) {
   const tools = await client.listTools();
   const names = tools.map((t) => t.name);
 
-  assert(tools.length === 19, "exactly 19 tools registered", `got ${tools.length}: ${names.join(", ")}`);
+  assert(tools.length === 20, "exactly 20 tools registered", `got ${tools.length}: ${names.join(", ")}`);
 
   const expected = [
     "get_pt_details",
@@ -198,6 +198,7 @@ async function testToolRegistration(client) {
     "get_portfolio",
     "get_pool_volume",
     "get_pool_activity",
+    "get_address_activity",
     "get_morpho_markets",
     "get_morpho_rate",
     "quote_trade",
@@ -553,9 +554,9 @@ async function testCompareYield(client) {
   assert(text.includes("Variable"), "has variable rate", "missing");
   assert(text.includes("Spread"), "has spread", "missing");
   assert(
-    text.includes("Fixed rate is HIGHER") || text.includes("Variable rate is HIGHER"),
-    "has recommendation",
-    "missing recommendation"
+    text.includes("Spread after entry cost") || text.includes("Spread before entry cost") || text.includes("Spread:"),
+    "has spread analysis",
+    "missing spread analysis"
   );
   // LP alternative with breakdown
   assert(text.includes("LP Alternative:"), "has LP alternative with breakdown", "missing LP breakdown");
@@ -1243,7 +1244,7 @@ async function testScanOpportunities(client) {
     assert(text.includes("Effective APY"), "has effective APY", "missing");
     assert(text.includes("Capacity"), "has capacity", "missing");
     assert(text.includes("Looping:"), "has looping section", "missing");
-    assert(text.includes("Fixed vs Variable"), "has fixed vs variable", "missing");
+    assert(text.includes("Yield Dimensions"), "has yield dimensions", "missing");
     assert(text.includes("PT Address"), "has PT address", "missing");
     assert(text.includes("$10,000"), "shows capital amount in header", "missing");
     // LP APY with gauge emissions
