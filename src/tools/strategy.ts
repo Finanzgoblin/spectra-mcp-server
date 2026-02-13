@@ -205,6 +205,7 @@ Use get_pool_activity and get_portfolio to investigate trading patterns and posi
             lpApyBreakdown: lpData.lpApyBreakdown,
             sortApy: effectiveApy,   // updated in Phase 3 if looping profitable
             underlying: pt.underlying?.symbol || "?",
+            ibtAddress: pt.ibt?.address || "",
             ibtSymbol: pt.ibt?.symbol || "?",
             ibtProtocol: pt.ibt?.protocol || "Unknown",
             warnings,
