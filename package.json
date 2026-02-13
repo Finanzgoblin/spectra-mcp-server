@@ -1,6 +1,6 @@
 {
   "name": "spectra-mcp-server",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "MCP Server for Spectra Finance — makes Spectra discoverable by AI agents",
   "type": "module",
   "bin": {
@@ -14,7 +14,9 @@
     "test:offline": "npm run build && node test.cjs --offline",
     "test:unit": "npm run build && node --test build/config.test.js build/formatters.test.js build/api.test.js"
   },
-  "files": ["build"],
+  "files": [
+    "build"
+  ],
   "keywords": [
     "mcp",
     "spectra",
