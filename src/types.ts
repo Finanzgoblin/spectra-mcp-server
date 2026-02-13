@@ -34,6 +34,7 @@ export interface SpectraPool {
 }
 
 export interface SpectraIbt {
+  address?: string;
   symbol?: string;
   name?: string;
   protocol?: string;
@@ -42,6 +43,7 @@ export interface SpectraIbt {
 }
 
 export interface SpectraUnderlying {
+  address?: string;
   symbol?: string;
   name?: string;
 }
@@ -199,6 +201,7 @@ export interface ScanOpportunity {
 
   // Metadata
   underlying: string;
+  ibtAddress: string;
   ibtSymbol: string;
   ibtProtocol: string;
   warnings: string[];
@@ -251,6 +254,7 @@ export interface YtArbitrageOpportunity {
 
   // Metadata
   underlying: string;
+  ibtAddress: string;
   ibtSymbol: string;
   ibtProtocol: string;
   warnings: string[];
