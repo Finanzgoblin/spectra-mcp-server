@@ -331,7 +331,7 @@ check your current positions. Use scan_opportunities for multi-chain comparison.
           `-- Yield Comparison: ${pt.underlying?.symbol || "?"} --`,
           ``,
           `  Fixed (Spectra PT):   ${formatPct(fixedApy)} APY`,
-          `  Variable (${pt.ibt?.symbol || "IBT"}):   ${formatPct(variableApr)} APR`,
+          `  Variable (${pt.ibt?.symbol || "IBT"}${pt.ibt?.address ? ` @ ${pt.ibt.address}` : ""}):   ${formatPct(variableApr)} APR`,
           `  Spread:               ${spread >= 0 ? "+" : ""}${formatPct(spread)}`,
           ``,
           `  Maturity: ${formatDate(pt.maturity)} (${maturityDays} days)`,

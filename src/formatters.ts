@@ -66,7 +66,8 @@ export function formatPoolCompact(pt: SpectraPt, pool: SpectraPool, chain: strin
   const liq = formatUsd(pool.liquidity?.usd || 0);
   const days = daysToMaturity(pt.maturity);
   const lpApy = pool.lpApy?.total ? ` | LP ${formatPct(pool.lpApy.total)}` : "";
-  return `${pt.name} (${chain}) | APY ${apy} | TVL ${tvl} | Liq ${liq} | ${days}d${lpApy} | PT: ${pt.address} | Pool: ${pool.address || "?"}`;
+  const ibtAddr = pt.ibt?.address ? ` | IBT: ${pt.ibt.address}` : "";
+  return `${pt.name} (${chain}) | APY ${apy} | TVL ${tvl} | Liq ${liq} | ${days}d${lpApy} | PT: ${pt.address} | Pool: ${pool.address || "?"}${ibtAddr}`;
 }
 
 /** One-line scan opportunity summary for compact output. */
@@ -149,7 +150,17 @@ export function formatPoolSummary(pt: SpectraPt, pool: SpectraPool, chain: strin
 
   lines.push(
     `  Underlying: ${pt.underlying?.symbol || "?"} (${pt.underlying?.name || "?"})`,
+  );
+  if (pt.underlying?.address) {
+    lines.push(`  Underlying Address: ${pt.underlying.address}`);
+  }
+  lines.push(
     `  IBT: ${pt.ibt?.symbol || "?"} -- Base APR: ${formatPct(pt.ibt?.apr?.total || 0)}`,
+  );
+  if (pt.ibt?.address) {
+    lines.push(`  IBT Address: ${pt.ibt.address}`);
+  }
+  lines.push(
     `  IBT Protocol: ${pt.ibt?.protocol || "Unknown"}`,
   );
 
@@ -194,7 +205,7 @@ export function formatPositionSummary(pos: SpectraPt, chain: string): PositionRe
     `  Chain: ${chain}`,
     `  PT Address: ${pos.address}`,
     `  Maturity: ${formatDate(pos.maturity)} (${expired ? "EXPIRED" : `${maturityDays} days`})`,
-    `  Underlying: ${pos.underlying?.symbol || "?"} | IBT: ${pos.ibt?.symbol || "?"}`,
+    `  Underlying: ${pos.underlying?.symbol || "?"}${pos.underlying?.address ? ` (${pos.underlying.address})` : ""} | IBT: ${pos.ibt?.symbol || "?"}${pos.ibt?.address ? ` (${pos.ibt.address})` : ""}`,
     ``,
     `  Balances:`,
   ];
@@ -1192,6 +1203,7 @@ export function formatPortfolioSimulation(opts: {
   wallet: string;
   underlyingSymbol: string;
   ibtSymbol: string;
+  ibtAddress?: string;
   before: PositionSnapshot;
   after: PositionSnapshot;
   quote: TradeQuote;
@@ -1213,7 +1225,7 @@ export function formatPortfolioSimulation(opts: {
     `  Chain: ${opts.chain}`,
     `  Wallet: ${shortWallet}`,
     `  Maturity: ${formatDate(opts.maturity)} (${maturityLabel})`,
-    `  Underlying: ${opts.underlyingSymbol} | IBT: ${opts.ibtSymbol}`,
+    `  Underlying: ${opts.underlyingSymbol} | IBT: ${opts.ibtSymbol}${opts.ibtAddress ? ` (${opts.ibtAddress})` : ""}`,
   ];
 
   if (opts.portfolioFetchFailed) {
@@ -1341,8 +1353,11 @@ export function formatScanOpportunity(opp: ScanOpportunity, rank: number, boostI
   // Underlying info
   lines.push(`    Underlying: ${opp.underlying} | IBT: ${opp.ibtSymbol} (${opp.ibtProtocol})`);
 
-  // PT Address
+  // Addresses
   lines.push(`    PT Address: ${opp.ptAddress}`);
+  if (opp.ibtAddress) {
+    lines.push(`    IBT Address: ${opp.ibtAddress}`);
+  }
 
   // Warnings
   if (opp.warnings.length > 0) {
@@ -1436,8 +1451,11 @@ export function formatYtArbitrageOpportunity(opp: YtArbitrageOpportunity, rank: 
   // Underlying info
   lines.push(`    Underlying: ${opp.underlying} | IBT: ${opp.ibtSymbol} (${opp.ibtProtocol})`);
 
-  // PT Address
+  // Addresses
   lines.push(`    PT Address: ${opp.ptAddress}`);
+  if (opp.ibtAddress) {
+    lines.push(`    IBT Address: ${opp.ibtAddress}`);
+  }
 
   // Warnings
   if (opp.warnings.length > 0) {
