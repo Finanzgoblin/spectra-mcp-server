@@ -108,7 +108,19 @@ Use scan_opportunities for automated cross-chain looping discovery.`,
 
         if (items.length === 0) {
           const scope = chain || "any tracked chain";
-          const text = `No Morpho PT markets found on ${scope}${pt_symbol_filter ? ` matching "${pt_symbol_filter}"` : ""}. Total PT markets on Morpho: query returned 0 results.`;
+          const lines = [
+            `No Morpho PT markets found on ${scope}${pt_symbol_filter ? ` matching "${pt_symbol_filter}"` : ""}.`,
+            ``,
+            `--- What This Means ---`,
+            `No Morpho lending markets currently accept${pt_symbol_filter ? ` "${pt_symbol_filter}"` : ""} Spectra PTs as collateral on ${scope}.`,
+            ...(chain ? [`• Morpho PT markets are available on: mainnet, base, arbitrum, katana`] : []),
+            ...(chain ? [`• Try all chains: get_morpho_markets() without chain filter`] : []),
+            ...(pt_symbol_filter ? [`• Try without filter: get_morpho_markets(${chain ? `chain="${chain}"` : ""}) to see all available PT markets`] : []),
+            `• Leveraged strategies require a Morpho market — without one, consider:`,
+            `    Unleveraged fixed yield: get_best_fixed_yields() or scan_opportunities()`,
+            `    YT arbitrage: scan_yt_arbitrage(capital_usd=YOUR_AMOUNT) for spread-based opportunities`,
+          ];
+          const text = lines.join("\n");
           return { content: [{ type: "text" as const, text }] };
         }
 
@@ -128,7 +140,15 @@ Use scan_opportunities for automated cross-chain looping discovery.`,
         const header = `Found ${items.length} of ${total} Morpho PT market(s) (${scope}${pt_symbol_filter ? `, filter: ${pt_symbol_filter}` : ""}, sorted by ${sort_by}):\n` +
           `  Spectra: ${spectraCount} | Pendle/Other: ${items.length - spectraCount}\n`;
 
-        const text = header + "\n" + summaries.join("\n\n");
+        const footer = [
+          ``,
+          `--- Next Steps ---`,
+          `• Live borrow rate: get_morpho_rate(chain=CHAIN, market_key=MARKET_KEY) for current rate + PT spread analysis`,
+          `• Looping projection: get_looping_strategy(chain=CHAIN, pt_address=PT_ADDRESS) to model leveraged yield`,
+          `• Capital-aware scan: scan_opportunities(capital_usd=YOUR_AMOUNT, include_looping=true) for cross-chain looping ranking`,
+        ].join("\n");
+
+        const text = header + "\n" + summaries.join("\n\n") + footer;
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
         const text = `Error fetching Morpho markets: ${e.message}`;
