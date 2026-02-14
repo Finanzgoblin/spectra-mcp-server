@@ -147,6 +147,17 @@ pool at a given deposit size.`,
         lines.push(`  Max boost condition: v/V >= d/D`);
         lines.push(`  In words: your share of total veSPECTRA must be >= your share of pool TVL.`);
 
+        // Next-step hints
+        lines.push(``);
+        lines.push(`--- Next Steps ---`);
+        if (ve_spectra_balance !== undefined && ve_spectra_balance > 0) {
+          lines.push(`• See boosted opportunities: scan_opportunities(capital_usd=${capital_usd || "YOUR_AMOUNT"}, ve_spectra_balance=${ve_spectra_balance}) for boosted LP rankings`);
+          lines.push(`• YT arb with boost context: scan_yt_arbitrage(capital_usd=${capital_usd || "YOUR_AMOUNT"}, ve_spectra_balance=${ve_spectra_balance})`);
+        } else {
+          lines.push(`• Provide ve_spectra_balance + capital_usd to compute your actual boost`);
+        }
+        lines.push(`• Boost only affects gauge-enabled LP positions — use compare_yield to see LP APY breakdown per pool`);
+
         const text = lines.join("\n");
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {

@@ -130,7 +130,16 @@ Protocol context:
 
         if (summaries.length === 0) {
           const scope = chain || "any chain";
-          const text = `No active Spectra positions found for ${address} on ${scope}.${chainWarning}`;
+          const lines = [
+            `No active Spectra positions found for ${address} on ${scope}.${chainWarning}`,
+            ``,
+            `--- What This Means ---`,
+            `This wallet has no PT, YT, or LP positions on Spectra${chain ? ` on ${chain}` : ""}.`,
+            ...(chain ? [`• Try scanning all chains: get_portfolio(address="${address}") without chain filter`] : []),
+            `• Check activity history: get_address_activity(address="${address}") — the wallet may have had past positions`,
+            `• Find opportunities: scan_opportunities(capital_usd=YOUR_AMOUNT) to discover yield opportunities`,
+          ];
+          const text = lines.join("\n");
           return { content: [{ type: "text" as const, text }] };
         }
 
@@ -144,6 +153,29 @@ Protocol context:
         if (portfolioHintLines.length > 0) {
           text += "\n" + portfolioHintLines.join("\n");
         }
+
+        // Next-step hints: Morpho looping opportunities + general follow-ups
+        const nextSteps: string[] = [``, `--- Next Steps ---`];
+
+        // Surface loopable positions with actionable tool calls
+        const loopable = hintData.filter((h) => h.morphoAvailable === true && h.ptAddress);
+        const notLoopable = hintData.filter((h) => h.morphoAvailable === false);
+        if (loopable.length > 0) {
+          nextSteps.push(`• Looping opportunities (Morpho market available):`);
+          for (const h of loopable) {
+            nextSteps.push(`    ${h.name}: get_looping_strategy(chain="${h.chain}", pt_address="${h.ptAddress}")`);
+          }
+        }
+        if (notLoopable.length > 0) {
+          nextSteps.push(`• No Morpho market for: ${notLoopable.map((h) => h.name).join(", ")} — can't loop these positions`);
+          nextSteps.push(`    Alternative: compare_yield on these PTs for unleveraged spread analysis`);
+        }
+
+        // General follow-ups
+        nextSteps.push(`• Activity analysis: get_pool_activity(chain=CHAIN, pool_address=POOL, address="${address}") for strategy inference`);
+        nextSteps.push(`• Cross-pool scan: get_address_activity(address="${address}") for multi-pool overview`);
+
+        text += nextSteps.join("\n");
 
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {

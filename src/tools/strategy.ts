@@ -316,12 +316,25 @@ Use get_pool_activity and get_portfolio to investigate trading patterns and posi
         const topBoostInfos = topIndexed.map((e) => e.bi);
 
         if (topOpps.length === 0) {
-          const msg = `No opportunities found matching criteria (capital: ${formatUsd(capital_usd)}, max impact: ${formatPct(max_price_impact_pct)}).` +
-            (asset_filter ? ` Asset filter: ${asset_filter}.` : "") +
-            ` Try lowering min_tvl_usd/min_liquidity_usd or increasing max_price_impact_pct.` +
-            (failedChains.length > 0 ? `\nNote: ${failedChains.length} chain(s) failed (${failedChains.join(", ")}).` : "");
+          const negativeFilteredCount = opportunities.filter(o => o.sortApy < 0).length;
+          const lines = [
+            `No opportunities found matching criteria (capital: ${formatUsd(capital_usd)}, max impact: ${formatPct(max_price_impact_pct)}).`,
+            ...(asset_filter ? [`Asset filter: ${asset_filter}.`] : []),
+            ...(failedChains.length > 0 ? [`Note: ${failedChains.length} chain(s) failed (${failedChains.join(", ")}).`] : []),
+            ``,
+            `--- What This Means ---`,
+            ...(negativeFilteredCount > 0 ? [`${negativeFilteredCount} pool(s) had negative effective APY (entry cost exceeds yield at ${formatUsd(capital_usd)} capital).`] : []),
+            `At your capital size, price impact may consume more yield than the pools generate.`,
+            ``,
+            `Alternative approaches:`,
+            `• Try a smaller capital size or increase max_price_impact_pct`,
+            `• Lower filters: min_tvl_usd or min_liquidity_usd`,
+            ...(asset_filter ? [`• Remove asset filter to see all available pools`] : []),
+            `• Check raw APY: get_best_fixed_yields() — headline rates without capital adjustment`,
+            `• Check YT spreads: scan_yt_arbitrage(capital_usd=${capital_usd}) — different opportunity type`,
+          ];
 
-          return { content: [{ type: "text" as const, text: msg }] };
+          return { content: [{ type: "text" as const, text: lines.join("\n") }] };
         }
 
         let text: string;
@@ -347,6 +360,19 @@ Use get_pool_activity and get_portfolio to investigate trading patterns and posi
           topBoostInfos,
         );
         }
+
+        // Next-step hints referencing top opportunity
+        const top = topOpps[0];
+        const nextSteps = [
+          ``,
+          `--- Next Steps ---`,
+          `• Drill into #1: get_looping_strategy(chain="${top.chain}", pt_address="${top.ptAddress}") for detailed leverage table`,
+          `• Quote entry: quote_trade(chain="${top.chain}", pt_address="${top.ptAddress}", amount=${capital_usd}, side="buy")`,
+          `• Preview portfolio: simulate_portfolio_after_trade(chain="${top.chain}", pt_address="${top.ptAddress}", address=YOUR_WALLET, amount=${capital_usd}, side="buy")`,
+          `• Compare with YT arb: scan_yt_arbitrage(capital_usd=${capital_usd}) for spread-based opportunities`,
+        ].join("\n");
+
+        text += nextSteps;
 
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {

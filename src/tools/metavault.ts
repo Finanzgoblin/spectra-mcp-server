@@ -228,7 +228,16 @@ will be added.`,
           comparePtBestNetApy: comparePtBest?.netApy,
         });
 
-        return { content: [{ type: "text" as const, text }] };
+        // Next-step hints
+        const nextLines = [
+          ``,
+          `--- Next Steps ---`,
+          `• Find pools matching your target APY: scan_opportunities(capital_usd=${capital_usd || "YOUR_AMOUNT"}) for live pool data`,
+          `• Check raw PT looping baseline: get_looping_strategy(chain=CHAIN, pt_address=PT_ADDRESS) for comparison`,
+          `• Find Morpho markets: get_morpho_markets() to see which PTs have lending markets for Market A`,
+        ].join("\n");
+
+        return { content: [{ type: "text" as const, text: text + nextLines }] };
       } catch (e: any) {
         const text = `Error modeling MetaVault strategy: ${e.message}`;
         return { content: [{ type: "text" as const, text }], isError: true };
