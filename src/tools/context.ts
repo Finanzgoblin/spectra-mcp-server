@@ -60,6 +60,51 @@ ${API_NETWORKS.map((k) => `- ${SUPPORTED_CHAINS[k].name} (use "${k}" in queries,
 - "ethereum" is accepted as an alias for "mainnet".
 - Morpho PT markets exist on: mainnet, base, arbitrum, katana.
 - veSPECTRA governance lives on Base.`,
+
+  "workflow_routing": `Workflow Routing — How tools compose for common goals
+
+Goal: "Find the best yield for my capital"
+  Start with: scan_opportunities(capital_usd=YOUR_AMOUNT)
+  This computes price impact at your size, effective APY, and Morpho looping.
+  Different from get_best_fixed_yields which ranks by raw APY without capital awareness.
+  The two tools intentionally disagree on "best" — raw APY vs effective APY are different
+  questions. Both are valid depending on your assumptions about capital size and slippage.
+
+Goal: "Analyze a wallet's strategy"
+  Start with: get_portfolio(address) to see position shapes and balances
+  Then: get_pool_activity(chain, pool_address, address) on pools where they hold positions
+  Then: get_address_activity(address) for cross-pool pattern discovery
+  Portfolio shows WHAT they hold; activity shows HOW they got there. Neither alone tells
+  the full story — always cross-reference both.
+
+Goal: "Evaluate a specific opportunity in depth"
+  Start with: get_pt_details(chain, pt_address) for base data
+  Then: compare_yield(chain, pt_address) for fixed vs variable spread
+  Then: get_looping_strategy(chain, pt_address) if Morpho market exists
+  Then: quote_trade(chain, pt_address, amount, side) for entry cost
+  Then: simulate_portfolio_after_trade(...) to preview the result
+
+Goal: "Find YT mispricing"
+  Start with: scan_yt_arbitrage(capital_usd) for spread-sorted opportunities
+  YT arbitrage is a different axis than PT yield optimization. Large spreads could mean
+  real mispricing, IBT APR about to drop, or a liquidity event. The tool surfaces the
+  spread; distinguishing the cause requires agent judgment.
+
+Goal: "Optimize governance position / veSPECTRA"
+  Start with: get_ve_info(ve_balance, capital) for boost scenarios
+  Then: scan_opportunities(capital, ve_spectra_balance) for boosted rankings
+  veSPECTRA boost only affects gauge-enabled LP positions, not PT or YT directly.
+
+Goal: "Model a curator / MetaVault strategy"
+  Start with: model_metavault_strategy(...) with your parameters
+  Compare against: get_looping_strategy for raw PT looping baseline
+  The double-loop premium shows when MetaVault leverage beats raw PT looping.
+
+Three discovery tools and when to use each:
+  get_best_fixed_yields — headline rates across all chains (no capital adjustment)
+  scan_opportunities — capital-aware effective APY with Morpho looping analysis
+  scan_yt_arbitrage — YT spread opportunities (rate conviction bets)
+  These three intentionally produce different rankings. The disagreement is a feature.`,
 };
 
 const ALL_TOPIC_NAMES = Object.keys(TOPICS);
@@ -70,10 +115,14 @@ export function register(server: McpServer): void {
     `Get essential Spectra protocol mechanics needed for correct reasoning.
 Returns concise explanations of how PT/YT work, how Router batching affects
 pool activity interpretation, how to read wallet strategies from holdings,
-and how looping works.
+how looping works, and how tools compose into workflows.
 
 Covers mechanics that are easy to misinterpret without context — for example,
 SELL_PT in pool activity could be a flash-mint to acquire YT, not a PT sale.
+
+Use topic "workflow_routing" to learn which tools to call for a given goal
+(yield optimization, wallet analysis, YT arbitrage, etc.) and how they feed
+into each other. Recommended starting point for agents new to the tool set.
 
 Available topics: ${ALL_TOPIC_NAMES.join(", ")}
 Omit the topic parameter to get all topics at once.`,

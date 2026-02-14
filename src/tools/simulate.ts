@@ -176,7 +176,7 @@ price quote without portfolio context.`,
 
         const after = buildSnapshot(afterPtBal, ytBal, lpBal, ptPriceUsd, ytPriceUsd, lpPriceUsd);
 
-        const text = formatPortfolioSimulation({
+        const simText = formatPortfolioSimulation({
           ptName: pt.name,
           chain,
           maturity: pt.maturity,
@@ -194,6 +194,16 @@ price quote without portfolio context.`,
           lpPriceUsd,
           portfolioFetchFailed,
         });
+
+        // Next-step hints
+        const nextLines: string[] = [``, `--- Next Steps ---`];
+        if (side === "buy") {
+          nextLines.push(`• Check looping potential: get_looping_strategy(chain="${chain}", pt_address="${pt_address}") for leveraged yield after this trade`);
+        }
+        nextLines.push(`• Compare yield: compare_yield(chain="${chain}", pt_address="${pt_address}") for fixed vs variable analysis`);
+        nextLines.push(`• View full portfolio: get_portfolio(address="${address}") for all positions across chains`);
+
+        const text = simText + nextLines.join("\n");
 
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {

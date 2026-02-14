@@ -130,7 +130,13 @@ discover the best looping opportunities across all chains with capital-aware siz
           lines.push(`  Borrow Rate: ${formatPct(effectiveBorrowRate)}${borrow_rate !== undefined ? " (user provided)" : " (default estimate -- NOT from a real market)"}`);
           if (morpho_ltv === undefined || borrow_rate === undefined) {
             lines.push(`  ** WARNING: No Morpho market found. Numbers below use placeholder assumptions.`);
-            lines.push(`     Looping may not be possible for this PT. Use get_morpho_markets to verify. **`);
+            lines.push(`     Looping is likely NOT possible for this PT on ${chain}. **`);
+            lines.push(``);
+            lines.push(`  Alternative strategies for this PT:`);
+            lines.push(`    • Unleveraged fixed yield: compare_yield(chain="${chain}", pt_address="${pt_address}") to evaluate the raw spread`);
+            lines.push(`    • Find loopable alternatives: scan_opportunities(capital_usd=YOUR_AMOUNT, include_looping=true)`);
+            lines.push(`    • Check other chains: get_morpho_markets(pt_symbol_filter="${pt.underlying?.symbol || ""}") to find Morpho markets for similar PTs`);
+            lines.push(`    • YT arbitrage: scan_yt_arbitrage(capital_usd=YOUR_AMOUNT) for spread-based opportunities`);
           }
           lines.push(`  Tip: Use get_morpho_markets to find which PTs have Morpho markets.`);
         }
@@ -235,6 +241,16 @@ discover the best looping opportunities across all chains with capital-aware siz
         lines.push(`  Risks: Liquidation if PT depegs, smart contract risk on Morpho + Spectra,`);
         lines.push(`     borrow rate may increase, PT illiquidity near maturity,`);
         lines.push(`     cumulative entry cost increases with capital size and loop count.`);
+
+        // Next-step hints
+        lines.push(``);
+        lines.push(`--- Next Steps ---`);
+        lines.push(`• Quote entry trade: quote_trade(chain="${chain}", pt_address="${pt_address}", amount=YOUR_AMOUNT, side="buy")`);
+        lines.push(`• Preview portfolio: simulate_portfolio_after_trade(chain="${chain}", pt_address="${pt_address}", address=YOUR_WALLET, amount=YOUR_AMOUNT, side="buy")`);
+        lines.push(`• Compare against alternatives: scan_opportunities(capital_usd=YOUR_AMOUNT) for cross-chain ranking`);
+        if (morphoDetected) {
+          lines.push(`• Monitor borrow rate: get_morpho_rate(chain="${chain}", market_key="${morphoMarket!.uniqueKey}") — rates are variable`);
+        }
 
         const text = lines.join("\n");
         return { content: [{ type: "text" as const, text }] };
