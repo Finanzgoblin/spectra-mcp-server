@@ -54,7 +54,7 @@ import { register as registerContext } from "./tools/context.js";
 
 const server = new McpServer({
   name: "spectra-finance",
-  version: "1.0.0",
+  version: "1.0.1",
 });
 
 // Register all tools

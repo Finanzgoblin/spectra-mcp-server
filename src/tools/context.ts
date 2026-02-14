@@ -84,14 +84,18 @@ Omit the topic parameter to get all topics at once.`,
         .describe(`Specific topic to retrieve. Options: ${ALL_TOPIC_NAMES.join(", ")}. Omit for all.`),
     },
     async ({ topic }) => {
-      if (topic) {
-        const text = TOPICS[topic];
-        return { content: [{ type: "text" as const, text }] };
-      }
+      try {
+        if (topic) {
+          const text = TOPICS[topic];
+          return { content: [{ type: "text" as const, text }] };
+        }
 
-      // Return all topics
-      const text = Object.entries(TOPICS).map(([, v]) => v).join("\n\n---\n\n");
-      return { content: [{ type: "text" as const, text }] };
+        // Return all topics
+        const text = Object.entries(TOPICS).map(([, v]) => v).join("\n\n---\n\n");
+        return { content: [{ type: "text" as const, text }] };
+      } catch (e: any) {
+        return { content: [{ type: "text" as const, text: `Error: ${e.message}` }], isError: true };
+      }
     }
   );
 }
