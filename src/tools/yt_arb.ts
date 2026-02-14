@@ -247,13 +247,23 @@ Use get_pool_activity to monitor recent trading patterns in the target pool.`,
         // ================================================================
 
         if (topOpps.length === 0) {
-          const msg = `No YT arbitrage opportunities found above ${formatPct(min_spread_pct)} spread ` +
-            `(capital: ${formatUsd(capital_usd)}, max impact: ${formatPct(max_price_impact_pct)}).` +
-            (asset_filter ? ` Asset filter: ${asset_filter}.` : "") +
-            ` Try lowering min_spread_pct or min_tvl_usd/min_liquidity_usd.` +
-            (failedChains.length > 0 ? `\nNote: ${failedChains.length} chain(s) failed (${failedChains.join(", ")}).` : "");
+          const lines = [
+            `No YT arbitrage opportunities found above ${formatPct(min_spread_pct)} spread (capital: ${formatUsd(capital_usd)}, max impact: ${formatPct(max_price_impact_pct)}).`,
+            ...(asset_filter ? [`Asset filter: ${asset_filter}.`] : []),
+            ...(failedChains.length > 0 ? [`Note: ${failedChains.length} chain(s) failed (${failedChains.join(", ")}).`] : []),
+            ``,
+            `--- What This Means ---`,
+            `YT implied rates are currently close to IBT variable rates (tight spreads).`,
+            `This is normal — spreads widen during rate volatility events.`,
+            ``,
+            `Alternative approaches:`,
+            `• Widen search: lower min_spread_pct${asset_filter ? " or remove asset_filter" : ""}, or lower min_tvl_usd/min_liquidity_usd`,
+            `• Check PT fixed yields instead: scan_opportunities(capital_usd=${capital_usd}) for capital-aware yield ranking`,
+            `• Raw APY scan: get_best_fixed_yields() for headline rates across all chains`,
+            `• Monitor: spreads change as IBT rates move — check back after rate changes`,
+          ];
 
-          return { content: [{ type: "text" as const, text: msg }] };
+          return { content: [{ type: "text" as const, text: lines.join("\n") }] };
         }
 
         let text: string;
@@ -278,6 +288,17 @@ Use get_pool_activity to monitor recent trading patterns in the target pool.`,
             topBoostInfos,
           );
         }
+
+        // Next-step hints
+        const nextSteps = [
+          ``,
+          `--- Next Steps ---`,
+          `• Drill into top opportunity: compare_yield(chain=CHAIN, pt_address=PT_ADDRESS) for detailed fixed vs variable breakdown`,
+          `• Check pool trading patterns: get_pool_activity(chain=CHAIN, pool_address=POOL_ADDRESS) to see recent activity`,
+          `• Compare strategies: scan_opportunities(capital_usd=${capital_usd}) to compare YT arb vs fixed yield vs looping`,
+        ].join("\n");
+
+        text += nextSteps;
 
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {

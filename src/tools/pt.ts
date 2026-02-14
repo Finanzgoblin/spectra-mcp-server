@@ -58,7 +58,21 @@ Use get_pool_activity to see trading patterns on this pool.`,
           return { content: [{ type: "text" as const, text }] };
         }
 
-        const text = formatPtSummary(pt, chain);
+        const summary = formatPtSummary(pt, chain);
+
+        // Next-step hints: guide agent to logical follow-up tools
+        const ptAddr = pt.address || pt_address;
+        const poolAddr = pt.pools?.[0]?.address;
+        const nextSteps = [
+          ``,
+          `--- Next Steps ---`,
+          `• Compare fixed vs variable yield: compare_yield(chain="${chain}", pt_address="${ptAddr}")`,
+          `• Check leverage potential: get_looping_strategy(chain="${chain}", pt_address="${ptAddr}")`,
+          ...(poolAddr ? [`• See trading patterns: get_pool_activity(chain="${chain}", pool_address="${poolAddr}")`] : []),
+          `• Capital-aware ranking: scan_opportunities(capital_usd=YOUR_AMOUNT) to see where this PT ranks at your size`,
+        ];
+
+        const text = summary + nextSteps.join("\n");
 
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
@@ -151,7 +165,15 @@ Use get_pool_activity on a specific pool to see recent trading patterns.`,
           body = expanded.map(({ pt, pool }) => formatPoolSummary(pt, pool, chain)).join("\n\n");
         }
 
-        const text = header + "\n" + body;
+        const footer = [
+          ``,
+          `--- Next Steps ---`,
+          `• Drill into a pool: get_pt_details(chain="${chain}", pt_address=PT_ADDRESS) for full details`,
+          `• Compare yield: compare_yield(chain="${chain}", pt_address=PT_ADDRESS) for fixed vs variable`,
+          `• Capital-aware ranking: scan_opportunities(capital_usd=YOUR_AMOUNT) for cross-chain comparison with price impact`,
+        ].join("\n");
+
+        const text = header + "\n" + body + footer;
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
         const text = `Error listing pools: ${e.message}`;
@@ -229,7 +251,16 @@ develop conviction about which pools genuinely serve your strategy.`,
           body = top.map((opp, i) => `#${i + 1}\n${formatPoolSummary(opp.pt, opp.pool, opp.chain)}`).join("\n\n");
         }
 
-        const text = header + chainWarning + "\n" + body;
+        const footer = [
+          ``,
+          `--- Next Steps ---`,
+          `• Capital-aware re-ranking: scan_opportunities(capital_usd=YOUR_AMOUNT) — ranks by effective APY after price impact (these rankings intentionally disagree with raw APY)`,
+          `• Drill into a pool: get_pt_details(chain=CHAIN, pt_address=PT_ADDRESS) for full details`,
+          `• Compare yield: compare_yield(chain=CHAIN, pt_address=PT_ADDRESS) for fixed vs variable spread`,
+          `• Check leverage: get_looping_strategy(chain=CHAIN, pt_address=PT_ADDRESS) for Morpho looping`,
+        ].join("\n");
+
+        const text = header + chainWarning + "\n" + body + footer;
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
         const text = `Error scanning yields: ${e.message}`;
@@ -364,6 +395,17 @@ check your current positions. Use scan_opportunities for multi-chain comparison.
           }
         }
         lines.push(`  YT Leverage: ${(pool.ytLeverage || 0).toFixed(1)}x`);
+
+        // Next-step hints
+        const ptAddr = pt.address || pt_address;
+        lines.push(``);
+        lines.push(`--- Next Steps ---`);
+        if (effectiveFixedApy > variableApr) {
+          lines.push(`• Fixed yield exceeds variable — consider locking in: quote_trade(chain="${chain}", pt_address="${ptAddr}", amount=YOUR_AMOUNT, side="buy")`);
+        }
+        lines.push(`• Leverage the spread: get_looping_strategy(chain="${chain}", pt_address="${ptAddr}") for Morpho looping`);
+        lines.push(`• Preview portfolio impact: simulate_portfolio_after_trade(chain="${chain}", pt_address="${ptAddr}", address=YOUR_WALLET, amount=YOUR_AMOUNT, side="buy")`);
+        lines.push(`• Cross-chain comparison: scan_opportunities(capital_usd=${capital_usd}) to compare this against all opportunities`);
 
         const text = lines.join("\n");
         return { content: [{ type: "text" as const, text }] };

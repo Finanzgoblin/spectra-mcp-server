@@ -161,6 +161,13 @@ Use quote_trade to estimate price impact for a specific trade size.`,
           // Best-effort: swallow errors, don't block core output
         }
 
+        // Next-step hints
+        lines.push(``);
+        lines.push(`--- Next Steps ---`);
+        lines.push(`• Individual trades: get_pool_activity(chain="${chain}", pool_address="${effectivePoolAddr}") for transaction-level detail`);
+        lines.push(`• Quote a trade: quote_trade(chain="${chain}", pt_address="${pool_address}", amount=YOUR_AMOUNT, side="buy") to estimate entry cost`);
+        lines.push(`• Pool details: get_pt_details(chain="${chain}", pt_address="${pool_address}") for APY, maturity, and yield data`);
+
         const text = lines.join("\n");
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
@@ -829,10 +836,15 @@ Use get_portfolio to see current holdings across all pools.`,
           lines.push(`    ${formatActivityType(t).padEnd(18)} ${String(s.count).padEnd(6)} txns  ${formatUsd(s.value)}`);
         }
 
+        // Next-step hints with prioritized drill-down
         lines.push(``);
-        lines.push(`  Tip: Use get_pool_activity with address parameter on a specific pool for`);
-        lines.push(`  deep analysis (cycle detection, flow accounting, contract detection, gas estimates).`);
-        lines.push(`  Use get_portfolio to see current holdings.`);
+        lines.push(`--- Next Steps ---`);
+        const topPool = allPoolActivities[0];
+        if (topPool) {
+          lines.push(`• Highest-volume pool (${formatUsd(topPool.totalValueUsd)}): get_pool_activity(chain="${topPool.chain}", pool_address="${topPool.poolAddress}", address="${address}") for deep analysis`);
+        }
+        lines.push(`• Current holdings: get_portfolio(address="${address}") for PT/YT/LP balances`);
+        lines.push(`• Deep analysis on any pool: get_pool_activity(chain=CHAIN, pool_address=POOL, address="${address}") for cycle detection, flow accounting, gas estimates`);
 
         return {
           content: [{ type: "text", text: lines.join("\n") }],

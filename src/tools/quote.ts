@@ -12,7 +12,7 @@ import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork } from "../config.js";
 import { fetchSpectra, fetchCurveGetDy } from "../api.js";
 import type { TradeQuote } from "../types.js";
-import { parsePtResponse, buildQuoteFromPt, formatTradeQuote } from "../formatters.js";
+import { parsePtResponse, buildQuoteFromPt, formatTradeQuote, formatPct } from "../formatters.js";
 
 /**
  * Try to build a TradeQuote from an on-chain Curve get_dy() call.
@@ -148,7 +148,20 @@ makes sense relative to variable rates.`,
           }
         }
 
-        const text = formatTradeQuote(quote);
+        const quoteText = formatTradeQuote(quote);
+
+        // Next-step hints + negative signal for high impact
+        const nextLines: string[] = [``, `--- Next Steps ---`];
+        nextLines.push(`• Preview portfolio: simulate_portfolio_after_trade(chain="${chain}", pt_address="${pt_address}", address=YOUR_WALLET, amount=${amount}, side="${side}")`);
+        nextLines.push(`• Compare yield: compare_yield(chain="${chain}", pt_address="${pt_address}") for fixed vs variable analysis`);
+        nextLines.push(`• Check leverage: get_looping_strategy(chain="${chain}", pt_address="${pt_address}") for Morpho looping`);
+
+        if (quote.priceImpactPct > 5) {
+          nextLines.push(``);
+          nextLines.push(`⚠ High impact (${formatPct(quote.priceImpactPct)}): consider reducing trade size, or check pool depth via get_pool_volume(chain="${chain}", pool_address="${pool.address || pt_address}")`);
+        }
+
+        const text = quoteText + nextLines.join("\n");
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
         const text = `Error quoting trade: ${e.message}`;
