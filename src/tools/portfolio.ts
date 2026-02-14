@@ -3,11 +3,93 @@
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, API_NETWORKS, resolveNetwork } from "../config.js";
 import type { SpectraPt, MorphoMarket } from "../types.js";
 import { fetchSpectra, findMorphoMarketsForPts } from "../api.js";
-import { formatUsd, formatPositionSummary, formatPortfolioHints, daysToMaturity, formatBalance } from "../formatters.js";
+import {
+  formatUsd,
+  formatPct,
+  formatPositionSummary,
+  formatPortfolioHints,
+  daysToMaturity,
+  formatBalance,
+  formatMorphoLltv,
+  cumulativeLeverageAtLoop,
+} from "../formatters.js";
 import type { SpectraPool } from "../types.js";
+
+/**
+ * Compute compact inline looping projections for a single portfolio position.
+ * Returns a formatted string to append directly to the position summary.
+ */
+function formatInlineLooping(
+  morphoEntry: MorphoMarket | false | undefined,
+  pos: SpectraPt,
+  chain: string,
+): string {
+  if (morphoEntry === undefined) {
+    return "\n  Looping: Morpho lookup failed — use get_looping_strategy for manual check";
+  }
+  if (morphoEntry === false) {
+    return "\n  Looping: No Morpho market — can't loop this position";
+  }
+
+  const pool = pos.pools?.[0];
+  const baseApy = pool?.impliedApy || 0;
+  if (baseApy <= 0) {
+    return "\n  Looping: Pool has no implied APY — looping analysis not applicable";
+  }
+
+  const lltv = formatMorphoLltv(morphoEntry.lltv);
+  if (lltv <= 0) {
+    return "\n  Looping: Invalid LLTV from Morpho market";
+  }
+
+  const borrowRatePct = (morphoEntry.state?.borrowApy || 0) * 100;
+  const morphoLiqUsd = morphoEntry.state?.liquidityAssetsUsd || 0;
+  const maxLoops = 5;
+
+  // Compute net APY at each loop level
+  const loopResults: Array<{ loop: number; leverage: number; netApy: number }> = [];
+  let bestLoop = 0;
+  let bestNet = baseApy;
+
+  for (let i = 0; i <= maxLoops; i++) {
+    const lev = cumulativeLeverageAtLoop(lltv, i);
+    const grossApy = baseApy * lev;
+    const borrowCost = borrowRatePct * (lev - 1);
+    const netApy = grossApy - borrowCost;
+    loopResults.push({ loop: i, leverage: lev, netApy });
+    if (i > 0 && netApy > bestNet) {
+      bestNet = netApy;
+      bestLoop = i;
+    }
+  }
+
+  // If no looping level improves yield, note it
+  if (bestLoop === 0) {
+    return `\n  Looping: Available but not profitable (borrow ${formatPct(borrowRatePct)} > yield spread at all levels)`;
+  }
+
+  // Build compact one-line summary: "1x: 8.20% | 2x: 12.15% | 3x: 15.90% ← optimal | 4x: 14.80%"
+  const parts = loopResults
+    .filter((r) => r.loop <= Math.min(bestLoop + 1, maxLoops))
+    .map((r) => {
+      const label = `${r.loop}x: ${formatPct(r.netApy)}`;
+      return r.loop === bestLoop ? `${label} ← optimal` : label;
+    });
+
+  const lines = [
+    ``,
+    `  Looping Potential (Morpho):`,
+    `    ${parts.join(" | ")}`,
+    `    LLTV: ${formatPct(lltv * 100)} | Borrow: ${formatPct(borrowRatePct)} | Morpho Liq: ${formatUsd(morphoLiqUsd)}`,
+    `    Full details: get_looping_strategy(chain="${chain}", pt_address="${pos.address}")`,
+  ];
+
+  return lines.join("\n");
+}
 
 export function register(server: McpServer): void {
   server.tool(
@@ -16,6 +98,10 @@ export function register(server: McpServer): void {
 Returns PT, YT, and LP balances with USD values, claimable yield,
 and current rates. Queries a single chain or all chains.
 Use this to understand what a wallet currently holds on Spectra.
+
+Set include_looping_analysis=true to get inline Morpho looping projections for each
+position — shows optimal leverage, net APY at each loop level, borrow rate, and
+available liquidity. This saves separate get_looping_strategy calls per position.
 
 Protocol context:
 - Depositing IBT always mints BOTH PT and YT in equal amounts. If a wallet holds
@@ -37,8 +123,12 @@ Protocol context:
       chain: CHAIN_ENUM
         .optional()
         .describe("Specific chain to query. Omit to scan all chains."),
+      include_looping_analysis: z
+        .boolean()
+        .default(false)
+        .describe("If true, compute inline Morpho looping projections for each position that has a Morpho market. Shows optimal leverage, net APY at each loop level, and borrow rate — saves a separate get_looping_strategy call per position."),
     },
-    async ({ address, chain }) => {
+    async ({ address, chain, include_looping_analysis }) => {
       try {
         const networks = chain
           ? [resolveNetwork(chain)]
@@ -87,7 +177,8 @@ Protocol context:
           chainPtMap.get(net)!.push(pos.address);
         }
 
-        const morphoAvailability = new Map<string, boolean>();
+        // Store full MorphoMarket objects (needed for looping enrichment) or false if checked but none found
+        const morphoAvailability = new Map<string, MorphoMarket | false>();
         const morphoResults = await Promise.allSettled(
           Array.from(chainPtMap.entries()).map(async ([net, ptAddrs]) => {
             const markets = await findMorphoMarketsForPts(ptAddrs, net);
@@ -98,7 +189,8 @@ Protocol context:
           if (result.status === "fulfilled") {
             const { markets, ptAddrs } = result.value;
             for (const addr of ptAddrs) {
-              morphoAvailability.set(addr.toLowerCase(), markets.has(addr.toLowerCase()));
+              const addrLower = addr.toLowerCase();
+              morphoAvailability.set(addrLower, markets.get(addrLower) || false);
             }
           }
           // On failure: ptAddrs stay absent from map → morphoAvailable remains undefined
@@ -107,11 +199,21 @@ Protocol context:
         for (const { pos, chain: c } of allPositions) {
           const result = formatPositionSummary(pos, c);
           if (result) {
-            summaries.push(result.text);
+            let posText = result.text;
             totalPortfolioValue += result.totalValue;
             // Collect data for portfolio-level hints
             const decimals = pos.decimals ?? 18;
             const ptAddrLower = pos.address.toLowerCase();
+            const morphoEntry = morphoAvailability.get(ptAddrLower);
+            // morphoAvailable: true if MorphoMarket object, false if checked but none, undefined if lookup failed
+            const morphoAvailable = morphoEntry === undefined ? undefined : morphoEntry !== false;
+
+            // Inline looping enrichment
+            if (include_looping_analysis) {
+              posText += formatInlineLooping(morphoEntry, pos, c);
+            }
+
+            summaries.push(posText);
             hintData.push({
               totalValue: result.totalValue,
               chain: c,
@@ -123,7 +225,7 @@ Protocol context:
               name: pos.name,
               ptAddress: ptAddrLower,
               maturityTs: pos.maturity,
-              morphoAvailable: morphoAvailability.get(ptAddrLower),
+              morphoAvailable,
             });
           }
         }
