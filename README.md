@@ -22,9 +22,9 @@ Any AI agent (Claude, GPT, open-source) that supports MCP can now:
 - **Model** MetaVault "double loop" strategies for curators — vault compounding + Morpho leverage with curator economics
 - **Query** Morpho lending markets for PT collateral opportunities
 - **Query** protocol stats, tokenomics, and governance data
-- **Learn** protocol mechanics on-demand via `get_protocol_context` (PT/YT identity, Router batching, minting)
+- **Learn** protocol mechanics and workflow routing on-demand via `get_protocol_context` (PT/YT identity, Router batching, minting, tool composition patterns)
 
-The agent doesn't need to understand PT/YT mechanics -- it just calls `scan_opportunities` with its capital size and gets ranked, actionable data. If it needs to understand *why* something works that way, it calls `get_protocol_context`.
+The agent doesn't need to understand PT/YT mechanics -- it just calls `scan_opportunities` with its capital size and gets ranked, actionable data. If it needs to understand *why* something works that way, it calls `get_protocol_context`. If it doesn't know which tool to start with, `get_protocol_context(topic="workflow_routing")` maps common goals to tool sequences.
 
 ## Open Emergence Architecture
 
@@ -45,6 +45,14 @@ Layer 2: Tool Descriptions (every tool's description string)
   → Calls out hidden mechanics that could mislead (e.g., AMM_ADD_LIQUIDITY can mint YT)
 
 Layer 3: Structured Output Hints (computed at runtime in tool output)
+  → Next-Step Hints: every tool output includes "--- Next Steps ---" with pre-filled
+    tool calls the agent can copy directly (chain, address, amount pre-populated)
+  → Negative Signal Guidance: dead-end responses explain WHY results are empty and
+    suggest specific alternatives ("No Morpho market → try compare_yield for
+    unleveraged analysis, or scan_opportunities for loopable alternatives")
+  → Inline Looping Enrichment: get_portfolio(include_looping_analysis=true) shows
+    per-position Morpho looping projections (net APY at each leverage level, optimal
+    loop, borrow rate) without separate get_looping_strategy calls
   → Position Shape analysis in portfolio: balance ratios (e.g., "YT/PT 4:1")
   → Portfolio Signals: concentration, maturity alerts, strategy shape across positions
   → Volume Signals: volume/liquidity ratio, buy/sell skew, trend detection
@@ -63,7 +71,8 @@ Layer 3: Structured Output Hints (computed at runtime in tool output)
 ### Design Principles
 
 - **Teach mechanics, not conclusions.** The server explains that AMM_ADD_LIQUIDITY *could be* a mint+LP batch operation — it doesn't conclude "this user is accumulating YT."
-- **Every tool cross-references at least one other tool.** This creates analytical workflows without dictating them. The agent learns to check `get_portfolio` after seeing activity patterns, not because it was told to.
+- **Every tool cross-references at least one other tool** — in both descriptions AND output. Tool outputs include "--- Next Steps ---" sections with pre-filled tool calls, so an agent never hits a dead end. This creates analytical workflows without dictating them.
+- **Dead ends explain themselves.** When a tool returns empty results, the output explains what the absence means and suggests specific alternatives. An empty `get_morpho_markets` response tells the agent which chains DO have Morpho markets. An empty `scan_yt_arbitrage` explains that tight spreads are normal and suggests PT yields instead.
 - **Hidden mechanics are called out where they can mislead.** The Spectra Router batches multiple operations atomically. A `SELL_PT` event might actually be YT acquisition via flash-mint. Tool descriptions teach this so agents don't draw wrong conclusions from pool data alone.
 - **Full addresses in output, never truncated.** When addresses appear in activity data, they're shown in full so the agent can pass them directly to `get_portfolio` without needing a block explorer.
 - **Discovery tools warn about capital-awareness gaps.** `get_best_fixed_yields` explicitly says "this ranks by raw APY — use `scan_opportunities` for capital-aware sizing."
@@ -71,10 +80,13 @@ Layer 3: Structured Output Hints (computed at runtime in tool output)
 ### Why This Matters
 
 A cold-start agent with zero prior knowledge of Spectra can:
-1. Call `get_pool_activity` — see trading patterns with ⚠ hints about ambiguous events
-2. Call `get_portfolio` on flagged addresses — see Position Shape (balance ratios like "YT/PT 4:1")
-3. Read the cross-reference nudges — compose its own analytical workflow
-4. Identify novel strategies the server was never explicitly programmed to detect
+1. Call `get_protocol_context(topic="workflow_routing")` — learn which tools to call for its goal
+2. Call `scan_opportunities` — get ranked results with next-step hints pointing to drill-down tools
+3. Follow pre-filled next-step tool calls — no parameter extraction needed
+4. Hit dead ends that explain themselves — empty results suggest specific alternatives
+5. Identify novel strategies the server was never explicitly programmed to detect
+
+An agent never gets stranded. Every tool output includes "--- Next Steps ---" with pre-populated parameters. Every dead-end response explains what the absence means and where to go instead. And `get_portfolio(include_looping_analysis=true)` eliminates the N+1 problem of calling `get_looping_strategy` separately for each position.
 
 This was validated: a subagent spawned with zero priming correctly identified a mint-and-sell-PT loop strategy (YT accumulation via PT discount) in 3 tool calls, using only the mechanics taught in descriptions and the structured hints in output.
 
@@ -91,7 +103,7 @@ This was validated: a subagent spawned with zero priming correctly identified a 
 | `get_morpho_rate` | Get live borrow rate and state for a specific Morpho market. |
 | `get_protocol_stats` | SPECTRA tokenomics, emissions schedule, fee distribution, governance info. |
 | `get_supported_chains` | List available networks (10 chains). |
-| `get_portfolio` | Wallet positions across PT, YT, and LP with USD values and claimable yield. |
+| `get_portfolio` | Wallet positions across PT, YT, and LP with USD values and claimable yield. Set `include_looping_analysis=true` for inline Morpho looping projections per position. |
 | `get_pool_volume` | Historical buy/sell trading volume for a specific pool. Accepts PT address or pool address. |
 | `get_pool_activity` | Recent individual transactions (buys, sells, liquidity events) with filtering, address isolation mode (cycle detection, flow accounting, contract/EOA detection, gas estimates). Accepts PT or pool address. |
 | `get_address_activity` | Cross-pool address scanner — finds all pools an address has interacted with on a chain (or all chains) in one call. Per-pool breakdown + cross-pool aggregates. |
@@ -101,7 +113,7 @@ This was validated: a subagent spawned with zero priming correctly identified a 
 | `scan_yt_arbitrage` | YT rate vs IBT rate arbitrage scanner -- finds pools where YT is mispriced relative to underlying yield. Supports `compact` mode. |
 | `get_ve_info` | Live veSPECTRA data from Base chain (total supply via on-chain read) + boost calculator with per-pool multipliers. |
 | `model_metavault_strategy` | MetaVault "double loop" strategy modeler for curators. Models YT→LP compounding + Morpho leverage with curator economics (fee revenue, TVL creation, effective ROI). |
-| `get_protocol_context` | Returns protocol mechanics reference (PT/YT identity, Router batching, minting). Callable on-demand instead of always in context. |
+| `get_protocol_context` | Returns protocol mechanics reference (PT/YT identity, Router batching, minting, workflow routing). Use `topic="workflow_routing"` to learn which tools to call for a given goal. |
 
 ## Supported Chains
 
@@ -210,6 +222,8 @@ Once connected, you can ask Claude things like:
 - "Model a MetaVault with 12% base APY and 3% YT compounding, 10% curator fee -- what does looping look like?"
 - "Compare MetaVault looping vs raw PT looping at 12% base APY"
 - "I'm curating a vault with $100K own capital and $1M external deposits -- what's my effective ROI?"
+- "Show my portfolio with looping analysis — what could I leverage?"
+- "Which tools should I use to analyze a wallet's strategy?" (triggers workflow_routing)
 
 ## Architecture
 
@@ -248,20 +262,22 @@ src/
                       slim envelope helpers, Layer 3 output hints (Position Shape, LP APY breakdown,
                       volume signals, Morpho market hints, portfolio signals, cycle detection)
   tools/            Layer 2: each tool description teaches domain-specific mechanics
-    context.ts      get_protocol_context (Layer 1 protocol mechanics, callable on-demand)
+    context.ts      get_protocol_context (Layer 1 protocol mechanics + workflow routing topic)
     pt.ts           get_pt_details, list_pools, get_best_fixed_yields, compare_yield
-    looping.ts      get_looping_strategy
-    portfolio.ts    get_portfolio (balance ratio strategy signals, portfolio-level hints, cross-ref nudges)
+                      (all with next-step hints)
+    looping.ts      get_looping_strategy (negative signal guidance when no Morpho market)
+    portfolio.ts    get_portfolio (balance ratio strategy signals, portfolio-level hints,
+                      inline Morpho looping enrichment via include_looping_analysis flag)
     pool.ts         get_pool_volume (with volume/liquidity hints), get_pool_activity (PT address resolution, Router batching,
                       address isolation w/ cycle detection, flow accounting, contract detection,
                       gas estimates, pool impact warnings), get_address_activity (cross-pool scanner)
-    morpho.ts       get_morpho_markets (with capacity/utilization hints), get_morpho_rate (with PT spread analysis)
+    morpho.ts       get_morpho_markets (negative signal with available chains), get_morpho_rate (with PT spread analysis)
     protocol.ts     get_protocol_stats, get_supported_chains
-    quote.ts        quote_trade (on-chain Curve get_dy() with math fallback)
+    quote.ts        quote_trade (on-chain Curve get_dy() with math fallback, high-impact warnings)
     simulate.ts     simulate_portfolio_after_trade (also uses on-chain quoting)
     strategy.ts     scan_opportunities (capital-aware, batch Morpho, negative-APY filtering, strategy tension)
-    yt_arb.ts       scan_yt_arbitrage (YT execution mechanics, flash-mint/flash-redeem)
-    ve.ts           get_ve_info
+    yt_arb.ts       scan_yt_arbitrage (YT execution mechanics, negative signal guidance)
+    ve.ts           get_ve_info (conditional next-step hints)
     metavault.ts    model_metavault_strategy
 docs/
   recursive-meta-process.md    Open Emergence metaframework specification
@@ -348,11 +364,14 @@ Note: `{chain}` uses the slug `mainnet` for Ethereum (the alias `ethereum` is ac
 When adding new tools, follow the three-layer architecture:
 
 1. **Description (Layer 2):** Teach any protocol mechanics that affect interpretation of the tool's data. Use "could be" language for ambiguous signals. Add cross-reference nudges to at least one related tool.
-2. **Output (Layer 3):** If the data contains signals that require domain knowledge to notice (e.g., a ratio that implies a strategy, an event that could mean different things), compute a structured hint and include it in the output. Make it salient but not prescriptive.
-3. **Resource (Layer 1):** If the new tool introduces fundamental protocol concepts not covered by existing resources, update `spectra-overview` in `index.ts`.
+2. **Output (Layer 3):** Every tool output should include:
+   - **Next-step hints**: A `--- Next Steps ---` section with 3-4 pre-filled tool calls. Present OPTIONS, not a single recommended path.
+   - **Negative signal guidance**: When results are empty, explain what the absence means and suggest specific alternatives. Don't just say "no results" — say why and where else to look.
+   - **Domain-aware hints**: If the data contains signals that require domain knowledge to notice (e.g., a ratio that implies a strategy), compute a structured hint. Make it salient but not prescriptive.
+3. **Resource (Layer 1):** If the new tool introduces fundamental protocol concepts, update `spectra-overview` in `index.ts`. If it creates a new workflow, add it to the `workflow_routing` topic in `context.ts`.
 4. **Dissolution condition:** Document when the new structure would no longer serve, in `docs/dissolution-conditions.md`. Every Layer 3 hint, architectural pattern, and generative friction point carries a dissolution condition — a prompt for re-evaluation when circumstances change.
 
-The goal: a cold-start agent reading only the tool descriptions and output hints should be able to use the tool correctly and compose it with other tools into novel analytical workflows.
+The goal: a cold-start agent reading only the tool descriptions and output hints should be able to use the tool correctly and compose it with other tools into novel analytical workflows. An agent should never hit a dead end — every output provides a path forward.
 
 ### Adding write capabilities (future)
 

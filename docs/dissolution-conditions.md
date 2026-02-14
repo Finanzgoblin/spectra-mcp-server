@@ -234,3 +234,62 @@ navigates to get_portfolio and get_address_activity as alternatives.
 
 Dissolution: When the Spectra API provides a unified transaction history endpoint
 that includes Router-batched operations alongside pool activity.
+
+---
+
+## Agentic Accessibility Enhancements (Feb 2026)
+
+These enhancements improve autonomous agent navigation through the tool system —
+next-step hints, workflow routing, negative signal guidance, and inline looping
+enrichment. They follow Open Emergence principles: options not prescriptions,
+"could be" language, and clear dissolution conditions.
+
+### Next-Step Hints in tool output (all tools)
+
+Every tool output includes a "--- Next Steps ---" section with 3-4 pre-filled
+tool calls. These present OPTIONS (not a recommended path) with chain, address,
+and amount parameters pre-populated from the current tool's output.
+
+Dissolution: When agents develop persistent tool-graph memory (remembering
+cross-references from descriptions across multiple calls), output-level next
+steps become redundant. Also dissolves if agents start ignoring the hints and
+following their own cross-reference patterns — that would mean the hints are
+scaffolding that's no longer needed.
+
+### Workflow Routing topic in get_protocol_context
+
+The `workflow_routing` topic maps 6 common goals (find best yield, analyze wallet,
+evaluate opportunity, find YT mispricing, optimize governance, model MetaVault) to
+tool sequences. Also explains the three discovery tools and their intentional
+disagreement. Described as patterns, not instructions.
+
+Dissolution: When agents reliably compose multi-tool workflows without this
+routing guide — when tool descriptions and output hints alone are sufficient for
+workflow discovery. Track: do agents that DON'T read this topic compose workflows
+as well as agents that do?
+
+### Negative Signal Guidance in dead-end responses
+
+When tools return empty/null/unavailable results, output includes "--- What This
+Means ---" sections explaining the absence and suggesting alternatives. Applied to:
+get_looping_strategy (no Morpho market), get_morpho_markets (zero results),
+quote_trade (high impact), scan_opportunities (negative APY), scan_yt_arbitrage
+(tight spreads), get_portfolio (empty wallet).
+
+Dissolution: When agents develop robust fallback reasoning on their own (e.g., an
+agent that gets "no Morpho market" automatically tries scan_opportunities). If
+agents always follow the suggested alternatives without reasoning about them, the
+guidance has become prescriptive and should be relaxed.
+
+### Inline Looping Enrichment in get_portfolio
+
+The `include_looping_analysis` parameter computes per-position Morpho looping
+projections inline (net APY at each leverage level, optimal loop, borrow rate,
+Morpho liquidity). Eliminates the N+1 pattern of calling get_looping_strategy
+separately for each position.
+
+Dissolution: When `scan_opportunities` becomes the universal entry point and
+agents rarely start from portfolio analysis. Also dissolves if agents always call
+`get_looping_strategy` separately after seeing portfolio flags — in that case,
+the inline analysis is redundant computation. Also dissolves if the Morpho batch
+lookup becomes unreliable enough that inline results are frequently stale or wrong.

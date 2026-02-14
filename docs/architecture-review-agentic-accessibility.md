@@ -176,7 +176,15 @@ Currently there's no topic for:
 Each proposal includes the Open Emergence alignment (which design principle it serves),
 the agentic accessibility gain, and a dissolution condition.
 
-### Feature 1: Next-Step Hints in Tool Output
+**Implementation status:**
+- Feature 1 (Next-Step Hints): **IMPLEMENTED** — all 12 tool files updated
+- Feature 2 (Workflow Routing): **IMPLEMENTED** — `workflow_routing` topic in context.ts
+- Feature 3 (Negative Signals): **IMPLEMENTED** — across looping, morpho, quote, strategy, yt_arb
+- Feature 4 (Unified Discovery): Not implemented (deferred — workflow routing covers most of this)
+- Feature 5 (Portfolio Looping Enrichment): **IMPLEMENTED** — `include_looping_analysis` parameter
+- Features 6-8: Not yet implemented
+
+### Feature 1: Next-Step Hints in Tool Output [IMPLEMENTED]
 
 **What**: Add structured "next step" suggestions to tool outputs — not prescriptive
 commands, but mechanics-aware pointers.
@@ -225,7 +233,7 @@ longer needed.
 
 ---
 
-### Feature 2: Workflow Routing Topic in get_protocol_context
+### Feature 2: Workflow Routing Topic in get_protocol_context [IMPLEMENTED]
 
 **What**: Add a new topic `"workflow_routing"` to `get_protocol_context` that maps agent
 goals to tool sequences — not as prescriptions, but as common patterns.
@@ -277,7 +285,7 @@ well as agents that do?
 
 ---
 
-### Feature 3: Negative Signal Guidance in Dead-End Responses
+### Feature 3: Negative Signal Guidance in Dead-End Responses [IMPLEMENTED]
 
 **What**: When a tool returns empty/null/unavailable results, include structured guidance
 about what the absence means and what alternatives exist.
@@ -386,7 +394,7 @@ they always pick the top result from one category?
 
 ---
 
-### Feature 5: Portfolio Enrichment with Actionable Looping Analysis
+### Feature 5: Portfolio Enrichment with Actionable Looping Analysis [IMPLEMENTED]
 
 **What**: Add an optional `include_looping_analysis` parameter to `get_portfolio` that,
 when true, runs `get_looping_strategy` logic inline for each Morpho-eligible position.
@@ -614,20 +622,19 @@ recommendations. "Here are three things you could do" respects agent autonomy.
 
 Ordered by agentic accessibility impact per unit of effort:
 
-| Priority | Feature | Effort | Impact | Why This Order |
-|----------|---------|--------|--------|----------------|
-| 1 | Next-Step Hints (Feature 1) | Low | High | Fixes all four dead ends with formatter changes only |
-| 2 | Workflow Routing Topic (Feature 2) | Low | High | One new topic in context.ts — agents orient faster |
-| 3 | Negative Signal Guidance (Feature 3) | Low | Medium | Small changes per tool — prevents agent stalling |
-| 4 | Tool-Graph Resource (Feature 8) | Low | Medium | One new resource — enables programmatic composition |
-| 5 | Portfolio Looping Enrichment (Feature 5) | Medium | High | Inline computation — eliminates manual dispatch loop |
-| 6 | Unified Discovery (Feature 4) | Medium | High | New tool composing existing logic — risky if it removes friction |
-| 7 | Watch-Tower Integration (Feature 6) | Medium | Medium | New data axis — depends on API availability |
-| 8 | APR Vision Integration (Feature 7) | Medium | Medium | Fills temporal blind spot — depends on API shape |
+| Priority | Feature | Effort | Impact | Status |
+|----------|---------|--------|--------|--------|
+| 1 | Next-Step Hints (Feature 1) | Low | High | **DONE** — all 12 tool files |
+| 2 | Workflow Routing Topic (Feature 2) | Low | High | **DONE** — context.ts |
+| 3 | Negative Signal Guidance (Feature 3) | Low | Medium | **DONE** — 6 tools enhanced |
+| 4 | Tool-Graph Resource (Feature 8) | Low | Medium | Not started |
+| 5 | Portfolio Looping Enrichment (Feature 5) | Medium | High | **DONE** — portfolio.ts |
+| 6 | Unified Discovery (Feature 4) | Medium | High | Deferred (workflow routing covers most of the routing problem) |
+| 7 | Watch-Tower Integration (Feature 6) | Medium | Medium | Not started (depends on API availability) |
+| 8 | APR Vision Integration (Feature 7) | Medium | Medium | Not started (depends on API shape) |
 
-**Recommended first sprint**: Features 1, 2, 3, and 8. These are all low-effort, high
-accessibility impact changes that work within the existing architecture without adding
-new tools or API dependencies.
+**Completed**: Features 1, 2, 3, 5. These cover all four dead-end workflows identified
+in Part 2 and eliminate the N+1 looping lookup pattern from portfolio analysis.
 
 ---
 
