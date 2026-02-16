@@ -146,17 +146,20 @@ the scaffolding has done its job and can be removed.
 
 ---
 
-## model_metavault_strategy: Purely hypothetical tool
+## MetaVault tools: get_metavaults + model_metavault_strategy
 
-This tool models scenarios for a feature (MetaVaults) that doesn't have
-a live API yet (`/v1/{network}/metavaults` returns 400). The tool is
-built in anticipation.
+`get_metavaults` fetches live MetaVault data from the Spectra API
+(`/v1/{network}/metavaults`). `model_metavault_strategy` can auto-populate
+base_apy from live data (chain + metavault_address) or run in manual mode
+for hypothetical modeling.
 
-Dissolution: If MetaVaults launch with fundamentally different economics
-(e.g., no YT compounding, different fee model), this tool's math is
-wrong and should be rebuilt from the actual implementation. If MetaVaults
-don't launch within 6 months of the initial build, question whether the
-tool's existence creates false confidence in a hypothetical.
+Dissolution: If MetaVaults evolve to have fundamentally different economics
+(e.g., no YT compounding, different fee model), the strategy modeler's math
+should be rebuilt from the actual implementation. If the API response schema
+changes significantly (new fields, removed fields), the type definitions
+and formatters need updating. If MetaVault bridge transactions
+(`/v1/{network}/metavaults/bridge/transactions`) become important for
+strategy modeling, wire that endpoint as well.
 
 ---
 
