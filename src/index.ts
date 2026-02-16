@@ -28,6 +28,8 @@
  *   - get_ve_info              -> Live veSPECTRA data + boost calculator
  *   - get_metavaults             -> List live MetaVaults across chains (curators, TVL, APY, positions)
  *   - model_metavault_strategy  -> MetaVault double-loop strategy modeler for curators (live data or manual)
+ *   - list_pendle_markets         -> List active Pendle markets (all Pendle chains, including Pendle-only)
+ *   - compare_pendle_spectra      -> Side-by-side Pendle vs Spectra yield comparison on overlapping chains
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -48,6 +50,7 @@ import { register as registerYtArb } from "./tools/yt_arb.js";
 import { register as registerVe } from "./tools/ve.js";
 import { register as registerMetavault } from "./tools/metavault.js";
 import { register as registerContext } from "./tools/context.js";
+import { register as registerPendle } from "./tools/pendle.js";
 
 // =============================================================================
 // MCP Server Setup
@@ -72,6 +75,7 @@ registerYtArb(server);
 registerVe(server);
 registerMetavault(server);
 registerContext(server);
+registerPendle(server);
 
 // =============================================================================
 // Resources: Protocol context for agents

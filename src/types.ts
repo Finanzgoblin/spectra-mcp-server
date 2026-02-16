@@ -351,6 +351,44 @@ export interface ChainScanResult {
 }
 
 // =============================================================================
+// Pendle API Interfaces
+// =============================================================================
+
+export interface PendleMarketDetails {
+  liquidity: number;       // pool liquidity in USD
+  totalTvl: number;        // total TVL in USD
+  tradingVolume: number;   // 24h volume in USD
+  underlyingApy: number;   // underlying variable APY (decimal, e.g. 0.05 = 5%)
+  swapFeeApy: number;      // swap fee APY (decimal)
+  pendleApy: number;       // PENDLE incentive APY (decimal)
+  impliedApy: number;      // fixed rate / implied APY (decimal)
+  feeRate: number;         // pool fee rate (decimal)
+  aggregatedApy: number;   // total LP APY (decimal)
+  maxBoostedApy: number;   // max boosted LP APY (decimal)
+  totalPt: number;         // total PT in pool
+  totalSy: number;         // total SY in pool
+  totalSupply: number;     // total LP supply
+  totalActiveSupply: number;
+  yieldRange?: { min: number; max: number };
+}
+
+export interface PendleMarket {
+  name: string;
+  address: string;         // market/pool address
+  expiry: string;          // ISO date string (e.g. "2026-06-25T00:00:00.000Z")
+  pt: string;              // PT token address
+  yt: string;              // YT token address
+  sy: string;              // SY (standardized yield) token address
+  underlyingAsset: string; // underlying asset address
+  details: PendleMarketDetails;
+  chainId: number;
+  isNew?: boolean;
+  isPrime?: boolean;
+  categoryIds?: string[];
+  timestamp?: string;
+}
+
+// =============================================================================
 // Internal Interfaces
 // =============================================================================
 

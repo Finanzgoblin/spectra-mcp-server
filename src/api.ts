@@ -6,14 +6,17 @@ import {
   SPECTRA_API,
   SPECTRA_APP_API,
   MORPHO_GRAPHQL,
+  PENDLE_API,
   FETCH_TIMEOUT_MS,
   MORPHO_CHAIN_IDS,
+  PENDLE_CHAIN_IDS,
+  PENDLE_CHAIN_NAMES,
   API_NETWORKS,
   resolveNetwork,
   VE_SPECTRA,
   CHAIN_RPC_URLS,
 } from "./config.js";
-import type { MorphoMarket, SpectraPt, SpectraPool, SpectraMetavault, RawPoolOpportunity, ChainScanResult } from "./types.js";
+import type { MorphoMarket, SpectraPt, SpectraPool, SpectraMetavault, PendleMarket, RawPoolOpportunity, ChainScanResult } from "./types.js";
 
 // =============================================================================
 // Retry Logic
@@ -647,6 +650,164 @@ export async function scanAllMetavaults(): Promise<{
   });
 
   return { metavaults, failedChains };
+}
+
+// =============================================================================
+// Pendle API
+// =============================================================================
+
+/**
+ * Fetch JSON from a Pendle API endpoint.
+ * Follows the same retry + timeout pattern as fetchSpectra.
+ */
+export async function fetchPendle(path: string): Promise<unknown> {
+  const url = `${PENDLE_API}${path}`;
+  const res = await fetchWithRetry(() =>
+    fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
+  );
+  if (!res.ok) {
+    console.error(`Pendle API error: ${res.status} ${res.statusText} for ${url}`);
+    throw new Error(`Pendle API error: ${res.status} ${res.statusText}`);
+  }
+  try {
+    return await res.json();
+  } catch {
+    const text = await res.text().catch(() => "(unreadable body)");
+    throw new Error(`Pendle API returned invalid JSON for ${url}: ${text.slice(0, 120)}`);
+  }
+}
+
+// --- Pendle market cache (30s TTL per chain, matching Spectra pool cache) ---
+
+const PENDLE_CACHE_TTL_MS = 30_000;
+const _pendleCache = new Map<string, { markets: PendleMarket[]; expiresAt: number }>();
+const _pendleInflight = new Map<string, Promise<PendleMarket[]>>();
+
+/**
+ * Strip Pendle's chain-prefixed address format (e.g. "8453-0xabc..." → "0xabc...").
+ * Returns the original string if no prefix is found.
+ */
+function stripPendleChainPrefix(addr: string): string {
+  const idx = addr.indexOf("0x");
+  return idx >= 0 ? addr.slice(idx) : addr;
+}
+
+/**
+ * Validate essential Pendle market fields at the system boundary.
+ * Also normalizes chain-prefixed addresses (pt, yt, sy, underlyingAsset).
+ */
+function validatePendleMarkets(raw: any[]): PendleMarket[] {
+  const valid: PendleMarket[] = [];
+  let warned = false;
+  for (const item of raw) {
+    if (
+      item &&
+      typeof item === "object" &&
+      typeof item.address === "string" &&
+      typeof item.name === "string" &&
+      typeof item.expiry === "string" &&
+      item.details &&
+      typeof item.details === "object"
+    ) {
+      // Normalize chain-prefixed addresses (e.g. "8453-0xabc..." → "0xabc...")
+      if (typeof item.pt === "string") item.pt = stripPendleChainPrefix(item.pt);
+      if (typeof item.yt === "string") item.yt = stripPendleChainPrefix(item.yt);
+      if (typeof item.sy === "string") item.sy = stripPendleChainPrefix(item.sy);
+      if (typeof item.underlyingAsset === "string") item.underlyingAsset = stripPendleChainPrefix(item.underlyingAsset);
+      valid.push(item as PendleMarket);
+    } else if (!warned) {
+      console.error(`[pendle] Skipping malformed market entry: missing address/name/expiry/details`);
+      warned = true;
+    }
+  }
+  return valid;
+}
+
+/**
+ * Fetch all active Pendle markets for a given Spectra chain slug.
+ * Returns [] if the chain is not supported by Pendle.
+ * Cached for 30s with inflight deduplication.
+ */
+export async function fetchPendleMarkets(chain: string): Promise<PendleMarket[]> {
+  const network = resolveNetwork(chain);
+  const pendleChainId = PENDLE_CHAIN_IDS[network];
+  if (!pendleChainId) return []; // Chain not supported by Pendle
+
+  const cacheKey = String(pendleChainId);
+  const now = Date.now();
+  const cached = _pendleCache.get(cacheKey);
+  if (cached && now < cached.expiresAt) return cached.markets;
+
+  const inflight = _pendleInflight.get(cacheKey);
+  if (inflight) return inflight;
+
+  const promise = (async () => {
+    try {
+      const raw = await fetchPendle(`/v1/markets/all?isActive=true&chainId=${pendleChainId}`) as any;
+      const arr: any[] = raw?.markets || raw || [];
+      if (!Array.isArray(arr)) return [];
+      const markets = validatePendleMarkets(arr);
+      _pendleCache.set(cacheKey, { markets, expiresAt: Date.now() + PENDLE_CACHE_TTL_MS });
+      return markets;
+    } finally {
+      _pendleInflight.delete(cacheKey);
+    }
+  })();
+
+  _pendleInflight.set(cacheKey, promise);
+  return promise;
+}
+
+/**
+ * Scan all Pendle-supported chains that overlap with Spectra in parallel.
+ * Returns active, non-expired markets that pass minimum filters.
+ * Best-effort — failed chains are noted but don't block results.
+ */
+export async function scanAllPendleMarkets(opts: {
+  min_tvl_usd?: number;
+  min_liquidity_usd?: number;
+  asset_filter?: string;
+} = {}): Promise<{ markets: Array<{ market: PendleMarket; chain: string }>; failedChains: string[] }> {
+  const minTvl = opts.min_tvl_usd ?? 0;
+  const minLiq = opts.min_liquidity_usd ?? 0;
+  const assetFilter = opts.asset_filter?.toUpperCase();
+
+  const pendleChains = Object.keys(PENDLE_CHAIN_IDS);
+  const failedChains: string[] = [];
+
+  const results = await Promise.allSettled(
+    pendleChains.map(async (chain) => {
+      const markets = await fetchPendleMarkets(chain);
+      const now = Date.now();
+      const filtered: Array<{ market: PendleMarket; chain: string }> = [];
+
+      for (const m of markets) {
+        // Skip expired
+        const expiryMs = new Date(m.expiry).getTime();
+        if (expiryMs <= now) continue;
+        // TVL filter
+        if ((m.details.totalTvl || 0) < minTvl) continue;
+        // Liquidity filter
+        if ((m.details.liquidity || 0) < minLiq) continue;
+        // Asset filter (match against market name — Pendle names include underlying symbol)
+        if (assetFilter && !m.name.toUpperCase().includes(assetFilter)) continue;
+
+        filtered.push({ market: m, chain });
+      }
+      return filtered;
+    })
+  );
+
+  const allMarkets: Array<{ market: PendleMarket; chain: string }> = [];
+  results.forEach((result, i) => {
+    if (result.status === "fulfilled") {
+      allMarkets.push(...result.value);
+    } else {
+      failedChains.push(pendleChains[i]);
+    }
+  });
+
+  return { markets: allMarkets, failedChains };
 }
 
 // =============================================================================

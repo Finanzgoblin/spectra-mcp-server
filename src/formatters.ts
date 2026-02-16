@@ -2,7 +2,7 @@
  * Data formatting helpers — USD, percentages, dates, balances, pool/position/Morpho summaries.
  */
 
-import type { SpectraPt, SpectraPool, SpectraMetavault, MorphoMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics } from "./types.js";
+import type { SpectraPt, SpectraPool, SpectraMetavault, MorphoMarket, PendleMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics } from "./types.js";
 
 // =============================================================================
 // Primitive Formatters
@@ -1749,6 +1749,146 @@ export function formatMetavaultStrategy(opts: {
   lines.push(`  - Curator risk: Misconfigured rollovers, bad allocations, or delayed actions`);
   lines.push(`  - Liquidity: MetaVault shares may not have deep secondary market for unwinding`);
   lines.push(`  - This is a strategy model with hypothetical parameters. Verify all inputs before deploying.`);
+
+  return lines.join("\n");
+}
+
+// =============================================================================
+// Pendle Market Formatters
+// =============================================================================
+
+/**
+ * Helper: convert Pendle expiry string to days remaining.
+ */
+export function pendleDaysToMaturity(expiry: string): number {
+  const expiryMs = new Date(expiry).getTime();
+  return Math.max(0, Math.round((expiryMs - Date.now()) / 86_400_000));
+}
+
+/**
+ * Format a single Pendle market as a compact one-liner.
+ */
+export function formatPendleMarketCompact(m: PendleMarket, chain: string): string {
+  const d = m.details;
+  const days = pendleDaysToMaturity(m.expiry);
+  const impliedPct = formatPct(d.impliedApy * 100);
+  const lpPct = formatPct(d.aggregatedApy * 100);
+  const tvl = formatUsd(d.totalTvl);
+  const liq = formatUsd(d.liquidity);
+  return `${m.name} (${chain}) | Impl ${impliedPct} | LP ${lpPct} | TVL ${tvl} | Liq ${liq} | ${days}d | Market: ${m.address}`;
+}
+
+/**
+ * Format a single Pendle market in full detail.
+ */
+export function formatPendleMarketSummary(m: PendleMarket, chain: string): string {
+  const d = m.details;
+  const days = pendleDaysToMaturity(m.expiry);
+  const expiryDate = m.expiry.split("T")[0];
+  const lines: string[] = [];
+
+  lines.push(`-- ${m.name} --`);
+  lines.push(`  Chain: ${chain}`);
+  lines.push(`  Market Address: ${m.address}`);
+  lines.push(`  PT: ${m.pt}`);
+  lines.push(`  YT: ${m.yt}`);
+  lines.push(`  SY: ${m.sy}`);
+  lines.push(`  Maturity: ${expiryDate} (${days}d)`);
+  lines.push(``);
+  lines.push(`  Implied APY (Fixed Rate): ${formatPct(d.impliedApy * 100)}`);
+  lines.push(`  Underlying APY (Variable): ${formatPct(d.underlyingApy * 100)}`);
+  lines.push(`  Fixed vs Variable Spread: ${formatPct((d.impliedApy - d.underlyingApy) * 100)}`);
+  lines.push(``);
+  lines.push(`  LP APY: ${formatPct(d.aggregatedApy * 100)}`);
+  lines.push(`    +-- Swap Fees: ${formatPct(d.swapFeeApy * 100)}`);
+  lines.push(`    +-- PENDLE Incentives: ${formatPct(d.pendleApy * 100)}`);
+  if (d.maxBoostedApy > 0) {
+    lines.push(`    +-- Max Boosted LP APY: ${formatPct(d.maxBoostedApy * 100)}`);
+  }
+  lines.push(``);
+  lines.push(`  TVL: ${formatUsd(d.totalTvl)}`);
+  lines.push(`  Pool Liquidity: ${formatUsd(d.liquidity)}`);
+  lines.push(`  24h Volume: ${formatUsd(d.tradingVolume)}`);
+  lines.push(`  Fee Rate: ${formatPct(d.feeRate * 100)}`);
+
+  return lines.join("\n");
+}
+
+/**
+ * Format a Spectra vs Pendle comparison for markets on the same underlying + maturity.
+ */
+export function formatPendleSpectraComparison(opts: {
+  spectraPt: SpectraPt;
+  spectraPool: SpectraPool;
+  pendleMarket: PendleMarket;
+  chain: string;
+}): string {
+  const { spectraPt, spectraPool, pendleMarket, chain } = opts;
+  const pd = pendleMarket.details;
+  const spectraImplied = spectraPool.impliedApy || 0;
+  const pendleImplied = pd.impliedApy * 100;
+  const spectraLp = spectraPool.lpApy?.total || 0;
+  const pendleLp = pd.aggregatedApy * 100;
+  const spectraLiq = spectraPool.liquidity?.usd || 0;
+  const pendleLiq = pd.liquidity;
+  const spectraTvl = spectraPt.tvl?.usd || 0;
+  const pendleTvl = pd.totalTvl;
+  const spectraDays = daysToMaturity(spectraPt.maturity);
+  const pendleDays = pendleDaysToMaturity(pendleMarket.expiry);
+  const spectraVar = spectraPt.ibt?.apr?.total || 0;
+  const pendleVar = pd.underlyingApy * 100;
+
+  const lines: string[] = [];
+  lines.push(`== Spectra vs Pendle: ${spectraPt.underlying?.symbol || spectraPt.name} on ${chain} ==`);
+  lines.push(``);
+
+  // Table header
+  lines.push(`  Metric                    Spectra             Pendle              Delta`);
+  lines.push(`  ${"─".repeat(76)}`);
+
+  const row = (label: string, sVal: string, pVal: string, delta: string) => {
+    lines.push(`  ${label.padEnd(26)} ${sVal.padEnd(20)} ${pVal.padEnd(20)} ${delta}`);
+  };
+
+  row("Implied APY (Fixed)",  formatPct(spectraImplied), formatPct(pendleImplied), formatPct(spectraImplied - pendleImplied));
+  row("Variable APY",         formatPct(spectraVar),     formatPct(pendleVar),     formatPct(spectraVar - pendleVar));
+  row("LP APY",               formatPct(spectraLp),      formatPct(pendleLp),      formatPct(spectraLp - pendleLp));
+  row("Pool Liquidity",       formatUsd(spectraLiq),     formatUsd(pendleLiq),     formatUsd(spectraLiq - pendleLiq));
+  row("TVL",                  formatUsd(spectraTvl),     formatUsd(pendleTvl),     formatUsd(spectraTvl - pendleTvl));
+  row("Days to Maturity",     `${spectraDays}d`,         `${pendleDays}d`,         `${spectraDays - pendleDays}d`);
+
+  lines.push(``);
+
+  // Winner per metric
+  const insights: string[] = [];
+  if (spectraImplied > pendleImplied) {
+    insights.push(`Spectra offers a higher fixed rate (+${formatPct(spectraImplied - pendleImplied)})`);
+  } else if (pendleImplied > spectraImplied) {
+    insights.push(`Pendle offers a higher fixed rate (+${formatPct(pendleImplied - spectraImplied)})`);
+  }
+
+  if (spectraLp > pendleLp) {
+    insights.push(`Spectra LP APY is higher (+${formatPct(spectraLp - pendleLp)}) — more attractive for MetaVault allocation`);
+  } else if (pendleLp > spectraLp) {
+    insights.push(`Pendle LP APY is higher (+${formatPct(pendleLp - spectraLp)}) — consider integrating this Pendle pool into a MetaVault`);
+  }
+
+  if (spectraLiq > pendleLiq) {
+    insights.push(`Spectra has deeper pool liquidity (${formatUsd(spectraLiq)} vs ${formatUsd(pendleLiq)})`);
+  } else if (pendleLiq > spectraLiq) {
+    insights.push(`Pendle has deeper pool liquidity (${formatUsd(pendleLiq)} vs ${formatUsd(spectraLiq)})`);
+  }
+
+  if (insights.length > 0) {
+    lines.push(`  Insights:`);
+    for (const insight of insights) {
+      lines.push(`    • ${insight}`);
+    }
+  }
+
+  lines.push(``);
+  lines.push(`  Spectra PT: ${spectraPt.address}`);
+  lines.push(`  Pendle Market: ${pendleMarket.address}`);
 
   return lines.join("\n");
 }
