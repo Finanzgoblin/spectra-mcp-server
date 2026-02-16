@@ -20,7 +20,7 @@ import {
   resolveNetwork,
 } from "../config.js";
 import type { ScanOpportunity } from "../types.js";
-import { scanAllChainPools, findMorphoMarketsForPts, fetchVeTotalSupply } from "../api.js";
+import { scanAllChainPools, scanAllMetavaults, findMorphoMarketsForPts, fetchVeTotalSupply } from "../api.js";
 import {
   formatPct,
   formatUsd,
@@ -31,6 +31,7 @@ import {
   cumulativeLeverageAtLoop,
   formatScanResults,
   formatScanOpportunityCompact,
+  formatMetavaultScanSection,
   extractLpApyBreakdown,
   computeSpectraBoost,
 } from "../formatters.js";
@@ -48,14 +49,20 @@ Unlike get_best_fixed_yields (which ranks by raw APY), this tool computes:
 - Morpho looping availability and optimal leveraged net APY
 - Pool capacity (max capital before price impact exceeds your threshold)
 - Risk warnings (low liquidity, short maturity, high impact)
+- MetaVault alternatives (curated auto-rolling LP vaults with YT compounding)
 
 Returns opportunities ranked by effective APY (or looping net APY where available).
 Ranking logic: when a profitable Morpho looping market exists, ranks by looping net APY
 with cumulative entry cost amortized; otherwise ranks by effective APY (base APY minus
 annualized entry cost).
 
+MetaVaults are shown in a separate section (not interleaved with PT rankings) because
+they have different risk profiles: variable APY, curator-managed, auto-rolling positions.
+Set include_metavaults=false to skip MetaVault scanning.
+
 Use get_looping_strategy to drill into a specific opportunity's leverage details.
-Use get_pool_activity and get_portfolio to investigate trading patterns and positions.`,
+Use get_pool_activity and get_portfolio to investigate trading patterns and positions.
+Use model_metavault_strategy to model MetaVault looping economics.`,
     {
       capital_usd: z
         .number()
@@ -88,6 +95,10 @@ Use get_pool_activity and get_portfolio to investigate trading patterns and posi
         .number()
         .default(10)
         .describe("Number of top results to return (default 10, max 50)"),
+      include_metavaults: z
+        .boolean()
+        .default(true)
+        .describe("Whether to include MetaVault alternatives in results (default true). MetaVaults are curated auto-rolling LP vaults shown in a separate section."),
       compact: z
         .boolean()
         .default(false)
@@ -106,6 +117,7 @@ Use get_pool_activity and get_portfolio to investigate trading patterns and posi
       include_looping,
       max_price_impact_pct,
       top_n: rawTopN,
+      include_metavaults,
       ve_spectra_balance,
       compact,
     }) => {
@@ -123,14 +135,17 @@ Use get_pool_activity and get_portfolio to investigate trading patterns and posi
         }
 
         // ================================================================
-        // PHASE 1: Parallel fetch all chains
+        // PHASE 1: Parallel fetch all chains + MetaVaults
         // ================================================================
 
-        const { opportunities: rawOpps, failedChains } = await scanAllChainPools({
-          min_tvl_usd,
-          min_liquidity_usd,
-          asset_filter,
-        });
+        const [poolResult, metavaultResult] = await Promise.all([
+          scanAllChainPools({ min_tvl_usd, min_liquidity_usd, asset_filter }),
+          include_metavaults
+            ? scanAllMetavaults()
+            : Promise.resolve({ metavaults: [] as Array<{ metavault: any; chain: string }>, failedChains: [] as string[] }),
+        ]);
+
+        const { opportunities: rawOpps, failedChains } = poolResult;
 
         // ================================================================
         // PHASE 2: Compute capital-aware metrics per opportunity
@@ -318,7 +333,7 @@ Use get_pool_activity and get_portfolio to investigate trading patterns and posi
         if (topOpps.length === 0) {
           const negativeFilteredCount = opportunities.filter(o => o.sortApy < 0).length;
           const lines = [
-            `No opportunities found matching criteria (capital: ${formatUsd(capital_usd)}, max impact: ${formatPct(max_price_impact_pct)}).`,
+            `No PT pool opportunities found matching criteria (capital: ${formatUsd(capital_usd)}, max impact: ${formatPct(max_price_impact_pct)}).`,
             ...(asset_filter ? [`Asset filter: ${asset_filter}.`] : []),
             ...(failedChains.length > 0 ? [`Note: ${failedChains.length} chain(s) failed (${failedChains.join(", ")}).`] : []),
             ``,
@@ -333,6 +348,25 @@ Use get_pool_activity and get_portfolio to investigate trading patterns and posi
             `• Check raw APY: get_best_fixed_yields() — headline rates without capital adjustment`,
             `• Check YT spreads: scan_yt_arbitrage(capital_usd=${capital_usd}) — different opportunity type`,
           ];
+
+          // Still show MetaVault alternatives even when no PT pools match
+          if (include_metavaults && metavaultResult.metavaults.length > 0) {
+            let filteredMvs = metavaultResult.metavaults;
+            if (asset_filter) {
+              const filterLower = asset_filter.toLowerCase();
+              filteredMvs = filteredMvs.filter(({ metavault }) =>
+                (metavault.underlying?.symbol || "").toLowerCase().includes(filterLower)
+              );
+            }
+            filteredMvs = filteredMvs.filter(({ metavault }) =>
+              (metavault.tvl?.usd || 0) >= min_tvl_usd
+            );
+            if (filteredMvs.length > 0) {
+              lines.push(``);
+              lines.push(`However, MetaVault alternatives are available:`);
+              lines.push(formatMetavaultScanSection(filteredMvs, compact));
+            }
+          }
 
           return { content: [{ type: "text" as const, text: lines.join("\n") }] };
         }
@@ -361,18 +395,50 @@ Use get_pool_activity and get_portfolio to investigate trading patterns and posi
         );
         }
 
+        // ================================================================
+        // PHASE 5: Append MetaVault alternatives
+        // ================================================================
+
+        if (include_metavaults && metavaultResult.metavaults.length > 0) {
+          // Filter by asset_filter (case-insensitive match on underlying symbol)
+          let filteredMvs = metavaultResult.metavaults;
+          if (asset_filter) {
+            const filterLower = asset_filter.toLowerCase();
+            filteredMvs = filteredMvs.filter(({ metavault }) =>
+              (metavault.underlying?.symbol || "").toLowerCase().includes(filterLower)
+            );
+          }
+          // Filter by min_tvl_usd
+          filteredMvs = filteredMvs.filter(({ metavault }) =>
+            (metavault.tvl?.usd || 0) >= min_tvl_usd
+          );
+
+          if (filteredMvs.length > 0) {
+            text += formatMetavaultScanSection(filteredMvs, compact);
+          }
+        }
+
         // Next-step hints referencing top opportunity
         const top = topOpps[0];
-        const nextSteps = [
+        const nextStepLines = [
           ``,
           `--- Next Steps ---`,
           `• Drill into #1: get_looping_strategy(chain="${top.chain}", pt_address="${top.ptAddress}") for detailed leverage table`,
           `• Quote entry: quote_trade(chain="${top.chain}", pt_address="${top.ptAddress}", amount=${capital_usd}, side="buy")`,
           `• Preview portfolio: simulate_portfolio_after_trade(chain="${top.chain}", pt_address="${top.ptAddress}", address=YOUR_WALLET, amount=${capital_usd}, side="buy")`,
           `• Compare with YT arb: scan_yt_arbitrage(capital_usd=${capital_usd}) for spread-based opportunities`,
-        ].join("\n");
+        ];
 
-        text += nextSteps;
+        // Add MetaVault modeling hint if any were shown
+        if (include_metavaults && metavaultResult.metavaults.length > 0) {
+          const topMv = metavaultResult.metavaults
+            .sort((a, b) => (b.metavault.liveApy?.total || 0) - (a.metavault.liveApy?.total || 0))[0];
+          if (topMv) {
+            nextStepLines.push(`• Model MetaVault: model_metavault_strategy(chain="${topMv.chain}", metavault_address="${topMv.metavault.address}") for looping economics`);
+          }
+        }
+
+        text += nextStepLines.join("\n");
 
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
