@@ -646,6 +646,29 @@ removes generative friction, or uses deterministic language where ambiguity exis
 
 ---
 
+## Implementation Status (Feb 2026 Updates)
+
+Since this review was written, several changes have been implemented:
+
+- **Feature 2 (Workflow Routing)**: Implemented as the `workflow_routing` topic in
+  `get_protocol_context`. Maps agent goals to tool sequences.
+- **Feature 3 (Negative Signal Guidance)**: Partially addressed. The new
+  `get_onchain_activity` tool provides a concrete fallback path when
+  `get_pool_activity` returns empty results for historical data. The tool's
+  description cross-references `get_pool_activity` as the primary path, with
+  `get_onchain_activity` as the on-chain fallback. This directly resolves the
+  "Dead End B" scenario where API data has aged out.
+- **Pendle Integration**: Two new tools (`list_pendle_markets`,
+  `compare_pendle_spectra`) add a cross-protocol dimension not covered in
+  the original review. This creates a new generative friction point: Spectra
+  vs Pendle yields on the same underlying asset.
+- **Tool count**: 21 → 24 tools (added `list_pendle_markets`,
+  `compare_pendle_spectra`, `get_onchain_activity`).
+
+Features 1 (Next-Step Hints), 4 (Unified Discovery), 5 (Portfolio Looping
+Enrichment), 6 (Watch-Tower), 7 (APR Vision), and 8 (Tool-Graph Resource)
+remain unimplemented.
+
 ## Note on Hard Theorem
 
 This review was prepared without access to the hard theorem document referenced as being

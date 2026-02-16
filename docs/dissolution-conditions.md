@@ -163,6 +163,68 @@ strategy modeling, wire that endpoint as well.
 
 ---
 
+## Pendle cross-protocol tools: list_pendle_markets + compare_pendle_spectra
+
+`list_pendle_markets` fetches active Pendle markets from the Pendle API
+(`api-v2.pendle.finance`). `compare_pendle_spectra` auto-matches Pendle and
+Spectra markets by underlying asset for side-by-side yield comparison.
+
+Dissolution: If Pendle's API changes significantly or is retired. If Spectra
+and Pendle merge or become incomparable (different yield models). If a
+unified cross-protocol yield aggregator API emerges that makes individual
+protocol querying redundant. Also dissolves if MetaVault curators stop
+considering Pendle as an alternative allocation target.
+
+## On-chain historical activity: get_onchain_activity
+
+Reads historical Curve StableSwap-NG event logs directly from the blockchain
+via chunked `eth_getLogs`. Fills the gap when the Spectra REST API has aged out
+older transactions. Supports dynamic `rpc_url` parameter so any agent can
+supply an RPC for any chain.
+
+### Dynamic RPC URL pattern
+
+The `rpc_url` parameter lets agents supply their own RPC endpoint at call time,
+with hardcoded fallback for known chains. This enables chains without default
+RPCs (Katana, Monad) without requiring server configuration.
+
+Dissolution: When the Spectra REST API provides full historical activity data
+with no time-window limitation (pagination over all historical transactions).
+At that point, `get_onchain_activity` becomes redundant and the on-chain
+fallback path adds complexity without value.
+
+### Pre-computed event topic hashes
+
+Four keccak256 hashes are hardcoded for Curve StableSwap-NG events
+(TokenExchange, AddLiquidity, RemoveLiquidity, RemoveLiquidityOne). These
+were verified against real on-chain events from 4 Spectra pools on Base.
+
+Dissolution: If Curve StableSwap-NG changes its event signatures (would
+require a new pool factory version). If Spectra migrates away from Curve
+to a different AMM. If a keccak256 library is added as a dependency,
+making runtime computation preferable to hardcoded constants.
+
+### Chunked eth_getLogs (2000 blocks per chunk)
+
+Chunk size of 2000 blocks balances throughput vs public RPC rate limits.
+Best-effort: failed chunks are skipped, partial results returned.
+
+Dissolution: When all target RPCs support unlimited block ranges in
+eth_getLogs (unlikely for public RPCs). When a dedicated indexer or
+subgraph provides the same data without block-range limitations.
+
+### Token amounts without USD values
+
+On-chain event logs contain raw token amounts but no price data. The tool
+shows human-readable token amounts and advises cross-referencing with
+`get_pt_details` for price context.
+
+Dissolution: When an on-chain price oracle is integrated that can provide
+historical token prices at specific block numbers, enabling USD conversion
+in the output.
+
+---
+
 ## Intelligence Boundary Enhancements (Feb 2026)
 
 These enhancements surface the boundaries of what's known — confidence signals,
