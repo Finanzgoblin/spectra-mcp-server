@@ -2,7 +2,7 @@
  * Data formatting helpers — USD, percentages, dates, balances, pool/position/Morpho summaries.
  */
 
-import type { SpectraPt, SpectraPool, MorphoMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics } from "./types.js";
+import type { SpectraPt, SpectraPool, SpectraMetavault, MorphoMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics } from "./types.js";
 
 // =============================================================================
 // Primitive Formatters
@@ -1510,6 +1510,112 @@ export function formatYtArbitrageResults(
   lines.push(`  Spreads reflect current conditions only. IBT rates are variable. Break-even assumes the spread persists.`);
   lines.push(`  Price impact is a conservative upper bound (constant-product model).`);
   lines.push(`  These are snapshots, not predictions. A spread that exists now could narrow before your transaction confirms.`);
+
+  return lines.join("\n");
+}
+
+// =============================================================================
+// MetaVault API Formatting
+// =============================================================================
+
+/** Format a single MetaVault for detailed output. */
+export function formatMetavaultSummary(mv: SpectraMetavault, chain: string): string {
+  const lines: string[] = [];
+
+  lines.push(`-- ${mv.metadata?.title || mv.name} (${mv.symbol}) --`);
+  lines.push(`  Chain: ${chain}`);
+  lines.push(`  MetaVault: ${mv.address}`);
+  lines.push(`  Vault: ${mv.vault}`);
+  lines.push(`  Curator: ${mv.curator?.name || "Unknown"}${mv.curator?.addresses?.length ? ` (${mv.curator.addresses[0]})` : ""}`);
+  if (mv.metadata?.shortDescription) {
+    lines.push(`  Description: ${mv.metadata.shortDescription}`);
+  }
+
+  // Underlying
+  lines.push(`  Underlying: ${mv.underlying?.symbol || "?"} (${mv.underlying?.address || "?"})`);
+
+  // TVL & APY
+  lines.push(`  TVL: ${formatUsd(mv.tvl?.usd || 0)} (${(mv.tvl?.underlying || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })} ${mv.underlying?.symbol || "tokens"})`);
+  lines.push(`  Live APY: ${formatPct(mv.liveApy?.total || 0)}`);
+
+  // Price & exchange rate
+  if (mv.price) {
+    lines.push(`  Share Price: ${formatUsd(mv.price.usd || 0)} (${(mv.price.underlying || 0).toFixed(6)} underlying)`);
+  }
+
+  // Positions
+  if (mv.positions && mv.positions.length > 0) {
+    lines.push(``);
+    lines.push(`  Active Positions (${mv.positions.length}):`);
+    for (const pos of mv.positions) {
+      const matDays = daysToMaturity(pos.maturity);
+      const expired = pos.maturity * 1000 <= Date.now();
+      const matLabel = expired ? "EXPIRED" : `${matDays}d`;
+      const pool = pos.pools?.[0];
+      const ptApyStr = pool ? ` | PT APY ${formatPct(pool.ptApy || 0)}` : "";
+      const lpApyStr = pool?.lpApy?.total ? ` | LP APY ${formatPct(pool.lpApy.total)}` : "";
+      lines.push(`    ${pos.symbol} -- ${formatDate(pos.maturity)} (${matLabel}) -- TVL ${formatUsd(pos.tvl?.usd || 0)}${ptApyStr}${lpApyStr}`);
+      lines.push(`      PT: ${pos.address}${pool ? ` | Pool: ${pool.address}` : ""}`);
+    }
+  }
+
+  // Epochs (show recent rate history if available)
+  if (mv.epochs && mv.epochs.length > 0) {
+    const recent = mv.epochs.slice(-3); // last 3 epochs
+    lines.push(``);
+    lines.push(`  Recent Epochs (${mv.epochs.length} total, showing last ${recent.length}):`);
+    for (const ep of recent) {
+      const date = formatDate(ep.timestamp);
+      lines.push(`    ${date} -- rate: ${ep.rate}, assets: ${ep.assets}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+/** One-line compact format for MetaVault listings. */
+export function formatMetavaultCompact(mv: SpectraMetavault, chain: string): string {
+  const apy = formatPct(mv.liveApy?.total || 0);
+  const tvl = formatUsd(mv.tvl?.usd || 0);
+  const posCount = mv.positions?.length || 0;
+  return `${mv.metadata?.title || mv.name} (${chain}) | ${mv.underlying?.symbol || "?"} | APY ${apy} | TVL ${tvl} | ${posCount} position(s) | Curator: ${mv.curator?.name || "?"} | ${mv.address}`;
+}
+
+/** Format the full get_metavaults output. */
+export function formatMetavaultList(
+  entries: Array<{ metavault: SpectraMetavault; chain: string }>,
+  chainFilter: string | undefined,
+  failedChains: string[],
+): string {
+  const lines: string[] = [];
+
+  lines.push(`== MetaVaults${chainFilter ? ` (${chainFilter})` : " (all chains)"} ==`);
+  lines.push(`  Found: ${entries.length} MetaVault(s)`);
+
+  if (failedChains.length > 0) {
+    lines.push(`  Note: ${failedChains.length} chain(s) failed (${failedChains.join(", ")}). Results may be partial.`);
+  }
+
+  if (entries.length === 0) {
+    lines.push(``);
+    lines.push(`  No MetaVaults found${chainFilter ? ` on ${chainFilter}` : ""}. MetaVaults are curated vaults — they may not exist on all chains yet.`);
+    return lines.join("\n");
+  }
+
+  lines.push(``);
+
+  for (let i = 0; i < entries.length; i++) {
+    const { metavault, chain } = entries[i];
+    lines.push(formatMetavaultSummary(metavault, chain));
+    if (i < entries.length - 1) lines.push(``);
+  }
+
+  // Next-step hints
+  lines.push(``);
+  lines.push(`--- Next Steps ---`);
+  lines.push(`  • Model a strategy: model_metavault_strategy(chain=CHAIN, metavault_address=ADDRESS) for live-data-backed modeling`);
+  lines.push(`  • Compare yields: scan_opportunities(capital_usd=AMOUNT) to see MetaVault APYs in context of all opportunities`);
+  lines.push(`  • Check looping: get_looping_strategy(chain=CHAIN, pt_address=PT_ADDRESS) for any MetaVault position's PT`);
 
   return lines.join("\n");
 }

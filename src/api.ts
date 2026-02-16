@@ -13,7 +13,7 @@ import {
   VE_SPECTRA,
   CHAIN_RPC_URLS,
 } from "./config.js";
-import type { MorphoMarket, SpectraPt, SpectraPool, RawPoolOpportunity, ChainScanResult } from "./types.js";
+import type { MorphoMarket, SpectraPt, SpectraPool, SpectraMetavault, RawPoolOpportunity, ChainScanResult } from "./types.js";
 
 // =============================================================================
 // Retry Logic
@@ -572,6 +572,81 @@ export async function fetchCurveGetDy(
   } catch {
     return null; // Best-effort — fall back to math estimate
   }
+}
+
+// =============================================================================
+// MetaVault API
+// =============================================================================
+
+/**
+ * Validate essential MetaVault fields at the system boundary.
+ * Filters out entries missing required fields (address, name, underlying).
+ * Logs a warning for the first malformed entry per chain (avoid log spam).
+ */
+function validateMetavaultEntries(raw: any[], chain: string): SpectraMetavault[] {
+  let warned = false;
+  const valid: SpectraMetavault[] = [];
+  for (const item of raw) {
+    if (
+      item &&
+      typeof item === "object" &&
+      typeof item.address === "string" &&
+      typeof item.name === "string" &&
+      item.underlying &&
+      typeof item.underlying === "object"
+    ) {
+      valid.push(item as SpectraMetavault);
+    } else if (!warned) {
+      console.error(`[${chain}] Skipping malformed MetaVault entry: missing address/name/underlying`);
+      warned = true;
+    }
+  }
+  return valid;
+}
+
+/**
+ * Fetch all MetaVaults for a single chain.
+ * Returns an empty array if the endpoint returns no data or errors.
+ */
+export async function fetchMetavaults(chain: string): Promise<SpectraMetavault[]> {
+  const network = resolveNetwork(chain);
+  try {
+    const raw = await fetchSpectra(`/${network}/metavaults`) as any;
+    const arr = Array.isArray(raw) ? raw : (raw?.data || []);
+    if (!Array.isArray(arr)) return [];
+    return validateMetavaultEntries(arr, chain);
+  } catch (err) {
+    console.error(`MetaVault fetch failed for ${chain}:`, err instanceof Error ? err.message : err);
+    return [];
+  }
+}
+
+/**
+ * Scan all chains for MetaVaults in parallel.
+ * Returns all MetaVaults with their chain slug attached, plus failed chains.
+ */
+export async function scanAllMetavaults(): Promise<{
+  metavaults: Array<{ metavault: SpectraMetavault; chain: string }>;
+  failedChains: string[];
+}> {
+  const failedChains: string[] = [];
+  const results = await Promise.allSettled(
+    API_NETWORKS.map(async (chain) => {
+      const mvs = await fetchMetavaults(chain);
+      return mvs.map((metavault) => ({ metavault, chain }));
+    })
+  );
+
+  const metavaults: Array<{ metavault: SpectraMetavault; chain: string }> = [];
+  results.forEach((result, i) => {
+    if (result.status === "fulfilled") {
+      metavaults.push(...result.value);
+    } else {
+      failedChains.push(API_NETWORKS[i]);
+    }
+  });
+
+  return { metavaults, failedChains };
 }
 
 // =============================================================================

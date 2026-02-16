@@ -185,7 +185,7 @@ async function testToolRegistration(client) {
   const tools = await client.listTools();
   const names = tools.map((t) => t.name);
 
-  assert(tools.length === 20, "exactly 20 tools registered", `got ${tools.length}: ${names.join(", ")}`);
+  assert(tools.length === 21, "exactly 21 tools registered", `got ${tools.length}: ${names.join(", ")}`);
 
   const expected = [
     "get_pt_details",
@@ -206,6 +206,7 @@ async function testToolRegistration(client) {
     "scan_opportunities",
     "scan_yt_arbitrage",
     "get_ve_info",
+    "get_metavaults",
     "model_metavault_strategy",
     "get_protocol_context",
   ];
@@ -1446,6 +1447,53 @@ async function testGetVeInfo(client) {
   assert(noCapital.includes("Provide capital_usd"), "prompts for capital_usd when missing", "missing prompt");
 }
 
+async function testGetMetavaults(client) {
+  console.log("\n--- get_metavaults ---");
+
+  // Single chain: base (known to have MetaVaults from OpenAPI example)
+  const { text } = await client.callTool("get_metavaults", {
+    chain: "base",
+  }, 30_000);
+
+  assert(
+    text.includes("MetaVaults") || text.includes("MetaVault"),
+    "returns MetaVaults header",
+    `unexpected: ${text.slice(0, 100)}`
+  );
+
+  if (text.includes("Found: 0")) {
+    pass("base: no MetaVaults found (may not be deployed yet)");
+  } else if (text.includes("Found:")) {
+    assert(text.includes("Curator:"), "has curator info", "missing");
+    assert(text.includes("TVL:"), "has TVL data", "missing");
+    assert(text.includes("Live APY:"), "has live APY", "missing");
+    assert(text.includes("MetaVault:"), "has MetaVault address", "missing");
+    assert(text.includes("Underlying:"), "has underlying info", "missing");
+    assert(text.includes("Next Steps"), "has next steps", "missing");
+    pass("base: MetaVaults found with expected fields");
+  }
+
+  // All chains scan
+  const { text: allChains } = await client.callTool("get_metavaults", {}, 60_000);
+
+  assert(
+    allChains.includes("MetaVaults (all chains)"),
+    "all-chain scan has correct header",
+    `unexpected: ${allChains.slice(0, 100)}`
+  );
+
+  // Schema checks
+  const tools = await client.listTools();
+  const mvTool = tools.find((t) => t.name === "get_metavaults");
+  assert(mvTool, "get_metavaults registered", "missing");
+  if (mvTool) {
+    const props = mvTool.inputSchema.properties;
+    assert(props.chain, "get_metavaults has chain param", "missing");
+    const required = mvTool.inputSchema.required || [];
+    assert(!required.includes("chain"), "get_metavaults: chain is optional", `required: ${JSON.stringify(required)}`);
+  }
+}
+
 async function testModelMetavaultStrategy(client) {
   console.log("\n--- model_metavault_strategy ---");
 
@@ -1517,6 +1565,31 @@ async function testModelMetavaultStrategy(client) {
   assert(minimal.includes("MetaVault Strategy Model"), "minimal params work", "missing");
   assert(!minimal.includes("YT→LP Compounding"), "no YT compounding line when 0", "should be absent");
   assert(!minimal.includes("Curator Economics"), "no curator economics without capital_usd", "should be absent");
+
+  // Schema: model_metavault_strategy now has chain and metavault_address
+  const tools = await client.listTools();
+  const mvModelTool = tools.find((t) => t.name === "model_metavault_strategy");
+  if (mvModelTool) {
+    const props = mvModelTool.inputSchema.properties;
+    assert(props.chain, "model_metavault_strategy has chain param", "missing");
+    assert(props.metavault_address, "model_metavault_strategy has metavault_address param", "missing");
+    assert(props.metavault_address.pattern, "metavault_address has regex pattern", "missing");
+    const required = mvModelTool.inputSchema.required || [];
+    assert(!required.includes("base_apy"), "model_metavault_strategy: base_apy is optional (can be auto-fetched)", `required: ${JSON.stringify(required)}`);
+    assert(!required.includes("chain"), "model_metavault_strategy: chain is optional", `required: ${JSON.stringify(required)}`);
+    assert(!required.includes("metavault_address"), "model_metavault_strategy: metavault_address is optional", `required: ${JSON.stringify(required)}`);
+  }
+
+  // Error case: no base_apy and no metavault_address
+  const { text: noApy, raw: noApyRaw } = await client.callTool("model_metavault_strategy", {});
+  assert(
+    noApy.includes("base_apy is required") || (noApyRaw && noApyRaw.isError),
+    "error when no base_apy and no metavault_address",
+    `unexpected: ${noApy.slice(0, 100)}`
+  );
+
+  // Next steps should mention get_metavaults
+  assert(basic.includes("get_metavaults"), "next steps mention get_metavaults", "missing");
 }
 
 async function testGetAddressActivity(client) {
@@ -1791,7 +1864,8 @@ async function main() {
       // LP APY gauge emissions
       await testLpApyGaugeEmissions(client);
 
-      // MetaVault strategy modeler (pure computation, no API)
+      // MetaVault API + strategy modeler
+      await testGetMetavaults(client);
       await testModelMetavaultStrategy(client);
 
       // Smoke test other chains
