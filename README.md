@@ -108,7 +108,7 @@ This was validated: a subagent spawned with zero priming correctly identified a 
 | `model_metavault_strategy` | MetaVault "double loop" strategy modeler for curators. Live mode (chain + metavault_address) auto-fetches APY from API; manual mode accepts base_apy directly. Models curator economics (fee revenue, TVL creation, effective ROI). |
 | `list_pendle_markets` | List active Pendle markets on a given chain or all Pendle chains. Supports Pendle-only chains (Mantle, Berachain, HyperEVM, Corn). Supports `compact` mode. |
 | `compare_pendle_spectra` | Side-by-side Pendle vs Spectra yield comparison on overlapping chains (mainnet, base, arbitrum, optimism, sonic, bsc). Auto-matches by underlying asset. |
-| `get_onchain_activity` | Historical pool activity via `eth_getLogs` — recovers data when the API has aged out transactions. Supports dynamic `rpc_url` parameter for any chain. Decodes Curve StableSwap-NG events (swaps, LP adds/removes). |
+| `get_onchain_activity` | Historical on-chain activity via `eth_getLogs` — recovers data when the API has aged out transactions. Supports dynamic `rpc_url` parameter for any chain. Decodes **Curve pool events** (swaps, LP adds/removes) via `pool_address` AND **Spectra PT vault events** (Mint, Redeem, YieldClaimed) via `pt_address`. Both can be provided simultaneously for merged results. |
 | `get_protocol_context` | Returns protocol mechanics reference (PT/YT identity, Router batching, minting). Callable on-demand instead of always in context. |
 
 ## Supported Chains
@@ -291,7 +291,7 @@ src/
     ve.ts           get_ve_info
     metavault.ts    get_metavaults, model_metavault_strategy (live API + computational modeling)
     pendle.ts       list_pendle_markets, compare_pendle_spectra (cross-protocol yield comparison)
-    onchain.ts      get_onchain_activity (historical eth_getLogs, Curve event decoding, dynamic RPC)
+    onchain.ts      get_onchain_activity (historical eth_getLogs, Curve pool + PT vault event decoding, dynamic RPC)
 docs/
   recursive-meta-process.md    Open Emergence metaframework specification
   dissolution-conditions.md    Dissolution conditions for every structural decision
@@ -369,7 +369,7 @@ This server wraps these endpoints:
 | `POST mainnet.base.org` (eth_call) | `get_ve_info`, `scan_opportunities`, `scan_yt_arbitrage`, `compare_yield` (veSPECTRA total supply) |
 | `POST {chain RPC}` (eth_call: `get_dy`) | `quote_trade`, `simulate_portfolio_after_trade` (Curve StableSwap-NG on-chain quotes) |
 | `POST {chain RPC}` (eth_call: `eth_getCode`) | `get_pool_activity` (contract vs EOA detection in address mode) |
-| `POST {chain RPC}` (eth_getLogs) | `get_onchain_activity` (historical Curve pool events — supports dynamic `rpc_url` override) |
+| `POST {chain RPC}` (eth_getLogs) | `get_onchain_activity` (historical Curve pool events + Spectra PT vault events — supports dynamic `rpc_url` override) |
 | `GET api-v2.pendle.finance/core/v2/{chainId}/markets/active` | `list_pendle_markets` (Pendle market discovery) |
 | `GET api-v2.pendle.finance/core/v2/{chainId}/markets/active` | `compare_pendle_spectra` (cross-protocol comparison — fetches both Pendle and Spectra data) |
 
@@ -387,17 +387,24 @@ Two tools enable cross-protocol yield comparison between Spectra and Pendle:
 
 The Spectra REST API (`/v1/{network}/pools/{pool}/activity`) only retains a limited time window of recent transactions. When investigating addresses or pools with older activity, `get_onchain_activity` reads historical event logs directly from the blockchain via `eth_getLogs`.
 
+Supports two contract types:
+- **Curve pool** (`pool_address`): TokenExchange, AddLiquidity, RemoveLiquidity, RemoveLiquidityOne
+- **Spectra PT vault** (`pt_address`): Mint (deposit IBT → PT+YT), Redeem (burn PT → IBT), YieldClaimed
+
+Both can be provided simultaneously — events are fetched in parallel, merged, and sorted by block number.
+
 Key features:
 - **Dynamic RPC URL**: Agent can pass any `rpc_url` parameter — works for chains without hardcoded RPCs (Katana, Monad)
 - **Chunked fetching**: 2000 blocks per chunk with per-chunk retry, best-effort (partial results on RPC issues)
-- **Curve event decoding**: Decodes TokenExchange, AddLiquidity, RemoveLiquidity, RemoveLiquidityOne events from Curve StableSwap-NG pools
+- **Dual-contract decoding**: Curve StableSwap-NG pool events AND Spectra PrincipalToken vault events
 - **Block range control**: Explicit `from_block`/`to_block` or `lookback_hours` (default 24h, max 720h/30 days)
 - **Address filtering**: Filter events by a specific address
 - **No USD values**: On-chain logs don't carry prices — token amounts are shown in human-readable form. Cross-reference with `get_pt_details` for price context
 
 Composability with existing tools:
 ```
-Agent flow: get_pool_activity → empty? → get_onchain_activity(rpc_url=...) → decoded events
+Agent flow: get_pool_activity → empty? → get_onchain_activity(pool_address=...) → pool events
+Agent flow: portfolio shows PT but no pool trades → get_onchain_activity(pt_address=...) → vault events (mint/redeem)
 ```
 
 ## Extending

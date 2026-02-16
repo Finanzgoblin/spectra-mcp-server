@@ -39,8 +39,40 @@ const EVENT_TOPICS = {
   RemoveLiquidityOne: "0x6f48129db1f37ccb9cc5dd7e119cb32750cabdf75b48375d730d26ce3659bbe1",
 } as const;
 
-// All event topic0 values as an OR filter for eth_getLogs
-const ALL_EVENT_TOPICS = Object.values(EVENT_TOPICS);
+// All Curve event topic0 values as an OR filter for eth_getLogs
+const ALL_CURVE_TOPICS = Object.values(EVENT_TOPICS);
+
+// =============================================================================
+// Spectra PrincipalToken Vault Events (keccak256 pre-computed)
+// =============================================================================
+// PT vault-level operations: mint PT+YT from IBT, redeem PT back to IBT,
+// and claim accrued YT yield. These events fire on the PT contract itself,
+// NOT on the Curve pool — so they are invisible to pool-only scanning.
+//
+// Source: PrincipalToken.sol from github.com/perspectivefi/spectra-core
+//
+// Verified: Redeem hash 0xd12200ef... matches the event in real Katana tx
+//   0x0f314097ad1410575db525b5d5afb5290ea8ce5844270ca08f6e351a3b8be1d3
+//   at block 24,305,896 on PT contract 0xb96d23aaa39723c0273d41ae72f8d85f97f7dbf3.
+//
+// NOTE on YieldClaimed: ALL three parameters are indexed (owner, receiver, yieldInIBT).
+// This means the data field is empty (0x) and the amount is in topics[3], not in data.
+
+const PT_EVENT_TOPICS = {
+  // Mint(address indexed from, address indexed to, uint256 amount)
+  // Emitted when IBT is deposited to mint PT + YT
+  Mint: "0xab8530f87dc9b59234c4623bf917212bb2536d647574c8e7e5da92c2ede0c9f8",
+
+  // Redeem(address indexed from, address indexed to, uint256 amount)
+  // Emitted when PT is redeemed for underlying IBT
+  Redeem: "0xd12200efa34901b99367694174c3b0d32c99585fdf37c7c26892136ddd0836d9",
+
+  // YieldClaimed(address indexed owner, address indexed receiver, uint256 indexed yieldInIBT)
+  // Emitted when accrued yield is claimed from YT. ALL params indexed → data is empty.
+  YieldClaimed: "0xf3055bc8d92d9c8d2f12b45d112dd345cd2cfd17292b8d65c5642ac6f912dfd7",
+} as const;
+
+const ALL_PT_TOPICS = Object.values(PT_EVENT_TOPICS);
 
 // =============================================================================
 // ABI Decoding Helpers (pure hex parsing, no ethers/viem)
@@ -77,7 +109,7 @@ function wordToInt128(hex32: string): number {
 // Decoded Activity Types
 // =============================================================================
 
-type ActivityType = "BUY_PT" | "SELL_PT" | "AMM_ADD_LIQUIDITY" | "AMM_REMOVE_LIQUIDITY";
+type ActivityType = "BUY_PT" | "SELL_PT" | "AMM_ADD_LIQUIDITY" | "AMM_REMOVE_LIQUIDITY" | "MINT_PT_YT" | "REDEEM_PT" | "YIELD_CLAIMED";
 
 interface DecodedActivity {
   type: ActivityType;
@@ -206,8 +238,75 @@ function decodeEventLog(log: { topics: string[]; data: string; blockNumber: stri
   return null;
 }
 
+/**
+ * Decode a raw event log from a Spectra PrincipalToken contract.
+ * Handles Mint, Redeem, and YieldClaimed events.
+ * Returns null if the event is unrecognized or malformed.
+ */
+function decodePtEventLog(log: { topics: string[]; data: string; blockNumber: string; transactionHash: string; logIndex: string }): DecodedActivity | null {
+  const topic0 = log.topics[0];
+  const blockNumber = Number(BigInt(log.blockNumber));
+  const logIndex = Number(BigInt(log.logIndex));
+  const txHash = log.transactionHash;
+
+  try {
+    if (topic0 === PT_EVENT_TOPICS.Mint) {
+      // Mint(address indexed from, address indexed to, uint256 amount)
+      // topics[1]=from (depositor), topics[2]=to (receiver), data=[amount]
+      const from = log.topics[1] ? wordToAddress(log.topics[1].slice(2)) : "unknown";
+      const amount = wordToUint256(readWord(log.data, 0));
+
+      return {
+        type: "MINT_PT_YT",
+        from,
+        blockNumber,
+        txHash,
+        logIndex,
+        amount0: amount, // IBT amount deposited (≈ PT+YT minted)
+      };
+    }
+
+    if (topic0 === PT_EVENT_TOPICS.Redeem) {
+      // Redeem(address indexed from, address indexed to, uint256 amount)
+      // topics[1]=from (PT burner), topics[2]=to (IBT receiver), data=[amount]
+      const from = log.topics[1] ? wordToAddress(log.topics[1].slice(2)) : "unknown";
+      const amount = wordToUint256(readWord(log.data, 0));
+
+      return {
+        type: "REDEEM_PT",
+        from,
+        blockNumber,
+        txHash,
+        logIndex,
+        amount0: amount, // IBT amount received
+      };
+    }
+
+    if (topic0 === PT_EVENT_TOPICS.YieldClaimed) {
+      // YieldClaimed(address indexed owner, address indexed receiver, uint256 indexed yieldInIBT)
+      // ALL params indexed → data is empty (0x). Amount is in topics[3].
+      const from = log.topics[1] ? wordToAddress(log.topics[1].slice(2)) : "unknown";
+      // yieldInIBT is the third indexed param → topics[3]
+      const amount = log.topics[3] ? BigInt(log.topics[3]) : 0n;
+
+      return {
+        type: "YIELD_CLAIMED",
+        from,
+        blockNumber,
+        txHash,
+        logIndex,
+        amount0: amount, // IBT yield claimed
+      };
+    }
+  } catch (err) {
+    console.error(`Failed to decode PT event log at block ${blockNumber}:`, err instanceof Error ? err.message : err);
+  }
+
+  return null;
+}
+
 // Maximum total block range per invocation (prevents timeout on large scans)
-const MAX_TOTAL_BLOCK_RANGE = 50_000;
+const MAX_TOTAL_BLOCK_RANGE = 500_000;
 
 // =============================================================================
 // Tool Registration
@@ -216,13 +315,19 @@ const MAX_TOTAL_BLOCK_RANGE = 50_000;
 export function register(server: McpServer): void {
   server.tool(
     "get_onchain_activity",
-    `Fetch historical pool activity directly from on-chain event logs via eth_getLogs.
+    `Fetch historical on-chain activity directly from event logs via eth_getLogs.
 Use this when the API-based get_pool_activity returns empty or incomplete data
 (the API only stores a limited time window of recent transactions).
 
-Reads Curve StableSwap-NG events (TokenExchange, AddLiquidity, RemoveLiquidity)
-directly from the blockchain. Returns raw token amounts (not USD values — USD
-conversion is not available from on-chain data alone).
+Supports TWO contract types:
+1. Curve StableSwap-NG pool (pool_address): TokenExchange, AddLiquidity, RemoveLiquidity
+2. Spectra PrincipalToken vault (pt_address): Mint (deposit→PT+YT), Redeem (burn PT→IBT), YieldClaimed
+
+Provide pool_address, pt_address, or both. When both are provided, events from both
+contracts are fetched in parallel, merged, and sorted by block number.
+
+Returns raw token amounts (not USD values — USD conversion is not available from
+on-chain data alone).
 
 The rpc_url parameter lets you supply an RPC endpoint for any chain, including
 chains without hardcoded RPCs (e.g., Katana, Monad). If omitted, falls back to
@@ -244,7 +349,8 @@ Use get_pool_activity for recent data with USD values and rich analysis.
 Use this tool for historical data beyond the API's retention window.`,
     {
       chain: CHAIN_ENUM.describe("The blockchain network"),
-      pool_address: EVM_ADDRESS.describe("The Curve pool contract address (0x...). Must be the pool address, not a PT address."),
+      pool_address: EVM_ADDRESS.optional().describe("The Curve pool contract address (0x...). Fetches swap and liquidity events. At least one of pool_address or pt_address is required."),
+      pt_address: EVM_ADDRESS.optional().describe("The Spectra PrincipalToken contract address (0x...). Fetches Mint, Redeem, and YieldClaimed vault events. At least one of pool_address or pt_address is required."),
       rpc_url: z
         .string()
         .url()
@@ -281,7 +387,7 @@ Use this tool for historical data beyond the API's retention window.`,
         .optional()
         .describe("Filter events to a specific address (matches buyer/provider in events)."),
       type_filter: z
-        .enum(["BUY_PT", "SELL_PT", "AMM_ADD_LIQUIDITY", "AMM_REMOVE_LIQUIDITY", "all"])
+        .enum(["BUY_PT", "SELL_PT", "AMM_ADD_LIQUIDITY", "AMM_REMOVE_LIQUIDITY", "MINT_PT_YT", "REDEEM_PT", "YIELD_CLAIMED", "all"])
         .default("all")
         .describe("Filter by activity type. Default: all."),
       limit: z
@@ -290,8 +396,22 @@ Use this tool for historical data beyond the API's retention window.`,
         .default(50)
         .describe("Maximum number of events to return (default 50, max 200)."),
     },
-    async ({ chain, pool_address, rpc_url, from_block, to_block, lookback_hours, address, type_filter, limit }) => {
+    async ({ chain, pool_address, pt_address, rpc_url, from_block, to_block, lookback_hours, address, type_filter, limit }) => {
       try {
+        // --- Validate: at least one address required ---
+        if (!pool_address && !pt_address) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: `At least one of pool_address or pt_address is required.\n` +
+                `  • pool_address: Curve pool contract — fetches swap and liquidity events\n` +
+                `  • pt_address: Spectra PrincipalToken — fetches Mint, Redeem, YieldClaimed vault events\n` +
+                `  • Both: fetches from both contracts and merges results`,
+            }],
+            isError: true,
+          };
+        }
+
         const network = resolveNetwork(chain);
         const rpcUrl = resolveRpcUrl(chain, rpc_url);
 
@@ -343,21 +463,42 @@ Use this tool for historical data beyond the API's retention window.`,
 
         const totalRange = effectiveTo - effectiveFrom;
 
-        // --- Fetch event logs ---
-        const [rawLogs, chunksOk, chunksTotal] = await fetchLogs(
-          rpcUrl,
-          pool_address,
-          [ALL_EVENT_TOPICS],  // topic0 OR filter
-          effectiveFrom,
-          effectiveTo,
-        );
+        // --- Fetch event logs (dual-fetch: Curve pool + PT vault) ---
+        type LogResult = [any[], number, number]; // [logs, chunksOk, chunksTotal]
 
-        // --- Decode logs ---
+        const fetches: Promise<LogResult>[] = [];
+        const fetchLabels: string[] = [];
+
+        if (pool_address) {
+          fetches.push(fetchLogs(rpcUrl, pool_address, [ALL_CURVE_TOPICS], effectiveFrom, effectiveTo));
+          fetchLabels.push(`pool:${pool_address.slice(0, 10)}...`);
+        }
+        if (pt_address) {
+          fetches.push(fetchLogs(rpcUrl, pt_address, [ALL_PT_TOPICS], effectiveFrom, effectiveTo));
+          fetchLabels.push(`pt:${pt_address.slice(0, 10)}...`);
+        }
+
+        const results = await Promise.all(fetches);
+
+        // Merge raw logs and chunk stats
+        let allRawLogs: any[] = [];
+        let totalChunksOk = 0;
+        let totalChunksTotal = 0;
+        for (const [logs, ok, total] of results) {
+          allRawLogs = allRawLogs.concat(logs);
+          totalChunksOk += ok;
+          totalChunksTotal += total;
+        }
+
+        // --- Decode logs (try Curve decoder first, then PT decoder) ---
         const decoded: DecodedActivity[] = [];
-        for (const log of rawLogs) {
-          const activity = decodeEventLog(log);
+        for (const log of allRawLogs) {
+          const activity = decodeEventLog(log) ?? decodePtEventLog(log);
           if (activity) decoded.push(activity);
         }
+
+        // Sort by block number, then log index (for merged results from two contracts)
+        decoded.sort((a, b) => a.blockNumber - b.blockNumber || a.logIndex - b.logIndex);
 
         // --- Filter by address ---
         let filtered = decoded;
@@ -393,20 +534,27 @@ Use this tool for historical data beyond the API's retention window.`,
           }
         }
 
+        // --- Build contract label for output ---
+        const contractParts: string[] = [];
+        if (pool_address) contractParts.push(`Pool ${pool_address.slice(0, 10)}...${pool_address.slice(-6)}`);
+        if (pt_address) contractParts.push(`PT ${pt_address.slice(0, 10)}...${pt_address.slice(-6)}`);
+        const contractLabel = contractParts.join(" + ");
+
         // --- Empty results ---
         if (filtered.length === 0) {
           const filterDesc = addressFilter
             ? `address ${address}` : type_filter !== "all"
             ? formatActivityType(type_filter) + " events" : "events";
           const lines = [
-            `No ${filterDesc} found for pool ${pool_address} on ${chain}.`,
+            `No ${filterDesc} found for ${contractLabel} on ${chain}.`,
             `  Block Range: ${effectiveFrom.toLocaleString()} -> ${effectiveTo.toLocaleString()} (${totalRange.toLocaleString()} blocks)`,
             `  RPC: ${rpc_url ? "provided" : "default (" + chain + ")"}`,
-            `  Chunks: ${chunksOk}/${chunksTotal} succeeded`,
+            `  Chunks: ${totalChunksOk}/${totalChunksTotal} succeeded`,
             ``,
             `Suggestions:`,
             `  • Try a larger lookback_hours (current: ${lookback_hours}h, max: 720h)`,
-            `  • Verify this is the Curve pool address, not the PT address`,
+            ...(pool_address && !pt_address ? [`  • Try pt_address instead — the activity may be vault operations (Mint/Redeem), not pool swaps`] : []),
+            ...(pt_address && !pool_address ? [`  • Try pool_address instead — the activity may be pool swaps, not vault operations`] : []),
             `  • Check get_pool_activity for API-based recent data`,
           ];
           return { content: [{ type: "text" as const, text: lines.join("\n") }] };
@@ -432,15 +580,15 @@ Use this tool for historical data beyond the API's retention window.`,
           : "timestamps unavailable";
 
         const lines: string[] = [
-          `-- On-Chain Activity: ${pool_address.slice(0, 10)}...${pool_address.slice(-6)} --`,
+          `-- On-Chain Activity: ${contractLabel} --`,
           `  Chain: ${chain}`,
           `  RPC: ${rpcLabel}`,
           ...(addressFilter ? [`  Address: ${address}`] : []),
           `  Block Range: ${effectiveFrom.toLocaleString()} -> ${effectiveTo.toLocaleString()} (${totalRange.toLocaleString()} blocks)`,
           `  Time Range: ${timeRange}`,
           ...(rangeCapped ? [`  ⚠ Block range was capped to ${MAX_TOTAL_BLOCK_RANGE.toLocaleString()} blocks (requested ${requestedRange.toLocaleString()}). Use explicit from_block/to_block for deeper history.`] : []),
-          `  Chunks: ${chunksOk}/${chunksTotal} succeeded`,
-          `  Total Events: ${filtered.length} (decoded from ${rawLogs.length} raw logs)`,
+          `  Chunks: ${totalChunksOk}/${totalChunksTotal} succeeded`,
+          `  Total Events: ${filtered.length} (decoded from ${allRawLogs.length} raw logs)`,
           `  Filter: ${type_filter === "all" ? "All types" : formatActivityType(type_filter)}`,
           `  Unique Addresses: ${uniqueAddrs.size}`,
           ``,
@@ -451,22 +599,43 @@ Use this tool for historical data beyond the API's retention window.`,
           lines.push(`    ${formatActivityType(t).padEnd(22)} ${count} events`);
         }
 
-        // Event table
+        // Event table — PT vault events only have amount0 (IBT), no PT amount
+        const hasPtVaultEvents = decoded.some(e => ["MINT_PT_YT", "REDEEM_PT", "YIELD_CLAIMED"].includes(e.type));
+        const hasPoolEvents = decoded.some(e => ["BUY_PT", "SELL_PT", "AMM_ADD_LIQUIDITY", "AMM_REMOVE_LIQUIDITY"].includes(e.type));
+
         lines.push(``);
         lines.push(`  Events (${shown.length} of ${filtered.length}):`);
-        lines.push(`  ${"Block".padEnd(12)} ${"Type".padEnd(18)} ${"IBT Amount".padEnd(20)} ${"PT Amount".padEnd(20)} ${"From".padEnd(14)} ${"Tx Hash"}`);
-        lines.push(`  ${"─".repeat(96)}`);
+
+        if (hasPoolEvents && hasPtVaultEvents) {
+          // Mixed: show both columns
+          lines.push(`  ${"Block".padEnd(12)} ${"Type".padEnd(18)} ${"IBT Amount".padEnd(20)} ${"PT Amount".padEnd(20)} ${"From".padEnd(14)} ${"Tx Hash"}`);
+          lines.push(`  ${"─".repeat(96)}`);
+        } else if (hasPtVaultEvents) {
+          // PT vault only: single amount column
+          lines.push(`  ${"Block".padEnd(12)} ${"Type".padEnd(18)} ${"IBT Amount".padEnd(20)} ${"From".padEnd(14)} ${"Tx Hash"}`);
+          lines.push(`  ${"─".repeat(76)}`);
+        } else {
+          // Pool only
+          lines.push(`  ${"Block".padEnd(12)} ${"Type".padEnd(18)} ${"IBT Amount".padEnd(20)} ${"PT Amount".padEnd(20)} ${"From".padEnd(14)} ${"Tx Hash"}`);
+          lines.push(`  ${"─".repeat(96)}`);
+        }
 
         for (const e of shown) {
           const block = e.blockNumber.toLocaleString().padEnd(12);
           const actType = formatActivityType(e.type).padEnd(18);
-          // Display token amounts — we don't know decimals, so show raw with 18 assumed
-          // Most Spectra pools use 18-decimal IBTs. The output clearly states these are raw amounts.
           const ibt = e.amount0 !== undefined ? formatTokenAmount(e.amount0, 18).padEnd(20) : "—".padEnd(20);
-          const pt = e.amount1 !== undefined ? formatTokenAmount(e.amount1, 18).padEnd(20) : "—".padEnd(20);
           const from = `${e.from.slice(0, 6)}...${e.from.slice(-4)}`.padEnd(14);
           const hash = `${e.txHash.slice(0, 10)}...`;
-          lines.push(`  ${block} ${actType} ${ibt} ${pt} ${from} ${hash}`);
+
+          if (hasPoolEvents && hasPtVaultEvents) {
+            const pt = e.amount1 !== undefined ? formatTokenAmount(e.amount1, 18).padEnd(20) : "—".padEnd(20);
+            lines.push(`  ${block} ${actType} ${ibt} ${pt} ${from} ${hash}`);
+          } else if (hasPtVaultEvents) {
+            lines.push(`  ${block} ${actType} ${ibt} ${from} ${hash}`);
+          } else {
+            const pt = e.amount1 !== undefined ? formatTokenAmount(e.amount1, 18).padEnd(20) : "—".padEnd(20);
+            lines.push(`  ${block} ${actType} ${ibt} ${pt} ${from} ${hash}`);
+          }
         }
 
         // Notes
@@ -477,9 +646,17 @@ Use this tool for historical data beyond the API's retention window.`,
         // Next steps
         lines.push(``);
         lines.push(`--- Next Steps ---`);
-        lines.push(`• Rich analysis (USD values, cycles): get_pool_activity(chain="${chain}", pool_address="${pool_address}")`);
+        if (pool_address) {
+          lines.push(`• Rich analysis (USD values, cycles): get_pool_activity(chain="${chain}", pool_address="${pool_address}")`);
+        }
+        if (pt_address && !pool_address) {
+          lines.push(`• Pool swaps for this PT: get_onchain_activity(chain="${chain}", pool_address="CURVE_POOL_ADDRESS")`);
+        }
+        if (pool_address && !pt_address) {
+          lines.push(`• Vault events (mint/redeem): get_onchain_activity(chain="${chain}", pt_address="PT_ADDRESS")`);
+        }
         lines.push(`• Current holdings: get_portfolio(address="ADDRESS")`);
-        lines.push(`• Pool rates & decimals: get_pt_details(chain="${chain}", pt_address="PT_ADDRESS")`);
+        lines.push(`• Pool rates & decimals: get_pt_details(chain="${chain}", pt_address="${pt_address || "PT_ADDRESS"}")`);
 
         return { content: [{ type: "text" as const, text: lines.join("\n") }] };
       } catch (e: any) {
