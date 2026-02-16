@@ -55,6 +55,23 @@ export function formatBalance(raw: string | null | undefined, decimals: number):
   }
 }
 
+/**
+ * Format a bigint token amount with specified decimals for display.
+ * Returns a string like "1,012.5000" (4 fractional digits, comma-separated).
+ */
+export function formatTokenAmount(raw: bigint, decimals: number): string {
+  const safeDec = Math.max(0, Math.round(decimals));
+  let divisor = 1n;
+  for (let i = 0; i < safeDec; i++) divisor *= 10n;
+  const intPart = raw / divisor;
+  const fracPart = raw % divisor;
+  // Show up to 4 fractional digits
+  const fracStr = fracPart.toString().padStart(safeDec, "0").slice(0, 4);
+  const intStr = Number(intPart).toLocaleString("en-US");
+  if (safeDec === 0 || fracStr === "0000") return intStr;
+  return `${intStr}.${fracStr.replace(/0+$/, "")}`;
+}
+
 // =============================================================================
 // Compact Formatters (for agent-efficient output)
 // =============================================================================

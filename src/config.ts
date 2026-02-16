@@ -221,3 +221,41 @@ export const CHAIN_GAS_ESTIMATES: Record<string, number> = {
   bsc:       0.10,
   monad:     0.01,
 };
+
+// =============================================================================
+// Average Block Times (seconds per block, for block range estimation)
+// =============================================================================
+
+// Approximate average block times used to convert time-based lookback windows
+// into block counts. Used by get_onchain_activity to estimate fromBlock when
+// the agent specifies a time window instead of explicit block numbers.
+export const CHAIN_BLOCK_TIMES: Record<string, number> = {
+  mainnet:   12,
+  base:      2,
+  arbitrum:  0.25,
+  optimism:  2,
+  avalanche: 2,
+  katana:    2,     // estimate — adjust when known
+  sonic:     1,
+  flare:     3,
+  bsc:       3,
+  monad:     1,     // estimate — adjust when known
+};
+
+// Maximum block range per eth_getLogs request (public RPCs rate-limit large ranges)
+export const MAX_LOG_BLOCK_RANGE = 2000;
+
+// =============================================================================
+// RPC URL Resolution
+// =============================================================================
+
+/**
+ * Resolve the RPC URL for a chain, with agent-provided override taking precedence.
+ * Enables agents to supply RPC URLs for chains without hardcoded defaults
+ * (e.g., Katana, Monad) or to use premium RPCs for better reliability.
+ */
+export function resolveRpcUrl(chain: string, overrideRpcUrl?: string): string | null {
+  if (overrideRpcUrl) return overrideRpcUrl;
+  const network = resolveNetwork(chain);
+  return CHAIN_RPC_URLS[network] ?? null;
+}
