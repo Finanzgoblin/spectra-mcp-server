@@ -96,6 +96,9 @@ Each pool is a Curve StableSwap-NG AMM pair of IBT (interest-bearing token) and 
 (Principal Token). Implied APY is the fixed rate you lock in by buying PT at discount.
 LP APY is the yield from providing liquidity to the pool (fees + gauge emissions).
 
+Set include_expired=true to also show recently matured pools (if the API returns them).
+By default only active (non-expired) pools are shown.
+
 For multi-chain discovery, use get_best_fixed_yields (raw APY ranking) or
 scan_opportunities (capital-aware with price impact and looping analysis).
 Use get_pool_activity on a specific pool to see recent trading patterns.`,
@@ -113,8 +116,12 @@ Use get_pool_activity on a specific pool to see recent trading patterns.`,
         .boolean()
         .default(false)
         .describe("If true, return one-line-per-pool output (much shorter). Use for quick scanning; omit for full details."),
+      include_expired: z
+        .boolean()
+        .default(false)
+        .describe("If true, include recently matured/expired pools in results. Default false (active only)."),
     },
-    async ({ chain, sort_by, min_tvl_usd, compact }) => {
+    async ({ chain, sort_by, min_tvl_usd, compact, include_expired }) => {
       try {
         const network = resolveNetwork(chain);
         const raw = await fetchSpectra(`/${network}/pools`) as any;
@@ -129,7 +136,7 @@ Use get_pool_activity on a specific pool to see recent trading patterns.`,
         const expanded: Array<{ pt: SpectraPt; pool: SpectraPool }> = [];
         for (const pt of pts) {
           if (!pt.pools || pt.pools.length === 0) continue;
-          if (pt.maturity * 1000 <= Date.now()) continue;
+          if (!include_expired && pt.maturity * 1000 <= Date.now()) continue;
           if ((pt.tvl?.usd || 0) < min_tvl_usd) continue;
           for (const pool of pt.pools) {
             expanded.push({ pt, pool });
