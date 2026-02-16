@@ -691,21 +691,55 @@ Use get_portfolio to see current holdings across all pools.`,
         // Phase 1: Fetch all pools per chain, then activity per pool — parallel within each chain
         const chainResults = await Promise.allSettled(
           networks.map(async (net): Promise<PoolActivity[]> => {
-            // Get all pools on this chain
-            const raw = await fetchSpectra(`/${net}/pools`) as any;
-            const pts: any[] = Array.isArray(raw) ? raw : raw?.data || [];
-            if (!Array.isArray(pts)) return [];
+            // Get active pools + portfolio (for expired pools) in parallel
+            const [poolsRaw, portfolioRaw] = await Promise.all([
+              fetchSpectra(`/${net}/pools`).catch(() => []),
+              fetchSpectra(`/${net}/portfolio/${address}`).catch(() => []),
+            ]);
 
-            // Collect unique pool addresses
+            const pts: any[] = (() => {
+              const r = poolsRaw as any;
+              const arr = Array.isArray(r) ? r : r?.data || [];
+              return Array.isArray(arr) ? arr : [];
+            })();
+
+            // Collect unique pool addresses from active pools
+            const seen = new Set<string>();
             const poolEntries: Array<{ poolAddr: string; ptName: string; ptAddr: string }> = [];
             for (const pt of pts) {
               for (const pool of (pt.pools || [])) {
                 if (pool.address) {
-                  poolEntries.push({
-                    poolAddr: pool.address,
-                    ptName: pt.name || "Unknown PT",
-                    ptAddr: pt.address || "",
-                  });
+                  const key = pool.address.toLowerCase();
+                  if (!seen.has(key)) {
+                    seen.add(key);
+                    poolEntries.push({
+                      poolAddr: pool.address,
+                      ptName: pt.name || "Unknown PT",
+                      ptAddr: pt.address || "",
+                    });
+                  }
+                }
+              }
+            }
+
+            // Also include pools from the address's portfolio (catches expired/matured positions)
+            const positions: any[] = (() => {
+              const r = portfolioRaw as any;
+              const arr = Array.isArray(r) ? r : r?.data || [];
+              return Array.isArray(arr) ? arr : [];
+            })();
+            for (const pos of positions) {
+              for (const pool of (pos.pools || [])) {
+                if (pool.address) {
+                  const key = pool.address.toLowerCase();
+                  if (!seen.has(key)) {
+                    seen.add(key);
+                    poolEntries.push({
+                      poolAddr: pool.address,
+                      ptName: pos.name || "Unknown PT",
+                      ptAddr: pos.address || "",
+                    });
+                  }
                 }
               }
             }

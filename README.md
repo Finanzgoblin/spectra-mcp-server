@@ -87,7 +87,7 @@ This was validated: a subagent spawned with zero priming correctly identified a 
 | Tool | Description |
 |------|-------------|
 | `get_best_fixed_yields` | Scan ALL chains for top fixed-rate opportunities. The main discovery tool. Supports `compact` mode. |
-| `list_pools` | List all active pools on a specific chain, sorted by APY/TVL/maturity. Supports `compact` mode. |
+| `list_pools` | List all active pools on a specific chain, sorted by APY/TVL/maturity. Supports `compact` mode and `include_expired` flag. |
 | `get_pt_details` | Deep dive on a specific Principal Token -- full data. |
 | `compare_yield` | Fixed (PT) vs. variable (IBT) yield comparison with spread mechanics and entry cost analysis. |
 | `get_looping_strategy` | Calculate leveraged yield via PT + Morpho looping with effective liquidation margins. Auto-fetches live Morpho rates when a matching market exists. |
@@ -98,7 +98,7 @@ This was validated: a subagent spawned with zero priming correctly identified a 
 | `get_portfolio` | Wallet positions across PT, YT, and LP with USD values and claimable yield. |
 | `get_pool_volume` | Historical buy/sell trading volume for a specific pool. Accepts PT address or pool address. |
 | `get_pool_activity` | Recent individual transactions (buys, sells, liquidity events) with filtering, address isolation mode (cycle detection, flow accounting, contract/EOA detection, gas estimates). Accepts PT or pool address. |
-| `get_address_activity` | Cross-pool address scanner — finds all pools an address has interacted with on a chain (or all chains) in one call. Per-pool breakdown + cross-pool aggregates. |
+| `get_address_activity` | Cross-pool address scanner — finds all pools an address has interacted with on a chain (or all chains) in one call. Includes expired/matured pools via portfolio lookup. Per-pool breakdown + cross-pool aggregates. |
 | `quote_trade` | PT trade quoting with on-chain Curve `get_dy()` for exact output (falls back to math estimate). Shows price impact, slippage, and minOut. |
 | `simulate_portfolio_after_trade` | Preview portfolio BEFORE/AFTER a hypothetical PT trade with deltas, warnings, and on-chain quoting. |
 | `scan_opportunities` | Capital-aware opportunity scanner: price impact at your size, effective APY, Morpho looping, pool capacity. Supports `compact` mode. |
@@ -340,14 +340,14 @@ All address parameters are validated (`0x` + 40 hex chars). All API calls have a
 From a source checkout:
 
 ```bash
-# Full suite (363 tests, requires network)
+# Full suite (371 tests, requires network)
 npm test
 
 # Schema/registration only (98 tests, no network)
 npm run test:offline
 ```
 
-363 of 363 tests pass (0 failures, 0 skipped).
+371 of 371 tests pass (0 failures, 0 skipped).
 
 The test suite dynamically discovers pool and PT addresses from the live API, so tests won't go stale when pools mature or are deprecated. Includes malformed-address negative tests, on-chain Curve `get_dy()` quoting validation, cross-pool address scanning, and address isolation mode tests.
 
@@ -359,9 +359,9 @@ This server wraps these endpoints:
 |----------|---------|
 | `GET /v1/{chain}/pools` | `list_pools`, `get_best_fixed_yields`, `scan_opportunities`, `scan_yt_arbitrage` (30s TTL cache) |
 | `GET /v1/{chain}/pt/{address}` | `get_pt_details`, `compare_yield`, `get_looping_strategy`, `quote_trade`, `simulate_portfolio_after_trade`, `get_pool_volume`/`get_pool_activity` (PT→pool resolution) |
-| `GET /v1/{chain}/portfolio/{wallet}` | `get_portfolio`, `simulate_portfolio_after_trade` |
+| `GET /v1/{chain}/portfolio/{wallet}` | `get_portfolio`, `simulate_portfolio_after_trade`, `get_address_activity` (expired pool discovery) |
 | `GET /v1/{chain}/pools/{pool}/volume` | `get_pool_volume` |
-| `GET /v1/{chain}/pools/{pool}/activity` | `get_pool_activity`, `get_address_activity` |
+| `GET /v1/{chain}/pools/{pool}/activity` | `get_pool_activity`, `get_address_activity` (active + expired pools) |
 | `GET /v1/{chain}/metavaults` | `get_metavaults`, `model_metavault_strategy` (live mode) |
 | `GET app.spectra.finance/api/v1/spectra/circulating-supply` | `get_protocol_stats` |
 | `GET app.spectra.finance/api/v1/spectra/total-supply` | `get_protocol_stats` |
