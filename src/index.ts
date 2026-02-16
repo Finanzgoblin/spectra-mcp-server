@@ -26,7 +26,8 @@
  *   - scan_opportunities       -> Capital-aware opportunity scanner for autonomous agents
  *   - scan_yt_arbitrage        -> YT rate vs IBT rate arbitrage scanner
  *   - get_ve_info              -> Live veSPECTRA data + boost calculator
- *   - model_metavault_strategy  -> MetaVault double-loop strategy modeler for curators
+ *   - get_metavaults             -> List live MetaVaults across chains (curators, TVL, APY, positions)
+ *   - model_metavault_strategy  -> MetaVault double-loop strategy modeler for curators (live data or manual)
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -138,6 +139,7 @@ Key Integrations:
 - MetaVaults: Auto-rolling liquidity vaults managed by curators (ERC-7540)
   - YT→LP compounding loop (curator converts YT yield to more LP)
   - MetaVault shares can be used as Morpho collateral for leverage ("double loop")
+  - Live data via API: /v1/{network}/metavaults — use get_metavaults to discover
 - Governance: ve(3,3) model on Base (veSPECTRA)
 
 Looping Strategy (most capital-efficient yield in DeFi):
