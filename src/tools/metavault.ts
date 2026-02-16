@@ -98,7 +98,11 @@ Returns all MetaVaults with:
   - Epoch history (rate snapshots)
 
 Use this tool to discover which MetaVaults are live, then pass the address to
-model_metavault_strategy for detailed strategy modeling with live data.`,
+model_metavault_strategy for detailed strategy modeling with live data.
+
+To investigate curator activity (LP adds/removes, rebalancing), use get_address_activity
+on the curator's EOA address — MetaVault operations go through the Spectra Router, so
+the vault contract address won't appear in pool activity data.`,
     {
       chain: CHAIN_ENUM
         .optional()
