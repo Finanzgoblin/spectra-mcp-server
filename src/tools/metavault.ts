@@ -95,6 +95,9 @@ Returns all MetaVaults with:
   - Curator info, TVL, live APY, share price
   - Active positions (PT markets the vault is deployed in)
   - Underlying asset details
+  - Vault flows: epoch-by-epoch deposit/withdrawal analysis (net inflows vs outflows
+    derived from asset snapshots, with yield accrual separated out)
+  - Bridge transactions: cross-chain CCTP transfers with amounts, directions, and status
   - Epoch history (rate snapshots)
 
 Use this tool to discover which MetaVaults are live, then pass the address to
