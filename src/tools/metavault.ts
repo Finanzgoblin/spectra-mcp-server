@@ -1,10 +1,12 @@
 /**
- * Tool: model_metavault_strategy
+ * Tools: get_metavaults, model_metavault_strategy
  *
- * Strategy modeler for MetaVault "double loop" economics.
- * Curators input hypothetical parameters (vault APY, fees, Morpho LTV)
- * and see projected returns at different leverage levels, curator
- * fee revenue earned on external deposits, and comparison with raw PT looping.
+ * get_metavaults — Discovery tool for live MetaVaults from the Spectra API.
+ * Lists all MetaVaults across chains with curator info, TVL, APY, and positions.
+ *
+ * model_metavault_strategy — Strategy modeler for MetaVault "double loop" economics.
+ * Can auto-populate from live API data when chain + metavault_address are provided,
+ * or run in pure computational mode with manual parameters.
  *
  * Dual Morpho Market Strategy for Curators:
  *
@@ -33,19 +35,19 @@
  *   for managing the vault — rolling LP positions, compounding YT, and
  *   maintaining allocations. Net Vault APY shown is what depositors receive
  *   AFTER the curator's fee has been deducted.
- *
- * No API calls — purely computational. When the MetaVault API goes live
- * (/v1/{network}/metavaults), this can be extended with auto-detection.
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { MetavaultLoopRow, MetavaultCuratorEconomics } from "../types.js";
+import { CHAIN_ENUM, EVM_ADDRESS } from "../config.js";
+import { fetchMetavaults, scanAllMetavaults } from "../api.js";
 import {
   formatPct,
   formatUsd,
   cumulativeLeverageAtLoop,
   formatMetavaultStrategy,
+  formatMetavaultList,
 } from "../formatters.js";
 
 function computeLoopRows(
@@ -78,6 +80,55 @@ function findOptimal(rows: MetavaultLoopRow[]): { loop: number; netApy: number; 
 }
 
 export function register(server: McpServer): void {
+
+  // ─── get_metavaults ────────────────────────────────────────────────────
+
+  server.tool(
+    "get_metavaults",
+    `List live MetaVaults from the Spectra API.
+
+MetaVaults are ERC-7540 curated vaults that automate LP rollover and compound
+YT yield back into LP positions. They are managed by curators who earn
+performance fees on depositor yield.
+
+Returns all MetaVaults with:
+  - Curator info, TVL, live APY, share price
+  - Active positions (PT markets the vault is deployed in)
+  - Underlying asset details
+  - Epoch history (rate snapshots)
+
+Use this tool to discover which MetaVaults are live, then pass the address to
+model_metavault_strategy for detailed strategy modeling with live data.`,
+    {
+      chain: CHAIN_ENUM
+        .optional()
+        .describe("Chain to query. Omit to scan all chains."),
+    },
+    async ({ chain }) => {
+      try {
+        let entries: Array<{ metavault: any; chain: string }>;
+        let failedChains: string[] = [];
+
+        if (chain) {
+          const mvs = await fetchMetavaults(chain);
+          entries = mvs.map((metavault) => ({ metavault, chain }));
+        } else {
+          const result = await scanAllMetavaults();
+          entries = result.metavaults;
+          failedChains = result.failedChains;
+        }
+
+        const text = formatMetavaultList(entries, chain, failedChains);
+        return { content: [{ type: "text" as const, text }] };
+      } catch (e: any) {
+        const text = `Error fetching MetaVaults: ${e.message}`;
+        return { content: [{ type: "text" as const, text }], isError: true };
+      }
+    }
+  );
+
+  // ─── model_metavault_strategy ──────────────────────────────────────────
+
   server.tool(
     "model_metavault_strategy",
     `Model a MetaVault "double loop" strategy for curators.
@@ -85,6 +136,11 @@ export function register(server: McpServer): void {
 MetaVaults are ERC-7540 curated vaults that automate LP rollover and compound
 YT yield back into LP positions. This tool models the economics of leveraging
 MetaVault shares as collateral on Morpho (or similar lending markets).
+
+Two modes:
+  1. Live mode: Provide chain + metavault_address to auto-populate base_apy from
+     the live MetaVault API. All other params can be overridden.
+  2. Manual mode: Provide base_apy directly for hypothetical modeling.
 
 The "double loop":
   Layer 1 (inside vault): YT yield → LP tokens (compounding loop, managed by curator)
@@ -101,15 +157,18 @@ Dual Morpho Market Strategy:
   loopers, and the curator earns fees on all external deposits flowing through the vault.
 
 Curator economics: The curator EARNS the performance fee on external deposits — this is
-revenue for managing the vault (rolling positions, compounding YT, maintaining allocations).
-
-All parameters are curator-configurable. No live API calls — this is a strategy
-modeling tool for pre-launch planning. When MetaVault API goes live, auto-detection
-will be added.`,
+revenue for managing the vault (rolling positions, compounding YT, maintaining allocations).`,
     {
+      chain: CHAIN_ENUM
+        .optional()
+        .describe("Chain where the MetaVault lives. Required with metavault_address for live data."),
+      metavault_address: EVM_ADDRESS
+        .optional()
+        .describe("MetaVault contract address. When provided with chain, auto-fetches live APY and TVL as base_apy. Use get_metavaults to discover addresses."),
       base_apy: z
         .number()
-        .describe("Base LP APY the MetaVault targets (%), e.g. 12 for 12%"),
+        .optional()
+        .describe("Base LP APY the MetaVault targets (%), e.g. 12 for 12%. Auto-populated from live data when metavault_address is provided, or required in manual mode."),
       yt_compounding_apy: z
         .number()
         .default(0)
@@ -157,6 +216,8 @@ will be added.`,
         .describe("If provided, show side-by-side comparison with raw PT looping at this APY (%)"),
     },
     async ({
+      chain,
+      metavault_address,
       base_apy,
       yt_compounding_apy,
       curator_fee_pct,
@@ -169,8 +230,61 @@ will be added.`,
       compare_pt_apy,
     }) => {
       try {
+        let resolvedBaseApy = base_apy;
+        let liveDataNote = "";
+
+        // Live mode: fetch metavault data from API
+        if (metavault_address && chain) {
+          const mvs = await fetchMetavaults(chain);
+          const mv = mvs.find(
+            (m) => m.address.toLowerCase() === metavault_address.toLowerCase()
+          );
+          if (mv) {
+            const liveApy = mv.liveApy?.total || 0;
+            if (resolvedBaseApy === undefined) {
+              resolvedBaseApy = liveApy;
+            }
+            const tvlStr = formatUsd(mv.tvl?.usd || 0);
+            const curatorName = mv.curator?.name || "Unknown";
+            liveDataNote = [
+              `--- Live MetaVault Data ---`,
+              `  Name: ${mv.metadata?.title || mv.name} (${mv.symbol})`,
+              `  Chain: ${chain}`,
+              `  Address: ${mv.address}`,
+              `  Curator: ${curatorName}`,
+              `  TVL: ${tvlStr}`,
+              `  Live APY: ${formatPct(liveApy)}${resolvedBaseApy !== liveApy ? ` (overridden to ${formatPct(resolvedBaseApy!)})` : " (used as base_apy)"}`,
+              `  Share Price: ${formatUsd(mv.price?.usd || 0)}`,
+              `  Positions: ${mv.positions?.length || 0} active`,
+              ``,
+            ].join("\n");
+          } else {
+            liveDataNote = [
+              `--- Live MetaVault Data ---`,
+              `  MetaVault ${metavault_address} not found on ${chain}.`,
+              `  Use get_metavaults to discover available MetaVaults.`,
+              `  Falling back to manual base_apy.`,
+              ``,
+            ].join("\n");
+          }
+        } else if (metavault_address && !chain) {
+          liveDataNote = [
+            `--- Live MetaVault Data ---`,
+            `  chain is required when metavault_address is provided.`,
+            `  Use get_metavaults to find chain + address pairs.`,
+            `  Falling back to manual base_apy.`,
+            ``,
+          ].join("\n");
+        }
+
+        // Require base_apy one way or another
+        if (resolvedBaseApy === undefined) {
+          const text = `Error: base_apy is required. Either provide it directly or supply chain + metavault_address to auto-fetch from the live API. Use get_metavaults to discover MetaVault addresses.`;
+          return { content: [{ type: "text" as const, text }], isError: true };
+        }
+
         // Vault economics
-        const grossVaultApy = base_apy + yt_compounding_apy;
+        const grossVaultApy = resolvedBaseApy + yt_compounding_apy;
         const netVaultApy = grossVaultApy * (1 - curator_fee_pct / 100);
 
         // MetaVault looping table
@@ -209,7 +323,7 @@ will be added.`,
         }
 
         const text = formatMetavaultStrategy({
-          baseApy: base_apy,
+          baseApy: resolvedBaseApy,
           ytCompoundingApy: yt_compounding_apy,
           curatorFeePct: curator_fee_pct,
           netVaultApy,
@@ -232,12 +346,13 @@ will be added.`,
         const nextLines = [
           ``,
           `--- Next Steps ---`,
+          `• List live MetaVaults: get_metavaults() for current vault data`,
           `• Find pools matching your target APY: scan_opportunities(capital_usd=${capital_usd || "YOUR_AMOUNT"}) for live pool data`,
           `• Check raw PT looping baseline: get_looping_strategy(chain=CHAIN, pt_address=PT_ADDRESS) for comparison`,
           `• Find Morpho markets: get_morpho_markets() to see which PTs have lending markets for Market A`,
         ].join("\n");
 
-        return { content: [{ type: "text" as const, text: text + nextLines }] };
+        return { content: [{ type: "text" as const, text: liveDataNote + text + nextLines }] };
       } catch (e: any) {
         const text = `Error modeling MetaVault strategy: ${e.message}`;
         return { content: [{ type: "text" as const, text }], isError: true };
