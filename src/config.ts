@@ -16,6 +16,8 @@ export const SPECTRA_APP_API = `${SPECTRA_APP_BASE}/api/v1`;
 
 export const MORPHO_GRAPHQL = "https://api.morpho.org/graphql";
 
+export const PENDLE_API = "https://api-v2.pendle.finance/core";
+
 export const FETCH_TIMEOUT_MS = 15_000;
 
 // =============================================================================
@@ -30,6 +32,40 @@ export const MORPHO_CHAIN_IDS: Record<string, number> = {
   katana: 747474,
   // Morpho also has PT markets on unichain(130) and hyperliquid(999),
   // but those aren't Spectra chains. More can be added as Morpho expands.
+};
+
+// Pendle API uses Ethereum chain IDs.
+// Includes ALL Pendle-supported chains — both those that overlap with Spectra
+// and Pendle-only chains. Curators need the full picture to evaluate cross-protocol
+// opportunities and identify chains where Spectra could expand.
+// Source: GET /core/v1/chains (confirmed Feb 2026)
+export const PENDLE_CHAIN_IDS: Record<string, number> = {
+  mainnet: 1,
+  optimism: 10,
+  bsc: 56,
+  sonic: 146,
+  base: 8453,
+  arbitrum: 42161,
+  mantle: 5000,
+  berachain: 80094,
+  hyperevm: 999,
+  corn: 9745,
+  // Overlap with Spectra's SUPPORTED_CHAINS is computed dynamically at runtime.
+  // Don't assume which chains are "Pendle-only" — Spectra deploys on new chains regularly.
+};
+
+// Human-readable names for Pendle-only chains (not in SUPPORTED_CHAINS)
+export const PENDLE_CHAIN_NAMES: Record<string, string> = {
+  mainnet: "Ethereum",
+  optimism: "Optimism",
+  bsc: "BSC",
+  sonic: "Sonic",
+  base: "Base",
+  arbitrum: "Arbitrum",
+  mantle: "Mantle",
+  berachain: "Berachain",
+  hyperevm: "HyperEVM",
+  corn: "Corn",
 };
 
 const SUPPORTED_CHAINS_INTERNAL = {
