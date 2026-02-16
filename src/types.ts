@@ -261,6 +261,57 @@ export interface YtArbitrageOpportunity {
 }
 
 // =============================================================================
+// MetaVault API Interfaces
+// =============================================================================
+
+export interface SpectraMetavaultPosition {
+  address: string;         // PT address
+  symbol: string;
+  maturity: number;        // Unix timestamp
+  tvl: { underlying: number; usd: number };
+  pools: Array<{
+    address: string;
+    ptApy: number;
+    lpApy: { total: number };
+  }>;
+}
+
+export interface SpectraMetavaultEpoch {
+  timestamp: number;
+  rate: string;
+  assets: string;
+}
+
+export interface SpectraMetavault {
+  address: string;         // MetaVault contract address
+  vault: string;           // Underlying ERC-4626 vault
+  chainId: number;
+  name: string;
+  symbol: string;
+  decimals: number;
+  curator: {
+    name: string;
+    addresses: string[];
+  };
+  underlying: {
+    address: string;
+    symbol: string;
+    decimals: number;
+    price: { usd: number };
+  };
+  metadata: {
+    title: string;
+    shortDescription: string;
+  };
+  positions: SpectraMetavaultPosition[];
+  epochs: SpectraMetavaultEpoch[];
+  tvl: { underlying: number; usd: number };
+  liveApy: { total: number };
+  exchangeRate: string;
+  price: { underlying: number; usd: number };
+}
+
+// =============================================================================
 // MetaVault Strategy Interfaces
 // =============================================================================
 
