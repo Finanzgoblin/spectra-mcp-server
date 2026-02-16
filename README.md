@@ -2,7 +2,7 @@
 
 Makes [Spectra Finance](https://spectra.finance) discoverable and usable by AI agents via the [Model Context Protocol](https://modelcontextprotocol.io).
 
-20 tools · 10 chains · read-only · on-chain Curve quoting · zero web3 library dependencies
+21 tools · 10 chains · read-only · on-chain Curve quoting · zero web3 library dependencies
 
 ## What This Does
 
@@ -19,7 +19,8 @@ Any AI agent (Claude, GPT, open-source) that supports MCP can now:
 - **Scan** all chains for capital-aware opportunities with price impact, effective APY, and Morpho looping analysis
 - **Detect** YT arbitrage opportunities where IBT APR diverges from YT implied rate
 - **Compute** real veSPECTRA boost multipliers per-pool using live on-chain data from Base
-- **Model** MetaVault "double loop" strategies for curators — vault compounding + Morpho leverage with curator economics
+- **Discover** live MetaVaults across all chains — curator info, TVL, APY, positions, epoch history
+- **Model** MetaVault "double loop" strategies for curators — vault compounding + Morpho leverage with curator economics, auto-populated from live API data or manual parameters
 - **Query** Morpho lending markets for PT collateral opportunities
 - **Query** protocol stats, tokenomics, and governance data
 - **Learn** protocol mechanics on-demand via `get_protocol_context` (PT/YT identity, Router batching, minting)
@@ -100,7 +101,8 @@ This was validated: a subagent spawned with zero priming correctly identified a 
 | `scan_opportunities` | Capital-aware opportunity scanner: price impact at your size, effective APY, Morpho looping, pool capacity. Supports `compact` mode. |
 | `scan_yt_arbitrage` | YT rate vs IBT rate arbitrage scanner -- finds pools where YT is mispriced relative to underlying yield. Supports `compact` mode. |
 | `get_ve_info` | Live veSPECTRA data from Base chain (total supply via on-chain read) + boost calculator with per-pool multipliers. |
-| `model_metavault_strategy` | MetaVault "double loop" strategy modeler for curators. Models YT→LP compounding + Morpho leverage with curator economics (fee revenue, TVL creation, effective ROI). |
+| `get_metavaults` | List live MetaVaults across all chains (or a specific chain). Returns curator info, TVL, live APY, share price, active positions, and epoch history. |
+| `model_metavault_strategy` | MetaVault "double loop" strategy modeler for curators. Live mode (chain + metavault_address) auto-fetches APY from API; manual mode accepts base_apy directly. Models curator economics (fee revenue, TVL creation, effective ROI). |
 | `get_protocol_context` | Returns protocol mechanics reference (PT/YT identity, Router batching, minting). Callable on-demand instead of always in context. |
 
 ## Supported Chains
@@ -124,9 +126,17 @@ Full 2.5x boost when your share of total veSPECTRA >= your share of pool TVL.
 
 Tools that accept `ve_spectra_balance` (`scan_opportunities`, `scan_yt_arbitrage`, `compare_yield`, `get_ve_info`) compute per-pool boost automatically. The veSPECTRA contract is an NFT-based voting escrow (veNFT) at `0x6a89228055c7c28430692e342f149f37462b478b` on Base, sourced from [spectra-core](https://github.com/perspectivefi/spectra-core).
 
-## MetaVault Strategy Modeling
+## MetaVault Discovery & Strategy Modeling
 
-MetaVaults are ERC-7540 curated vaults that automate LP rollover and compound YT yield back into LP positions. The `model_metavault_strategy` tool lets curators model the "double loop" economics:
+MetaVaults are ERC-7540 curated vaults that automate LP rollover and compound YT yield back into LP positions. Two tools work together:
+
+**`get_metavaults`** — Discovery tool. Fetches live MetaVault data from the API (`/v1/{network}/metavaults`), scanning a single chain or all chains in parallel. Returns curator info, TVL, live APY, share price, active positions with PT/pool details, and epoch rate history.
+
+**`model_metavault_strategy`** — Strategy modeler with two modes:
+- **Live mode**: Provide `chain` + `metavault_address` to auto-fetch the vault's live APY as `base_apy`. All other parameters (borrow rate, LTV, curator fee) can still be overridden.
+- **Manual mode**: Provide `base_apy` directly for hypothetical or pre-launch modeling.
+
+The "double loop" economics:
 
 ```
 Layer 1 (inside vault):  Deposit → PT/LP allocation → YT yield → more LP (compounding)
@@ -136,8 +146,6 @@ Layer 2 (on top):        MV shares → Morpho collateral → borrow → deposit 
 The key insight: YT compounding raises the vault's base APY, and leverage multiplies that higher base. This creates a "double-loop premium" over raw PT looping that scales with leverage.
 
 **Curator economics** are built in — the tool models fee revenue on external deposits, additional TVL created by looping, and effective ROI on the curator's own capital.
-
-The MetaVault API (`/v1/{network}/metavaults`) is not yet live. This tool uses curator-provided parameters for pre-launch modeling. When the API goes live, auto-detection will be added.
 
 ## Setup
 
@@ -207,6 +215,9 @@ Once connected, you can ask Claude things like:
 - "Find YT arbitrage opportunities where the market is mispricing yield"
 - "I have 100K veSPECTRA -- what boost do I get on this pool with a $10K deposit?"
 - "Show veSPECTRA total supply and how much I need for max boost"
+- "What MetaVaults are live right now? Show me all of them across all chains"
+- "Show me the MetaVaults on Base -- what are the APYs and who are the curators?"
+- "Model a strategy for this MetaVault on Base" (auto-fetches live APY)
 - "Model a MetaVault with 12% base APY and 3% YT compounding, 10% curator fee -- what does looping look like?"
 - "Compare MetaVault looping vs raw PT looping at 12% base APY"
 - "I'm curating a vault with $100K own capital and $1M external deposits -- what's my effective ROI?"
@@ -224,6 +235,7 @@ Spectra MCP Server (this)
   +-- api.spectra.finance/v1/{chain}/portfolio/{wallet}
   +-- api.spectra.finance/v1/{chain}/pools/{pool}/volume
   +-- api.spectra.finance/v1/{chain}/pools/{pool}/activity
+  +-- api.spectra.finance/v1/{chain}/metavaults
   +-- app.spectra.finance/api/v1/spectra/*
   +-- api.morpho.org/graphql (PT collateral markets, borrow rates)
   +-- mainnet.base.org (veSPECTRA on-chain reads via raw eth_call)
@@ -242,7 +254,7 @@ src/
   api.ts            Fetch helpers with retry, GraphQL sanitization, Morpho batch lookup,
                       veSPECTRA RPC with Promise-based dedup cache, 30s TTL pool data cache,
                       Curve get_dy() on-chain quoting, eth_getCode contract detection,
-                      API response validation at system boundary
+                      MetaVault multi-chain scanning, API response validation at system boundary
   formatters.ts     Formatting, BigInt LLTV parsing, closed-form leverage math,
                       price impact, fractional-day maturity, boost computation,
                       slim envelope helpers, Layer 3 output hints (Position Shape, LP APY breakdown,
@@ -262,7 +274,7 @@ src/
     strategy.ts     scan_opportunities (capital-aware, batch Morpho, negative-APY filtering, strategy tension)
     yt_arb.ts       scan_yt_arbitrage (YT execution mechanics, flash-mint/flash-redeem)
     ve.ts           get_ve_info
-    metavault.ts    model_metavault_strategy
+    metavault.ts    get_metavaults, model_metavault_strategy (live API + computational modeling)
 docs/
   recursive-meta-process.md    Open Emergence metaframework specification
   dissolution-conditions.md    Dissolution conditions for every structural decision
@@ -300,7 +312,7 @@ All address parameters are validated (`0x` + 40 hex chars). All API calls have a
 - **Morpho batch limit**: `first` parameter capped at `min(addresses * 3, 500)` to avoid GraphQL response limits
 - **On-chain quoting**: Curve `get_dy()` via raw `eth_call` on 8 chains with automatic fallback to math estimate on RPC failure
 - **Contract detection cache**: Permanent `Map` cache for `eth_getCode` results (contract code doesn't change)
-- **MCP error signaling**: All 20 error catch blocks return `isError: true` so agents can distinguish errors from empty results
+- **MCP error signaling**: All error catch blocks return `isError: true` so agents can distinguish errors from empty results
 - **PT address resolution**: Pool tools (`get_pool_volume`, `get_pool_activity`) accept either pool address or PT address and resolve automatically
 - **Error logging**: Catch blocks in Morpho lookups log to stderr instead of silently swallowing failures
 - **Graceful shutdown**: `server.close()` called before `process.exit()` on SIGTERM/SIGINT
@@ -332,6 +344,7 @@ This server wraps these endpoints:
 | `GET /v1/{chain}/portfolio/{wallet}` | `get_portfolio`, `simulate_portfolio_after_trade` |
 | `GET /v1/{chain}/pools/{pool}/volume` | `get_pool_volume` |
 | `GET /v1/{chain}/pools/{pool}/activity` | `get_pool_activity`, `get_address_activity` |
+| `GET /v1/{chain}/metavaults` | `get_metavaults`, `model_metavault_strategy` (live mode) |
 | `GET app.spectra.finance/api/v1/spectra/circulating-supply` | `get_protocol_stats` |
 | `GET app.spectra.finance/api/v1/spectra/total-supply` | `get_protocol_stats` |
 | `POST api.morpho.org/graphql` | `get_morpho_markets`, `get_morpho_rate`, `get_looping_strategy` (auto-detect), `scan_opportunities` (batch) |
@@ -368,7 +381,7 @@ These Spectra API endpoints are ready to be integrated. Create a new file in `sr
 
 - `GET /v1/vision/{network}?tokens=...` -- APR data for specific tokens
 - `GET /v1/watch-tower/{network}/transactions` -- Conditional order data
-- `GET /v1/{network}/metavaults` -- MetaVault data (returns 400 as of Feb 2026, not yet live). When live, wire into `model_metavault_strategy` for auto-detection of vault APY and Morpho market lookup.
+- `GET /v1/{network}/metavaults/bridge/transactions` -- MetaVault cross-chain bridge transaction data (bridged volume, in-flight amounts)
 
 ## License
 
