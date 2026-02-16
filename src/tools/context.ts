@@ -9,7 +9,7 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { API_NETWORKS, SUPPORTED_CHAINS } from "../config.js";
+import { API_NETWORKS, SUPPORTED_CHAINS, PENDLE_CHAIN_IDS, PENDLE_CHAIN_NAMES } from "../config.js";
 
 const TOPICS: Record<string, string> = {
 
@@ -99,6 +99,15 @@ Goal: "Model a curator / MetaVault strategy"
   Start with: model_metavault_strategy(...) with your parameters
   Compare against: get_looping_strategy for raw PT looping baseline
   The double-loop premium shows when MetaVault leverage beats raw PT looping.
+
+Goal: "Compare Spectra vs Pendle opportunities"
+  Start with: list_pendle_markets(chain=CHAIN) to see Pendle's yield landscape
+  Then: compare_pendle_spectra(chain=CHAIN) for head-to-head on overlapping chains
+  Then: list_pools(chain=CHAIN) for Spectra data on the same chain
+  MetaVault curators can allocate to BOTH protocols. Pendle PTs can be integrated into
+  MetaVaults alongside Spectra PTs. The comparison tools help identify which protocol
+  offers better rates for each underlying + maturity.
+  Pendle-only chains (${Object.keys(PENDLE_CHAIN_IDS).filter((k) => !SUPPORTED_CHAINS[k]).map((k) => PENDLE_CHAIN_NAMES[k]).join(", ")}) represent Spectra expansion opportunities.
 
 Three discovery tools and when to use each:
   get_best_fixed_yields — headline rates across all chains (no capital adjustment)
