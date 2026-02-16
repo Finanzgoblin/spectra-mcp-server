@@ -1783,14 +1783,37 @@ async function testGetOnchainActivity(client) {
     assert(props.lookback_hours, "has lookback_hours param", "missing");
     assert(props.address, "has address filter param", "missing");
     assert(props.type_filter && props.type_filter.enum, "has type_filter enum", "missing");
+    assert(props.pt_address, "has pt_address param", "missing");
+    assert(props.pool_address, "has pool_address param", "missing");
     const required = onchainTool.inputSchema.required || [];
-    assert(required.includes("chain") && required.includes("pool_address"),
-      "requires chain and pool_address",
+    assert(required.includes("chain"),
+      "requires chain",
+      `required: ${JSON.stringify(required)}`);
+    assert(!required.includes("pool_address"),
+      "pool_address is optional (at least one of pool_address/pt_address needed)",
+      `required: ${JSON.stringify(required)}`);
+    assert(!required.includes("pt_address"),
+      "pt_address is optional (at least one of pool_address/pt_address needed)",
       `required: ${JSON.stringify(required)}`);
     assert(!required.includes("rpc_url"),
       "rpc_url is optional",
       `required: ${JSON.stringify(required)}`);
+    // type_filter should include the new PT vault event types
+    const typeEnum = props.type_filter.enum;
+    assert(typeEnum.includes("MINT_PT_YT"), "type_filter includes MINT_PT_YT", `enum: ${JSON.stringify(typeEnum)}`);
+    assert(typeEnum.includes("REDEEM_PT"), "type_filter includes REDEEM_PT", `enum: ${JSON.stringify(typeEnum)}`);
+    assert(typeEnum.includes("YIELD_CLAIMED"), "type_filter includes YIELD_CLAIMED", `enum: ${JSON.stringify(typeEnum)}`);
   }
+
+  // Test: neither pool_address nor pt_address → error
+  const { text: noAddr } = await client.callTool("get_onchain_activity", {
+    chain: "base",
+  });
+  assert(
+    noAddr.includes("At least one of pool_address or pt_address"),
+    "error when neither pool_address nor pt_address provided",
+    `unexpected: ${noAddr.slice(0, 200)}`
+  );
 }
 
 async function testMalformedAddresses(client) {
