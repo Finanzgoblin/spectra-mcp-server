@@ -185,7 +185,7 @@ async function testToolRegistration(client) {
   const tools = await client.listTools();
   const names = tools.map((t) => t.name);
 
-  assert(tools.length === 21, "exactly 21 tools registered", `got ${tools.length}: ${names.join(", ")}`);
+  assert(tools.length === 24, "exactly 24 tools registered", `got ${tools.length}: ${names.join(", ")}`);
 
   const expected = [
     "get_pt_details",
@@ -209,6 +209,9 @@ async function testToolRegistration(client) {
     "get_metavaults",
     "model_metavault_strategy",
     "get_protocol_context",
+    "list_pendle_markets",
+    "compare_pendle_spectra",
+    "get_onchain_activity",
   ];
 
   for (const name of expected) {
@@ -1722,6 +1725,74 @@ async function testOnChainQuoting(client) {
   );
 }
 
+async function testGetOnchainActivity(client) {
+  console.log("\n--- get_onchain_activity ---");
+
+  // Test with a known Spectra pool on Base (has default RPC)
+  // Use a small lookback to keep it fast
+  if (!KNOWN_POOL) {
+    skip("get_onchain_activity: no KNOWN_POOL discovered");
+    return;
+  }
+
+  const { text } = await client.callTool("get_onchain_activity", {
+    chain: "base",
+    pool_address: KNOWN_POOL,
+    lookback_hours: 48,
+    limit: 10,
+  });
+
+  // Could be empty (no activity in 48h) or have results
+  assert(
+    text.includes("On-Chain Activity") || text.includes("No ") || text.includes("events"),
+    "on-chain activity response has expected structure",
+    `unexpected: ${text.slice(0, 200)}`
+  );
+  assert(
+    text.includes("Block Range") || text.includes("blocks"),
+    "on-chain activity mentions block range",
+    `missing block range: ${text.slice(0, 200)}`
+  );
+  assert(
+    text.includes("Chunks") || text.includes("chunks"),
+    "on-chain activity mentions chunk status",
+    `missing chunks: ${text.slice(0, 200)}`
+  );
+
+  // Test error case: chain with no RPC and no override
+  const { text: noRpc } = await client.callTool("get_onchain_activity", {
+    chain: "katana",
+    pool_address: "0x0000000000000000000000000000000000000001",
+    lookback_hours: 1,
+  });
+  assert(
+    noRpc.includes("No RPC") || noRpc.includes("rpc_url"),
+    "no-RPC chain returns helpful error",
+    `unexpected: ${noRpc.slice(0, 200)}`
+  );
+
+  // Test schema: verify rpc_url param exists
+  const tools = await client.listTools();
+  const onchainTool = tools.find((t) => t.name === "get_onchain_activity");
+  assert(onchainTool, "get_onchain_activity registered", "missing");
+  if (onchainTool) {
+    const props = onchainTool.inputSchema.properties;
+    assert(props.rpc_url, "has rpc_url param", "missing");
+    assert(props.from_block, "has from_block param", "missing");
+    assert(props.to_block, "has to_block param", "missing");
+    assert(props.lookback_hours, "has lookback_hours param", "missing");
+    assert(props.address, "has address filter param", "missing");
+    assert(props.type_filter && props.type_filter.enum, "has type_filter enum", "missing");
+    const required = onchainTool.inputSchema.required || [];
+    assert(required.includes("chain") && required.includes("pool_address"),
+      "requires chain and pool_address",
+      `required: ${JSON.stringify(required)}`);
+    assert(!required.includes("rpc_url"),
+      "rpc_url is optional",
+      `required: ${JSON.stringify(required)}`);
+  }
+}
+
 async function testMalformedAddresses(client) {
   console.log("\n--- Malformed address validation ---");
 
@@ -1870,6 +1941,9 @@ async function main() {
 
       // Smoke test other chains
       await testCrossChainSmoke(client);
+
+      // On-chain activity (eth_getLogs)
+      await testGetOnchainActivity(client);
 
       // Validation / negative tests
       await testMalformedAddresses(client);
