@@ -177,8 +177,10 @@ considering Pendle as an alternative allocation target.
 
 ## On-chain historical activity: get_onchain_activity
 
-Reads historical Curve StableSwap-NG event logs directly from the blockchain
-via chunked `eth_getLogs`. Fills the gap when the Spectra REST API has aged out
+Reads historical event logs directly from the blockchain via chunked
+`eth_getLogs`. Supports two contract types: Curve StableSwap-NG pool events
+(swaps, LP adds/removes) and Spectra PrincipalToken vault events (Mint,
+Redeem, YieldClaimed). Fills the gap when the Spectra REST API has aged out
 older transactions. Supports dynamic `rpc_url` parameter so any agent can
 supply an RPC for any chain.
 
@@ -195,14 +197,20 @@ fallback path adds complexity without value.
 
 ### Pre-computed event topic hashes
 
-Four keccak256 hashes are hardcoded for Curve StableSwap-NG events
-(TokenExchange, AddLiquidity, RemoveLiquidity, RemoveLiquidityOne). These
-were verified against real on-chain events from 4 Spectra pools on Base.
+Seven keccak256 hashes are hardcoded:
+- **Curve StableSwap-NG** (4 hashes): TokenExchange, AddLiquidity,
+  RemoveLiquidity, RemoveLiquidityOne. Verified against real on-chain events
+  from 4 Spectra pools on Base.
+- **Spectra PrincipalToken** (3 hashes): Mint, Redeem, YieldClaimed. Verified
+  by matching Redeem hash against real Katana tx
+  `0x0f314097ad1410575db525b5d5afb5290ea8ce5844270ca08f6e351a3b8be1d3`.
+  Source: `PrincipalToken.sol` from `github.com/perspectivefi/spectra-core`.
 
 Dissolution: If Curve StableSwap-NG changes its event signatures (would
 require a new pool factory version). If Spectra migrates away from Curve
-to a different AMM. If a keccak256 library is added as a dependency,
-making runtime computation preferable to hardcoded constants.
+to a different AMM. If Spectra PrincipalToken event signatures change
+(new vault implementation version). If a keccak256 library is added as a
+dependency, making runtime computation preferable to hardcoded constants.
 
 ### Chunked eth_getLogs (2000 blocks per chunk)
 
@@ -212,6 +220,27 @@ Best-effort: failed chunks are skipped, partial results returned.
 Dissolution: When all target RPCs support unlimited block ranges in
 eth_getLogs (unlikely for public RPCs). When a dedicated indexer or
 subgraph provides the same data without block-range limitations.
+
+### Dual-fetch pattern (pool_address + pt_address)
+
+Accepts both Curve pool and PT vault addresses as optional params, fetches
+events from both contracts in parallel, and merges results by block number.
+This arose because direct PT vault operations (mint/redeem) are invisible
+to pool-only scanning.
+
+Dissolution: When the Spectra REST API provides a unified transaction history
+that includes both pool-level and vault-level operations in a single endpoint.
+At that point, the on-chain dual-fetch becomes unnecessary complexity.
+
+### YieldClaimed: all-indexed event decoding
+
+YieldClaimed(address indexed owner, address indexed receiver, uint256 indexed yieldInIBT)
+has ALL three parameters indexed, meaning the data field is empty (0x) and
+the amount must be read from topics[3] rather than from data. This is an
+unusual pattern that requires special handling in the decoder.
+
+Dissolution: If the PrincipalToken contract is upgraded with a new
+YieldClaimed event that moves the amount to the data field (standard pattern).
 
 ### Token amounts without USD values
 

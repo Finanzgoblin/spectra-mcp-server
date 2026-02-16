@@ -370,6 +370,9 @@ export const ACTIVITY_TYPES: Record<string, string> = {
   SELL_PT: "Sell PT",
   AMM_ADD_LIQUIDITY: "Add Liquidity",
   AMM_REMOVE_LIQUIDITY: "Remove Liquidity",
+  MINT_PT_YT: "Mint PT+YT",
+  REDEEM_PT: "Redeem PT",
+  YIELD_CLAIMED: "Yield Claimed",
 };
 
 export function formatActivityType(type: string): string {
