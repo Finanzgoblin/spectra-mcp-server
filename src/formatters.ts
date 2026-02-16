@@ -1686,6 +1686,65 @@ export function formatMetavaultCompact(mv: SpectraMetavault, chain: string): str
   return `${mv.metadata?.title || mv.name} (${chain}) | ${mv.underlying?.symbol || "?"} | APY ${apy} | TVL ${tvl} | ${posCount} position(s) | Curator: ${mv.curator?.name || "?"} | ${mv.address}`;
 }
 
+/** Concise per-MetaVault format for the scan_opportunities output section. */
+export function formatMetavaultScanEntry(mv: SpectraMetavault, chain: string, rank: number): string {
+  const lines: string[] = [];
+  const apy = formatPct(mv.liveApy?.total || 0);
+  const tvl = formatUsd(mv.tvl?.usd || 0);
+  const underlying = mv.underlying?.symbol || "?";
+  const curator = mv.curator?.name || "Unknown";
+  const activePositions = (mv.positions || []).filter(p => p.maturity * 1000 > Date.now());
+  const posCount = activePositions.length;
+
+  // Best LP APY among active positions
+  let bestLpApy = 0;
+  for (const pos of activePositions) {
+    const lpApy = pos.pools?.[0]?.lpApy?.total || 0;
+    if (lpApy > bestLpApy) bestLpApy = lpApy;
+  }
+
+  lines.push(`  MV#${rank}  ${mv.metadata?.title || mv.name} (${mv.symbol}) -- ${chain}`);
+  lines.push(`        APY: ${apy} | TVL: ${tvl} | Underlying: ${underlying}`);
+  lines.push(`        Curator: ${curator} | ${posCount} active position(s)${bestLpApy > 0 ? ` (best LP APY: ${formatPct(bestLpApy)})` : ""}`);
+  lines.push(`        Address: ${mv.address}`);
+  lines.push(`        \u2192 model_metavault_strategy(chain="${chain}", metavault_address="${mv.address}")`);
+
+  return lines.join("\n");
+}
+
+/** Format the MetaVault alternatives section appended to scan_opportunities output. */
+export function formatMetavaultScanSection(
+  entries: Array<{ metavault: SpectraMetavault; chain: string }>,
+  compact: boolean,
+): string {
+  if (entries.length === 0) return "";
+
+  const lines: string[] = [];
+  lines.push(``);
+  lines.push(`== MetaVault Alternatives ==`);
+  lines.push(`  MetaVaults are curated vaults with auto-rollover and YT compounding.`);
+  lines.push(`  APY is live/variable (not fixed like PT). Curator manages positions.`);
+  lines.push(``);
+
+  // Sort by live APY descending
+  const sorted = [...entries].sort((a, b) => (b.metavault.liveApy?.total || 0) - (a.metavault.liveApy?.total || 0));
+
+  if (compact) {
+    for (let i = 0; i < sorted.length; i++) {
+      const { metavault, chain } = sorted[i];
+      lines.push(`MV#${i + 1} ${formatMetavaultCompact(metavault, chain)}`);
+    }
+  } else {
+    for (let i = 0; i < sorted.length; i++) {
+      const { metavault, chain } = sorted[i];
+      lines.push(formatMetavaultScanEntry(metavault, chain, i + 1));
+      if (i < sorted.length - 1) lines.push(``);
+    }
+  }
+
+  return lines.join("\n");
+}
+
 /** Format the full get_metavaults output. */
 export function formatMetavaultList(
   entries: Array<{ metavault: SpectraMetavault; chain: string }>,
