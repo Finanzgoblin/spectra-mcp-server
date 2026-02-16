@@ -2,7 +2,8 @@
  * Data formatting helpers — USD, percentages, dates, balances, pool/position/Morpho summaries.
  */
 
-import type { SpectraPt, SpectraPool, SpectraMetavault, MorphoMarket, PendleMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics } from "./types.js";
+import type { SpectraPt, SpectraPool, SpectraMetavault, MorphoMarket, PendleMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavaultBridgeTx } from "./types.js";
+import { SUPPORTED_CHAINS } from "./config.js";
 
 // =============================================================================
 // Primitive Formatters
@@ -1539,6 +1540,14 @@ export function formatYtArbitrageResults(
 // =============================================================================
 
 /** Format a single MetaVault for detailed output. */
+/** Map chain ID → human-readable name for bridge display. */
+function chainIdToName(id: number): string {
+  for (const info of Object.values(SUPPORTED_CHAINS)) {
+    if (info.id === id) return info.name;
+  }
+  return `Chain ${id}`;
+}
+
 export function formatMetavaultSummary(mv: SpectraMetavault, chain: string): string {
   const lines: string[] = [];
 
@@ -1555,6 +1564,7 @@ export function formatMetavaultSummary(mv: SpectraMetavault, chain: string): str
   lines.push(`  Underlying: ${mv.underlying?.symbol || "?"} (${mv.underlying?.address || "?"})`);
 
   // TVL & APY
+  const decimals = mv.underlying?.decimals || 6;
   lines.push(`  TVL: ${formatUsd(mv.tvl?.usd || 0)} (${(mv.tvl?.underlying || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })} ${mv.underlying?.symbol || "tokens"})`);
   lines.push(`  Live APY: ${formatPct(mv.liveApy?.total || 0)}`);
 
@@ -1579,14 +1589,89 @@ export function formatMetavaultSummary(mv: SpectraMetavault, chain: string): str
     }
   }
 
-  // Epochs (show recent rate history if available)
-  if (mv.epochs && mv.epochs.length > 0) {
-    const recent = mv.epochs.slice(-3); // last 3 epochs
+  // Deposit/withdrawal flow analysis from epochs
+  if (mv.epochs && mv.epochs.length >= 2) {
+    const underlyingPrice = mv.underlying?.price?.usd || 0;
+    const divisor = Math.pow(10, decimals);
+
     lines.push(``);
-    lines.push(`  Recent Epochs (${mv.epochs.length} total, showing last ${recent.length}):`);
-    for (const ep of recent) {
-      const date = formatDate(ep.timestamp);
-      lines.push(`    ${date} -- rate: ${ep.rate}, assets: ${ep.assets}`);
+    lines.push(`  Vault Flows (from epoch snapshots, ${mv.epochs.length} epochs):`);
+
+    // Sort epochs chronologically
+    const sorted = [...mv.epochs].sort((a, b) => a.timestamp - b.timestamp);
+
+    // Show all epoch-to-epoch flows
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1];
+      const curr = sorted[i];
+      const prevAssets = Number(prev.assets) / divisor;
+      const currAssets = Number(curr.assets) / divisor;
+      const prevRate = Number(prev.rate) / 1e6;
+      const currRate = Number(curr.rate) / 1e6;
+
+      // Asset delta includes both deposits/withdrawals AND yield accrual.
+      // Approximate yield = prevAssets * (currRate - prevRate) / prevRate
+      // Net deposits ≈ assetDelta - yieldAccrual
+      const assetDelta = currAssets - prevAssets;
+      const yieldAccrual = prevAssets * (currRate - prevRate) / prevRate;
+      const netDeposits = assetDelta - yieldAccrual;
+
+      const deltaUsd = netDeposits * underlyingPrice;
+      const sign = deltaUsd >= 0 ? "+" : "";
+      const arrow = deltaUsd >= 0 ? "IN" : "OUT";
+
+      lines.push(`    ${formatDate(prev.timestamp)} → ${formatDate(curr.timestamp)} | ${arrow} ${sign}${formatUsd(Math.abs(deltaUsd))} net | TVL ${formatUsd(currAssets * underlyingPrice)} | Rate ${currRate.toFixed(6)}`);
+    }
+
+    // Summary: total net flow
+    const firstAssets = Number(sorted[0].assets) / divisor;
+    const lastAssets = Number(sorted[sorted.length - 1].assets) / divisor;
+    const firstRate = Number(sorted[0].rate) / 1e6;
+    const lastRate = Number(sorted[sorted.length - 1].rate) / 1e6;
+    const totalYield = firstAssets * (lastRate - firstRate) / firstRate;
+    const totalAssetDelta = lastAssets - firstAssets;
+    const totalNetDeposits = totalAssetDelta - totalYield;
+    const totalNetUsd = totalNetDeposits * underlyingPrice;
+    const totalSign = totalNetUsd >= 0 ? "+" : "";
+
+    lines.push(`    ──`);
+    lines.push(`    Lifetime net flow: ${totalSign}${formatUsd(Math.abs(totalNetUsd))} ${totalNetUsd >= 0 ? "(net inflows)" : "(net outflows)"}`);
+    lines.push(`    Yield accrued: ~${formatUsd(Math.abs(totalYield * underlyingPrice))} (rate ${firstRate.toFixed(6)} → ${lastRate.toFixed(6)})`);
+  }
+
+  // Bridge transactions
+  const bridgeTxs = mv.bridge?.transactions;
+  if (bridgeTxs && bridgeTxs.length > 0) {
+    lines.push(``);
+    lines.push(`  Bridge Transactions (${bridgeTxs.length}):`);
+
+    // Sort by timestamp descending (most recent first)
+    const sorted = [...bridgeTxs].sort((a, b) => b.timestamp - a.timestamp);
+    for (const tx of sorted) {
+      const date = formatDate(tx.timestamp);
+      const src = chainIdToName(tx.srcChainId);
+      const dst = chainIdToName(tx.dstChainId);
+      const statusLabel = tx.status === "COMPLETED" ? "" : ` [${tx.status}]`;
+      lines.push(`    ${date} | ${src} → ${dst} | ${formatUsd(tx.amountUsd)}${statusLabel} | ${tx.hash.slice(0, 10)}...`);
+    }
+
+    // Summarize by direction
+    const dirMap = new Map<string, { count: number; totalUsd: number }>();
+    for (const tx of bridgeTxs) {
+      const key = `${chainIdToName(tx.srcChainId)} → ${chainIdToName(tx.dstChainId)}`;
+      const entry = dirMap.get(key) || { count: 0, totalUsd: 0 };
+      entry.count++;
+      entry.totalUsd += tx.amountUsd || 0;
+      dirMap.set(key, entry);
+    }
+    lines.push(`    ──`);
+    for (const [dir, { count, totalUsd }] of dirMap) {
+      lines.push(`    ${dir}: ${count} txn(s), ${formatUsd(totalUsd)} total`);
+    }
+
+    const pending = mv.bridge?.totalPendingUsd || 0;
+    if (pending > 0) {
+      lines.push(`    Pending: ${formatUsd(pending)}`);
     }
   }
 

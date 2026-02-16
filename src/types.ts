@@ -280,6 +280,30 @@ export interface SpectraMetavaultEpoch {
   timestamp: number;
   rate: string;
   assets: string;
+  rewardsApy?: {
+    total?: number;
+    details?: {
+      rewards?: Record<string, number>;
+      boostedRewards?: Record<string, { min: number; max: number }>;
+    };
+    boostedTotal?: number;
+  };
+}
+
+export interface SpectraMetavaultBridgeTx {
+  status: string;
+  hash: string;
+  type: string;
+  srcChainId: number;
+  dstChainId: number;
+  timestamp: number;
+  amount: string;
+  amountUsd: number;
+}
+
+export interface SpectraMetavaultBridge {
+  transactions: SpectraMetavaultBridgeTx[];
+  totalPendingUsd: number;
 }
 
 export interface SpectraMetavault {
@@ -305,6 +329,7 @@ export interface SpectraMetavault {
   };
   positions: SpectraMetavaultPosition[];
   epochs: SpectraMetavaultEpoch[];
+  bridge?: SpectraMetavaultBridge;
   tvl: { underlying: number; usd: number };
   liveApy: { total: number };
   exchangeRate: string;
