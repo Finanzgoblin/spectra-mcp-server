@@ -2,7 +2,7 @@
 
 Makes [Spectra Finance](https://spectra.finance) discoverable and usable by AI agents via the [Model Context Protocol](https://modelcontextprotocol.io).
 
-21 tools · 10 chains · read-only · on-chain Curve quoting · zero web3 library dependencies
+24 tools · 10 chains · read-only · on-chain Curve quoting · historical eth_getLogs · zero web3 library dependencies
 
 ## What This Does
 
@@ -23,6 +23,9 @@ Any AI agent (Claude, GPT, open-source) that supports MCP can now:
 - **Model** MetaVault "double loop" strategies for curators — vault compounding + Morpho leverage with curator economics, auto-populated from live API data or manual parameters
 - **Query** Morpho lending markets for PT collateral opportunities
 - **Query** protocol stats, tokenomics, and governance data
+- **Compare** Spectra vs Pendle yield opportunities side-by-side on overlapping chains
+- **Browse** Pendle markets across all Pendle-supported chains (including Pendle-only chains)
+- **Recover** historical on-chain pool activity via `eth_getLogs` when API data has aged out — with dynamic RPC URL support for any chain
 - **Learn** protocol mechanics on-demand via `get_protocol_context` (PT/YT identity, Router batching, minting)
 
 The agent doesn't need to understand PT/YT mechanics -- it just calls `scan_opportunities` with its capital size and gets ranked, actionable data. If it needs to understand *why* something works that way, it calls `get_protocol_context`.
@@ -103,6 +106,9 @@ This was validated: a subagent spawned with zero priming correctly identified a 
 | `get_ve_info` | Live veSPECTRA data from Base chain (total supply via on-chain read) + boost calculator with per-pool multipliers. |
 | `get_metavaults` | List live MetaVaults across all chains (or a specific chain). Returns curator info, TVL, live APY, share price, active positions, and epoch history. |
 | `model_metavault_strategy` | MetaVault "double loop" strategy modeler for curators. Live mode (chain + metavault_address) auto-fetches APY from API; manual mode accepts base_apy directly. Models curator economics (fee revenue, TVL creation, effective ROI). |
+| `list_pendle_markets` | List active Pendle markets on a given chain or all Pendle chains. Supports Pendle-only chains (Mantle, Berachain, HyperEVM, Corn). Supports `compact` mode. |
+| `compare_pendle_spectra` | Side-by-side Pendle vs Spectra yield comparison on overlapping chains (mainnet, base, arbitrum, optimism, sonic, bsc). Auto-matches by underlying asset. |
+| `get_onchain_activity` | Historical pool activity via `eth_getLogs` — recovers data when the API has aged out transactions. Supports dynamic `rpc_url` parameter for any chain. Decodes Curve StableSwap-NG events (swaps, LP adds/removes). |
 | `get_protocol_context` | Returns protocol mechanics reference (PT/YT identity, Router batching, minting). Callable on-demand instead of always in context. |
 
 ## Supported Chains
@@ -221,6 +227,10 @@ Once connected, you can ask Claude things like:
 - "Model a MetaVault with 12% base APY and 3% YT compounding, 10% curator fee -- what does looping look like?"
 - "Compare MetaVault looping vs raw PT looping at 12% base APY"
 - "I'm curating a vault with $100K own capital and $1M external deposits -- what's my effective ROI?"
+- "Compare Spectra vs Pendle yields on Base -- which protocol offers better rates for USDC?"
+- "Show me all active Pendle markets on Arbitrum sorted by TVL"
+- "This address traded on Katana weeks ago but get_pool_activity shows nothing -- pull on-chain logs for the last 7 days"
+- "Fetch historical activity for this pool using my RPC URL: https://rpc.katana.network"
 
 ## Architecture
 
@@ -238,9 +248,11 @@ Spectra MCP Server (this)
   +-- api.spectra.finance/v1/{chain}/metavaults
   +-- app.spectra.finance/api/v1/spectra/*
   +-- api.morpho.org/graphql (PT collateral markets, borrow rates)
+  +-- api-v2.pendle.finance/core/* (Pendle market data for cross-protocol comparison)
   +-- mainnet.base.org (veSPECTRA on-chain reads via raw eth_call)
   +-- Chain RPCs: eth_call for Curve get_dy() quotes, eth_getCode for contract detection
   |   (mainnet, base, arbitrum, optimism, avalanche, sonic, bsc, flare)
+  +-- Chain RPCs: eth_getLogs for historical pool activity (any chain via dynamic rpc_url)
 ```
 
 Modular TypeScript server. Read-only — queries Spectra's existing API, Morpho's GraphQL API, chain RPCs for on-chain Curve `get_dy()` quotes and contract detection, and Base RPC for veSPECTRA data. No wallet, no transactions, no keys, no web3 libraries needed.
@@ -249,15 +261,18 @@ Modular TypeScript server. Read-only — queries Spectra's existing API, Morpho'
 src/
   index.ts          Entry point, tool registration, Layer 1 resources (spectra-overview,
                       curator-strategy-guide), main(), graceful shutdown
-  config.ts         Constants, chain config, Zod schemas, protocol parameters, veSPECTRA constants
+  config.ts         Constants, chain config, Zod schemas, protocol parameters, veSPECTRA constants,
+                      block time constants per chain, RPC URL resolution (hardcoded + dynamic override)
   types.ts          TypeScript interfaces (SpectraPt, MorphoMarket, ScanOpportunity, etc.)
   api.ts            Fetch helpers with retry, GraphQL sanitization, Morpho batch lookup,
                       veSPECTRA RPC with Promise-based dedup cache, 30s TTL pool data cache,
                       Curve get_dy() on-chain quoting, eth_getCode contract detection,
-                      MetaVault multi-chain scanning, API response validation at system boundary
+                      MetaVault multi-chain scanning, API response validation at system boundary,
+                      chunked eth_getLogs with retry for historical event log fetching
   formatters.ts     Formatting, BigInt LLTV parsing, closed-form leverage math,
                       price impact, fractional-day maturity, boost computation,
-                      slim envelope helpers, Layer 3 output hints (Position Shape, LP APY breakdown,
+                      slim envelope helpers, token amount formatting (BigInt → human-readable),
+                      Layer 3 output hints (Position Shape, LP APY breakdown,
                       volume signals, Morpho market hints, portfolio signals, cycle detection)
   tools/            Layer 2: each tool description teaches domain-specific mechanics
     context.ts      get_protocol_context (Layer 1 protocol mechanics, callable on-demand)
@@ -275,6 +290,8 @@ src/
     yt_arb.ts       scan_yt_arbitrage (YT execution mechanics, flash-mint/flash-redeem)
     ve.ts           get_ve_info
     metavault.ts    get_metavaults, model_metavault_strategy (live API + computational modeling)
+    pendle.ts       list_pendle_markets, compare_pendle_spectra (cross-protocol yield comparison)
+    onchain.ts      get_onchain_activity (historical eth_getLogs, Curve event decoding, dynamic RPC)
 docs/
   recursive-meta-process.md    Open Emergence metaframework specification
   dissolution-conditions.md    Dissolution conditions for every structural decision
@@ -311,6 +328,7 @@ All address parameters are validated (`0x` + 40 hex chars). All API calls have a
 - **veSPECTRA cache**: Promise-based deduplication prevents duplicate RPC calls when multiple tools run concurrently (5-minute TTL)
 - **Morpho batch limit**: `first` parameter capped at `min(addresses * 3, 500)` to avoid GraphQL response limits
 - **On-chain quoting**: Curve `get_dy()` via raw `eth_call` on 8 chains with automatic fallback to math estimate on RPC failure
+- **Historical event logs**: Chunked `eth_getLogs` (2000 blocks/chunk) with per-chunk retry — failed chunks are skipped so partial results are still returned. Dynamic `rpc_url` parameter enables any chain without hardcoded RPCs
 - **Contract detection cache**: Permanent `Map` cache for `eth_getCode` results (contract code doesn't change)
 - **MCP error signaling**: All error catch blocks return `isError: true` so agents can distinguish errors from empty results
 - **PT address resolution**: Pool tools (`get_pool_volume`, `get_pool_activity`) accept either pool address or PT address and resolve automatically
@@ -322,14 +340,14 @@ All address parameters are validated (`0x` + 40 hex chars). All API calls have a
 From a source checkout:
 
 ```bash
-# Full suite (322 tests, requires network)
+# Full suite (363 tests, requires network)
 npm test
 
 # Schema/registration only (98 tests, no network)
 npm run test:offline
 ```
 
-322 of 322 tests pass (0 failures, 0 skipped).
+363 of 363 tests pass (0 failures, 0 skipped).
 
 The test suite dynamically discovers pool and PT addresses from the live API, so tests won't go stale when pools mature or are deprecated. Includes malformed-address negative tests, on-chain Curve `get_dy()` quoting validation, cross-pool address scanning, and address isolation mode tests.
 
@@ -351,8 +369,36 @@ This server wraps these endpoints:
 | `POST mainnet.base.org` (eth_call) | `get_ve_info`, `scan_opportunities`, `scan_yt_arbitrage`, `compare_yield` (veSPECTRA total supply) |
 | `POST {chain RPC}` (eth_call: `get_dy`) | `quote_trade`, `simulate_portfolio_after_trade` (Curve StableSwap-NG on-chain quotes) |
 | `POST {chain RPC}` (eth_call: `eth_getCode`) | `get_pool_activity` (contract vs EOA detection in address mode) |
+| `POST {chain RPC}` (eth_getLogs) | `get_onchain_activity` (historical Curve pool events — supports dynamic `rpc_url` override) |
+| `GET api-v2.pendle.finance/core/v2/{chainId}/markets/active` | `list_pendle_markets` (Pendle market discovery) |
+| `GET api-v2.pendle.finance/core/v2/{chainId}/markets/active` | `compare_pendle_spectra` (cross-protocol comparison — fetches both Pendle and Spectra data) |
 
 Note: `{chain}` uses the slug `mainnet` for Ethereum (the alias `ethereum` is accepted by the server and mapped automatically).
+
+## Pendle Cross-Protocol Comparison
+
+Two tools enable cross-protocol yield comparison between Spectra and Pendle:
+
+**`list_pendle_markets`** — Lists active Pendle markets on a given chain or scans all Pendle-supported chains. Pendle-supported chains include both overlapping chains (mainnet, base, arbitrum, optimism, sonic, bsc) and Pendle-only chains (Mantle, Berachain, HyperEVM, Corn).
+
+**`compare_pendle_spectra`** — Side-by-side comparison on overlapping chains. Auto-matches markets by underlying asset to produce head-to-head implied APY, LP APY, TVL, and liquidity comparisons. Essential for MetaVault curators who can allocate to either protocol.
+
+## On-Chain Historical Activity
+
+The Spectra REST API (`/v1/{network}/pools/{pool}/activity`) only retains a limited time window of recent transactions. When investigating addresses or pools with older activity, `get_onchain_activity` reads historical event logs directly from the blockchain via `eth_getLogs`.
+
+Key features:
+- **Dynamic RPC URL**: Agent can pass any `rpc_url` parameter — works for chains without hardcoded RPCs (Katana, Monad)
+- **Chunked fetching**: 2000 blocks per chunk with per-chunk retry, best-effort (partial results on RPC issues)
+- **Curve event decoding**: Decodes TokenExchange, AddLiquidity, RemoveLiquidity, RemoveLiquidityOne events from Curve StableSwap-NG pools
+- **Block range control**: Explicit `from_block`/`to_block` or `lookback_hours` (default 24h, max 720h/30 days)
+- **Address filtering**: Filter events by a specific address
+- **No USD values**: On-chain logs don't carry prices — token amounts are shown in human-readable form. Cross-reference with `get_pt_details` for price context
+
+Composability with existing tools:
+```
+Agent flow: get_pool_activity → empty? → get_onchain_activity(rpc_url=...) → decoded events
+```
 
 ## Extending
 

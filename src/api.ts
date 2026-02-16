@@ -15,6 +15,7 @@ import {
   resolveNetwork,
   VE_SPECTRA,
   CHAIN_RPC_URLS,
+  MAX_LOG_BLOCK_RANGE,
 } from "./config.js";
 import type { MorphoMarket, SpectraPt, SpectraPool, SpectraMetavault, PendleMarket, RawPoolOpportunity, ChainScanResult } from "./types.js";
 
@@ -873,4 +874,163 @@ export async function fetchAddressType(
   } catch {
     return "unknown"; // Best-effort — don't block the caller
   }
+}
+
+// =============================================================================
+// On-Chain Event Log Fetching (eth_getLogs)
+// =============================================================================
+
+/**
+ * Raw event log entry from eth_getLogs.
+ */
+export interface RawEventLog {
+  address: string;
+  topics: string[];
+  data: string;
+  blockNumber: string;       // hex
+  transactionHash: string;
+  logIndex: string;           // hex
+  blockHash: string;
+  transactionIndex: string;   // hex
+  removed: boolean;
+}
+
+/**
+ * Fetch the current block number from an RPC endpoint.
+ * Returns the block number as a regular number, or null on failure.
+ * Best-effort — errors are swallowed.
+ */
+export async function fetchBlockNumber(rpcUrl: string): Promise<number | null> {
+  try {
+    const res = await fetchWithRetry(() =>
+      fetch(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "eth_blockNumber",
+          params: [],
+        }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      })
+    );
+    if (!res.ok) return null;
+    let json: any;
+    try { json = await res.json(); } catch { return null; }
+    if (json.error) return null;
+    const hex: string = json.result;
+    if (!hex || hex === "0x") return null;
+    return Number(BigInt(hex));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch the timestamp of a specific block via eth_getBlockByNumber.
+ * Returns Unix timestamp in seconds, or null on failure.
+ * Best-effort — errors are swallowed.
+ */
+export async function fetchBlockTimestamp(rpcUrl: string, blockNumber: number): Promise<number | null> {
+  try {
+    const res = await fetchWithRetry(() =>
+      fetch(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "eth_getBlockByNumber",
+          params: ["0x" + blockNumber.toString(16), false],
+        }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      })
+    );
+    if (!res.ok) return null;
+    let json: any;
+    try { json = await res.json(); } catch { return null; }
+    if (json.error || !json.result) return null;
+    const hex: string = json.result.timestamp;
+    if (!hex) return null;
+    return Number(BigInt(hex));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch event logs from an RPC endpoint using eth_getLogs.
+ * Automatically chunks large block ranges to avoid public RPC limits.
+ * Returns all matching logs sorted by block number ascending.
+ * Best-effort — skips failed chunks and continues with the rest.
+ *
+ * @param rpcUrl - RPC endpoint URL
+ * @param address - Contract address to filter logs for
+ * @param topics - Event topic filters (topic0 = event signature hash)
+ * @param fromBlock - Start block number
+ * @param toBlock - End block number
+ * @param maxBlocksPerChunk - Max blocks per eth_getLogs request (default MAX_LOG_BLOCK_RANGE)
+ * @returns Tuple of [logs, chunksSucceeded, chunksTotal]
+ */
+export async function fetchLogs(
+  rpcUrl: string,
+  address: string,
+  topics: (string | string[] | null)[],
+  fromBlock: number,
+  toBlock: number,
+  maxBlocksPerChunk: number = MAX_LOG_BLOCK_RANGE,
+): Promise<[RawEventLog[], number, number]> {
+  const allLogs: RawEventLog[] = [];
+  let chunksTotal = 0;
+  let chunksSucceeded = 0;
+
+  for (let start = fromBlock; start <= toBlock; start += maxBlocksPerChunk) {
+    const end = Math.min(start + maxBlocksPerChunk - 1, toBlock);
+    chunksTotal++;
+    try {
+      const res = await fetchWithRetry(() =>
+        fetch(rpcUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "eth_getLogs",
+            params: [{
+              address,
+              topics,
+              fromBlock: "0x" + start.toString(16),
+              toBlock: "0x" + end.toString(16),
+            }],
+          }),
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        })
+      );
+
+      if (!res.ok) continue;
+
+      let json: any;
+      try { json = await res.json(); } catch { continue; }
+      if (json.error) {
+        console.error(`eth_getLogs error for blocks ${start}-${end}: ${json.error.message || JSON.stringify(json.error)}`);
+        continue;
+      }
+
+      const logs: RawEventLog[] = json.result || [];
+      allLogs.push(...logs);
+      chunksSucceeded++;
+    } catch (err) {
+      console.error(`eth_getLogs fetch failed for blocks ${start}-${end}:`, err instanceof Error ? err.message : err);
+    }
+  }
+
+  // Sort by block number ascending, then log index
+  allLogs.sort((a, b) => {
+    const blockDiff = Number(BigInt(a.blockNumber)) - Number(BigInt(b.blockNumber));
+    if (blockDiff !== 0) return blockDiff;
+    return Number(BigInt(a.logIndex)) - Number(BigInt(b.logIndex));
+  });
+
+  return [allLogs, chunksSucceeded, chunksTotal];
 }
