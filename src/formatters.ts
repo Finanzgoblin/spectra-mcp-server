@@ -1637,6 +1637,26 @@ export function formatMetavaultList(
   lines.push(`  • Compare yields: scan_opportunities(capital_usd=AMOUNT) to see MetaVault APYs in context of all opportunities`);
   lines.push(`  • Check looping: get_looping_strategy(chain=CHAIN, pt_address=PT_ADDRESS) for any MetaVault position's PT`);
 
+  // Curator activity hints — teach the Router mechanic
+  const curators = new Map<string, { name: string; address: string }>();
+  for (const { metavault } of entries) {
+    const addr = metavault.curator?.addresses?.[0];
+    if (addr && !curators.has(addr.toLowerCase())) {
+      curators.set(addr.toLowerCase(), {
+        name: metavault.curator?.name || "Unknown",
+        address: addr,
+      });
+    }
+  }
+  if (curators.size > 0) {
+    lines.push(`  • Curator pool activity (LP adds/removes, rebalancing):`);
+    for (const { name, address } of curators.values()) {
+      lines.push(`      ${name}: get_address_activity(address="${address}")`);
+    }
+    lines.push(`    MetaVault contracts operate via the Spectra Router, so vault/MetaVault`);
+    lines.push(`    addresses won't appear in pool activity. The curator EOA is tx.origin.`);
+  }
+
   return lines.join("\n");
 }
 
