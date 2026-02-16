@@ -453,11 +453,13 @@ Use this tool for historical data beyond the API's retention window.`,
 
         effectiveTo = to_block !== undefined ? to_block : currentBlock;
 
-        // Cap range
+        // Cap range — allow 5x more blocks when address-filtering (RPC does the filtering,
+        // so we transfer far fewer results even across large ranges)
+        const maxRange = address ? MAX_TOTAL_BLOCK_RANGE * 5 : MAX_TOTAL_BLOCK_RANGE;
         const requestedRange = effectiveTo - effectiveFrom;
         let rangeCapped = false;
-        if (requestedRange > MAX_TOTAL_BLOCK_RANGE) {
-          effectiveFrom = effectiveTo - MAX_TOTAL_BLOCK_RANGE;
+        if (requestedRange > maxRange) {
+          effectiveFrom = effectiveTo - maxRange;
           rangeCapped = true;
         }
 
@@ -466,15 +468,29 @@ Use this tool for historical data beyond the API's retention window.`,
         // --- Fetch event logs (dual-fetch: Curve pool + PT vault) ---
         type LogResult = [any[], number, number]; // [logs, chunksOk, chunksTotal]
 
+        // When an address is provided, add it as topic1 filter for RPC-level filtering.
+        // All Curve events (TokenExchange, AddLiquidity, RemoveLiquidity, RemoveLiquidityOne)
+        // and all PT vault events (Mint, Redeem, YieldClaimed) have the user address as
+        // the first indexed parameter (topics[1]). Padding to 32 bytes for eth_getLogs.
+        const addressTopic = address
+          ? "0x" + "0".repeat(24) + address.slice(2).toLowerCase()
+          : null;
+
         const fetches: Promise<LogResult>[] = [];
         const fetchLabels: string[] = [];
 
         if (pool_address) {
-          fetches.push(fetchLogs(rpcUrl, pool_address, [ALL_CURVE_TOPICS], effectiveFrom, effectiveTo));
+          const topics: (string | string[] | null)[] = addressTopic
+            ? [ALL_CURVE_TOPICS, addressTopic]
+            : [ALL_CURVE_TOPICS];
+          fetches.push(fetchLogs(rpcUrl, pool_address, topics, effectiveFrom, effectiveTo));
           fetchLabels.push(`pool:${pool_address.slice(0, 10)}...`);
         }
         if (pt_address) {
-          fetches.push(fetchLogs(rpcUrl, pt_address, [ALL_PT_TOPICS], effectiveFrom, effectiveTo));
+          const topics: (string | string[] | null)[] = addressTopic
+            ? [ALL_PT_TOPICS, addressTopic]
+            : [ALL_PT_TOPICS];
+          fetches.push(fetchLogs(rpcUrl, pt_address, topics, effectiveFrom, effectiveTo));
           fetchLabels.push(`pt:${pt_address.slice(0, 10)}...`);
         }
 
@@ -586,7 +602,7 @@ Use this tool for historical data beyond the API's retention window.`,
           ...(addressFilter ? [`  Address: ${address}`] : []),
           `  Block Range: ${effectiveFrom.toLocaleString()} -> ${effectiveTo.toLocaleString()} (${totalRange.toLocaleString()} blocks)`,
           `  Time Range: ${timeRange}`,
-          ...(rangeCapped ? [`  ⚠ Block range was capped to ${MAX_TOTAL_BLOCK_RANGE.toLocaleString()} blocks (requested ${requestedRange.toLocaleString()}). Use explicit from_block/to_block for deeper history.`] : []),
+          ...(rangeCapped ? [`  ⚠ Block range was capped to ${maxRange.toLocaleString()} blocks (requested ${requestedRange.toLocaleString()}). Use explicit from_block/to_block for deeper history.`] : []),
           `  Chunks: ${totalChunksOk}/${totalChunksTotal} succeeded`,
           `  Total Events: ${filtered.length} (decoded from ${allRawLogs.length} raw logs)`,
           `  Filter: ${type_filter === "all" ? "All types" : formatActivityType(type_filter)}`,
