@@ -173,8 +173,22 @@ export function formatPoolSummary(pt: SpectraPt, pool: SpectraPool, chain: strin
     lines.push(`  Underlying Address: ${pt.underlying.address}`);
   }
   lines.push(
-    `  IBT: ${pt.ibt?.symbol || "?"} -- Base APR: ${formatPct(pt.ibt?.apr?.total || 0)}`,
+    `  IBT: ${pt.ibt?.symbol || "?"} -- APR: ${formatPct(pt.ibt?.apr?.total || 0)}`,
   );
+
+  // IBT APR breakdown — surface composition so agents can reason about yield sources
+  const ibtDetails = pt.ibt?.apr?.details;
+  if (ibtDetails) {
+    if (ibtDetails.base != null) {
+      lines.push(`    +-- Base: ${formatPct(ibtDetails.base)}`);
+    }
+    if (ibtDetails.rewards && Object.keys(ibtDetails.rewards).length > 0) {
+      for (const [token, apy] of Object.entries(ibtDetails.rewards)) {
+        lines.push(`    +-- ${token}: ${formatPct(apy)}`);
+      }
+    }
+  }
+
   if (pt.ibt?.address) {
     lines.push(`  IBT Address: ${pt.ibt.address}`);
   }
@@ -260,6 +274,20 @@ export function formatPositionSummary(pos: SpectraPt, chain: string): PositionRe
       }
     }
     lines.push(`    IBT Variable APR: ${formatPct(pos.ibt?.apr?.total || 0)}`);
+    // IBT APR breakdown — surface composition
+    const ibtDet = pos.ibt?.apr?.details;
+    if (ibtDet) {
+      const ibtParts: string[] = [];
+      if (ibtDet.base != null) ibtParts.push(`base ${formatPct(ibtDet.base)}`);
+      if (ibtDet.rewards) {
+        for (const [token, apy] of Object.entries(ibtDet.rewards)) {
+          ibtParts.push(`${token} ${formatPct(apy)}`);
+        }
+      }
+      if (ibtParts.length > 0) {
+        lines.push(`      (${ibtParts.join(" + ")})`);
+      }
+    }
   }
 
   if (expired) {
@@ -1630,6 +1658,28 @@ export function formatMetavaultSummary(mv: SpectraMetavault, chain: string): str
       const lpApyStr = pool?.lpApy?.total ? ` | LP APY ${formatPct(pool.lpApy.total)}` : "";
       lines.push(`    ${pos.symbol} -- ${formatDate(pos.maturity)} (${matLabel}) -- TVL ${formatUsd(pos.tvl?.usd || 0)}${ptApyStr}${lpApyStr}`);
       lines.push(`      PT: ${pos.address}${pool ? ` | Pool: ${pool.address}` : ""}`);
+
+      // LP APY breakdown per position — surface composition
+      const lpDetails = pool?.lpApy?.details;
+      if (lpDetails) {
+        const parts: string[] = [];
+        if (lpDetails.fees) parts.push(`fees ${formatPct(lpDetails.fees)}`);
+        if (lpDetails.pt) parts.push(`PT ${formatPct(lpDetails.pt)}`);
+        if (lpDetails.ibt) parts.push(`IBT ${formatPct(lpDetails.ibt)}`);
+        if (lpDetails.rewards) {
+          for (const [token, apy] of Object.entries(lpDetails.rewards)) {
+            parts.push(`${token} ${formatPct(apy)}`);
+          }
+        }
+        if (lpDetails.boostedRewards) {
+          for (const [token, range] of Object.entries(lpDetails.boostedRewards)) {
+            parts.push(`${token} gauge ${formatPct(range.min)}-${formatPct(range.max)}`);
+          }
+        }
+        if (parts.length > 0) {
+          lines.push(`      LP: ${parts.join(" + ")}`);
+        }
+      }
     }
   }
 
