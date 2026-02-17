@@ -331,7 +331,16 @@ export interface SpectraMetavault {
   epochs: SpectraMetavaultEpoch[];
   bridge?: SpectraMetavaultBridge;
   tvl: { underlying: number; usd: number };
-  liveApy: { total: number };
+  liveApy: {
+    total: number;
+    boostedTotal?: number;
+    details?: {
+      base?: number;                                              // base LP yield (fees + PT + IBT)
+      ibtRewards?: Record<string, number>;                        // IBT-level external incentives (e.g. { "KAT Base": 34.26 })
+      mvRewards?: Record<string, number>;                         // MetaVault-specific incentives (e.g. { KAT: 106.61 })
+      boostedRewards?: Record<string, { min: number; max: number }>; // SPECTRA gauge with veSPECTRA boost range
+    };
+  };
   exchangeRate: string;
   price: { underlying: number; usd: number };
 }
