@@ -39,7 +39,13 @@ export interface SpectraIbt {
   name?: string;
   protocol?: string;
   decimals?: number;
-  apr?: { total?: number };
+  apr?: {
+    total?: number;
+    details?: {
+      base?: number;                          // organic yield (e.g. lending rate)
+      rewards?: Record<string, number>;       // external incentives (e.g. { "KAT Base": 35, "KAT App Rewards": 5.94 })
+    };
+  };
 }
 
 export interface SpectraUnderlying {
@@ -272,7 +278,7 @@ export interface SpectraMetavaultPosition {
   pools: Array<{
     address: string;
     ptApy: number;
-    lpApy: { total: number };
+    lpApy: SpectraPoolLpApy;
   }>;
 }
 
@@ -285,6 +291,7 @@ export interface SpectraMetavaultEpoch {
     details?: {
       rewards?: Record<string, number>;
       boostedRewards?: Record<string, { min: number; max: number }>;
+      ibtRewards?: Record<string, number>;    // IBT-level external incentives (e.g. { "KAT Base": 22.63 })
     };
     boostedTotal?: number;
   };
