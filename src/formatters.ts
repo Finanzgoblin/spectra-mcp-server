@@ -557,7 +557,11 @@ export function detectActivityCycles(
 
 /**
  * Format cycle detection results as output lines for get_pool_activity.
- * Uses "could be" / "could indicate" language per Open Emergence principles.
+ *
+ * Open Emergence design: present competing interpretation branches with equal
+ * weight.  The agent (or user) must bring external evidence to collapse them.
+ * A small repetition count is explicitly flagged as statistically insufficient
+ * so that downstream reasoning cannot treat it as a confirmed pattern.
  */
 export function formatCycleAnalysis(
   cycle: ActivityCycleResult,
@@ -576,27 +580,51 @@ export function formatCycleAnalysis(
     lines.push(`    Uncovered: ${cycle.uncoveredCount} txn(s) outside detected pattern`);
   }
 
-  // Interpretive hints — "could be" language
+  // Statistical confidence boundary
+  if (cycle.count <= 5) {
+    lines.push(`    ⚠ ${cycle.count} repetitions observed. Insufficient to distinguish systematic strategy from coincidental sequence. Do not extrapolate.`);
+  }
+
+  // -------------------------------------------------------
+  // Competing interpretation branches — presented with equal
+  // weight.  These branches predict DIFFERENT future behavior.
+  // The agent must not collapse them without external evidence.
+  // -------------------------------------------------------
   const p = cycle.pattern;
   const hasAdd = p.includes("AMM_ADD_LIQUIDITY");
   const hasRemove = p.includes("AMM_REMOVE_LIQUIDITY");
   const hasSellPt = p.includes("SELL_PT");
   const hasBuyPt = p.includes("BUY_PT");
 
-  const hints: string[] = [];
+  const branches: string[] = [];
+
   if (hasAdd && hasRemove && hasSellPt) {
-    hints.push("ADD→REMOVE→SELL cycle could indicate mint→LP→unwind→sell loop (YT accumulation via PT discount)");
+    branches.push("Mint→LP→unwind→sell loop: YT accumulation via PT discount. Implies directional variable-rate bet; exit would appear as BUY_PT (flash-redeem).");
+    branches.push("LP cycling for fee capture: adding/removing liquidity to harvest swap fees, with incidental PT sells to rebalance. Implies LP-centric strategy, not directional.");
+    branches.push("One leg of a multi-step arb: pool activity alone shows only the Curve-visible steps. The full strategy may span other protocols or pools not visible here.");
   } else if (hasAdd && hasSellPt && !hasRemove) {
-    hints.push("ADD→SELL cycle could indicate mint+LP (Router batched) followed by PT sell — each ADD may also mint YT");
+    branches.push("Router-batched mint+LP: each ADD mints PT+YT, deposits PT+IBT as LP, user keeps YT. SELL_PT may be excess PT disposal. Implies YT accumulation.");
+    branches.push("LP provision with PT rebalancing: adding liquidity then selling PT received from pool mechanics. Implies LP yield strategy, not YT accumulation.");
   } else if (hasSellPt && !hasAdd && !hasRemove) {
-    hints.push("Repeated SELL_PT could indicate flash-mint loop (Router: mint PT+YT → sell PT → keep YT) or sequential PT dumping");
+    branches.push("Flash-mint YT accumulation: Router mints PT+YT, sells PT, user keeps YT. Implies directional variable-rate bet; exit would appear as BUY_PT.");
+    branches.push("PT liquidation / rebalancing: reducing fixed-rate exposure or exiting a position. No necessary re-entry implied.");
+    branches.push("One leg of cross-protocol arb: PT sold here may be bought cheaper elsewhere, or the underlying IBT is being arbitraged across venues.");
   } else if (hasBuyPt && !hasSellPt) {
-    hints.push("Repeated BUY_PT could indicate PT accumulation for fixed-rate position, or flash-redeem YT selling");
+    branches.push("Fixed-rate accumulation: buying PT at discount to lock in yield to maturity. Implies hold-to-maturity strategy.");
+    branches.push("Flash-redeem YT exit: Router buys PT to pair with held YT for redemption. Implies unwinding a previous variable-rate bet.");
+    branches.push("Liquidity provision prep: accumulating PT to pair with IBT for LP deposit. Next action would be ADD_LIQUIDITY.");
+  } else if (hasBuyPt && hasSellPt) {
+    branches.push("Market making / spread capture: buying and selling PT for the bid-ask spread. Implies non-directional strategy; may continue indefinitely.");
+    branches.push("Strategy pivot: accumulation phase (SELL_PT) followed by partial unwind (BUY_PT), or vice versa. The direction change is the key signal.");
+    branches.push("Arbitrage execution: PT price oscillations exploited across time or venues. Pool activity shows only one leg.");
   }
 
-  if (hints.length > 0) {
-    lines.push(`    ⚠ ${hints[0]}`);
-    lines.push(`    Cross-reference with get_portfolio to see resulting PT/YT/LP balances.`);
+  if (branches.length > 0) {
+    lines.push(`    Competing Interpretations (do not collapse without external evidence):`);
+    branches.forEach((b, i) => {
+      lines.push(`      ${String.fromCharCode(65 + i)}) ${b}`);
+    });
+    lines.push(`    → These branches predict different future behavior. Use get_portfolio to check actual holdings before selecting one.`);
   }
 
   return lines;
@@ -688,18 +716,47 @@ export function formatFlowAccounting(opts: {
     lines.push(`    LP Removals: ${removeLiqCount} txns, ${formatUsd(removeLiqVolumeUsd)} (returns IBT + PT from pool)`);
   }
 
-  // Net flow interpretation
+  // -------------------------------------------------------
+  // Net flow interpretation — competing hypotheses.
+  // Present the observable facts, then branches that explain them.
+  // The branches predict different future behavior and should not
+  // be collapsed without cross-referencing additional data sources.
+  // -------------------------------------------------------
+
   if (ytBalance > 0 && ptBalance === 0 && ptSellCount > 0) {
-    lines.push(`    ⚠ YT held but no PT — minted PT was likely sold or LPed. This could indicate a yield-directional strategy (YT accumulation).`);
+    lines.push(`    Position Shape: YT-only (${ytBalance.toFixed(2)} YT, ~0 PT)`);
+    lines.push(`    Competing Hypotheses:`);
+    lines.push(`      A) YT accumulation via mint-and-sell: minted PT+YT, sold PT, kept YT for leveraged variable yield. Predicts: hold until spread narrows, then exit via BUY_PT (flash-redeem).`);
+    lines.push(`      B) Intermediate state of a larger strategy: YT held temporarily before next step (LP deposit, cross-protocol move, or further minting). Predicts: next action is NOT a simple exit.`);
+    if (buyPtCount > 0) {
+      lines.push(`      C) Partial unwind already in progress: ${buyPtCount} BUY_PT events suggest some YT was already flash-redeemed. Remaining YT may be held to maturity, or unwind may continue — the partial exit does not predict the rest.`);
+    }
+    lines.push(`      → Observable fact: YT can only come from minting. But the reason for holding it is not observable from pool data alone.`);
   } else if (ptBalance > 0 && ytBalance === 0 && buyPtCount > 0) {
-    lines.push(`    ⚠ PT held but no YT — could indicate fixed-rate accumulation (bought PT without minting), or minted and sold all YT via flash-redeem.`);
+    lines.push(`    Position Shape: PT-only (${ptBalance.toFixed(2)} PT, ~0 YT)`);
+    lines.push(`    Competing Hypotheses:`);
+    lines.push(`      A) Fixed-rate accumulation: bought PT at discount, holding to maturity for guaranteed yield. Predicts: no further pool activity until maturity.`);
+    lines.push(`      B) Post-mint YT exit: minted PT+YT, sold all YT via flash-redeem (shows as BUY_PT), kept PT. Predicts: may sell PT next, or hold to maturity.`);
+    lines.push(`      C) LP preparation: accumulated PT to pair with IBT for LP deposit. Predicts: next action is ADD_LIQUIDITY.`);
+    lines.push(`      → These hypotheses predict different next actions. Portfolio alone cannot distinguish them.`);
   } else if (ytBalance > 0 && ptBalance > 0) {
     const ratio = ytBalance / ptBalance;
+    lines.push(`    Position Shape: YT/PT ${ratio > 100 ? `${(ratio).toFixed(0)}:1` : ratio > 1 ? `${ratio.toFixed(1)}:1` : `1:${(1/ratio).toFixed(1)}`}`);
     if (ratio > 5) {
-      lines.push(`    ⚠ YT/PT ratio: ${ratio.toFixed(1)}:1 — heavily yield-directional. Most minted PT was likely sold/LPed.`);
+      lines.push(`    Observation: Heavily YT-weighted. Most minted PT was disposed of (sold or LPed).`);
+      lines.push(`    But: the reason for the remaining PT is ambiguous — dust from rounding, deliberate hedge, or LP residual.`);
     } else if (ratio < 0.2) {
-      lines.push(`    ⚠ PT/YT ratio: ${(1 / ratio).toFixed(1)}:1 — heavily fixed-rate. Most minted YT may have been sold.`);
+      lines.push(`    Observation: Heavily PT-weighted. Most minted YT was likely sold.`);
+      lines.push(`    But: the reason for the remaining YT is ambiguous — dust, yield collection vehicle, or partial exit in progress.`);
+    } else {
+      lines.push(`    Observation: Mixed PT/YT position. Could be partial mint (kept both), partial unwind (started with more of one), or LP residual.`);
     }
+  } else if (ytBalance === 0 && ptBalance === 0 && (ptSellCount > 0 || buyPtCount > 0)) {
+    lines.push(`    Position Shape: Fully exited (0 PT, 0 YT, LP: ${lpBalance.toFixed(4)})`);
+    lines.push(`    Competing Hypotheses:`);
+    lines.push(`      A) Completed round-trip: entered and fully exited. Strategy is finished for this pool.`);
+    lines.push(`      B) Capital recycled elsewhere: funds moved to another pool, chain, or protocol. Check get_address_activity for multi-pool patterns.`);
+    lines.push(`      C) Temporary exit: may re-enter if conditions (spread, liquidity, rates) become favorable again.`);
   }
 
   lines.push(`    Note: Flow accounting is approximate. Mints are invisible in pool data;`);
