@@ -292,6 +292,9 @@ src/
     metavault.ts    get_metavaults, model_metavault_strategy (live API + computational modeling)
     pendle.ts       list_pendle_markets, compare_pendle_spectra (cross-protocol yield comparison)
     onchain.ts      get_onchain_activity (historical eth_getLogs, Curve pool + PT vault event decoding, dynamic RPC)
+test.cjs              Integration test suite (371 tests, McpTestClient over stdio)
+test-agent.cjs        Agent reasoning test suite (12 multi-tool workflow tests)
+AGENT-TESTS.md        25-question subjective test suite with grading rubrics
 docs/
   recursive-meta-process.md    Open Emergence metaframework specification
   dissolution-conditions.md    Dissolution conditions for every structural decision
@@ -340,16 +343,40 @@ All address parameters are validated (`0x` + 40 hex chars). All API calls have a
 From a source checkout:
 
 ```bash
-# Full suite (371 tests, requires network)
+# Full integration suite (371 tests, requires network)
 npm test
 
 # Schema/registration only (98 tests, no network)
 npm run test:offline
+
+# Agent reasoning tests (65-71 assertions, requires network)
+npm run test:agent
 ```
 
-371 of 371 tests pass (0 failures, 0 skipped).
+### Integration Tests (`test.cjs`)
 
-The test suite dynamically discovers pool and PT addresses from the live API, so tests won't go stale when pools mature or are deprecated. Includes malformed-address negative tests, on-chain Curve `get_dy()` quoting validation, cross-pool address scanning, and address isolation mode tests.
+371 tests covering tool registration, schema validation, API responses, on-chain Curve `get_dy()` quoting, cross-pool address scanning, address isolation mode, and malformed-address negative tests. Dynamically discovers pool and PT addresses from the live API, so tests won't go stale when pools mature.
+
+### Agent Reasoning Tests (`test-agent.cjs`)
+
+12 multi-tool workflow tests that verify the "reasoning surface" — can an agent using these tools detect anomalies, cross-reference data, and avoid protocol-mechanic traps? Tests include:
+
+- **Protocol context completeness** — all topics present, Router batching ambiguities explained, cross-reference guidance included
+- **Anomaly detection** — raw APY vs capital-aware rankings produce different results (intentional divergence)
+- **Cross-tool data consistency** — APYs match between `list_pools` → `get_pt_details` → `compare_yield`
+- **Router mechanics** — mint-and-sell loop detection via pool activity → portfolio cross-reference
+- **Router limitation** — API resolves Router txns that `eth_getLogs` address filtering misses
+- **MetaVault data integrity** — curator info, TVL, APY, vault flows, expired position flagging
+- **Expired pool discovery** — `list_pools` returns only active pools; MetaVaults surface expired positions
+- **veSPECTRA boost math** — max boost (1M veSPECTRA + $1K) vs min boost (100 veSPECTRA + $1M)
+- **Morpho looping fallback** — graceful handling when no Morpho market exists for a PT
+- **Morpho market classification** — Spectra vs Pendle/Other labels, unsupported chain handling
+- **MetaVault scan inclusion** — `include_metavaults` flag correctly shows/hides MetaVault section
+- **Pendle comparison** — head-to-head matched pairs with delta, Pendle-only markets, aggregates
+
+### Subjective Test Suite (`AGENT-TESTS.md`)
+
+25 copy-pasteable questions across 6 tiers (basic tool usage → edge cases) with grading rubrics for evaluating LLM agent quality when using the MCP tools. Designed to be run by spawning subagents and scoring responses manually or with LLM-as-judge.
 
 ## API Reference
 
