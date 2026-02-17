@@ -71,6 +71,20 @@ Layer 3: Structured Output Hints (computed at runtime in tool output)
   → Points multipliers: external programs (Drops, InfiniFi, Firelight) with amounts
   → "Could be" / "at current rates" language: preserves ambiguity in ranked output
   → Makes key signals SALIENT without prescribing interpretation
+
+Layer 4: Observation Coverage (quantifies blind spots in tool output)
+  → Value coverage: what % of an address's position is explained by observable activity.
+    Low coverage means most behavior is invisible (direct mints, transfers, cross-chain).
+  → Temporal coverage: active days vs dark periods with no observable events.
+    Longest gap duration surfaced so the agent can reason about invisible activity.
+  → Data source coverage: which of 5 available sources were consulted vs not.
+    Explicitly lists what is invisible to the current analysis.
+  → Activity diversity: single-type activity flagged as highest-ambiguity pattern.
+  → Boundary marker: "Position sizing should assume this analysis is incomplete,
+    not comprehensive." — a structural admission of domain-of-validity limits.
+  → Coverage metrics bound ALL interpretations above them. High-confidence strategy
+    assessment + low observation coverage = false confidence. The coverage section
+    forces the agent to size its conviction to what it actually observed.
 ```
 
 ### Design Principles
@@ -82,6 +96,7 @@ Layer 3: Structured Output Hints (computed at runtime in tool output)
 - **Hidden mechanics are called out where they can mislead.** The Spectra Router batches multiple operations atomically. A `SELL_PT` event might actually be YT acquisition via flash-mint. Tool descriptions teach this so agents don't draw wrong conclusions from pool data alone.
 - **Full addresses in output, never truncated.** When addresses appear in activity data, they're shown in full so the agent can pass them directly to `get_portfolio` without needing a block explorer.
 - **Discovery tools warn about capital-awareness gaps.** `get_best_fixed_yields` explicitly says "this ranks by raw APY — use `scan_opportunities` for capital-aware sizing."
+- **Quantify blind spots, not just interpretations.** Tools now output observation coverage metrics: what percentage of behavior is visible, what data sources were consulted vs available, and how long dark periods lasted. These are not interpretations — they're structural measurements of the analysis's own incompleteness. An agent that sees 35% value coverage should size its confidence accordingly, regardless of how coherent the best-fitting interpretation looks.
 
 ### Why This Matters
 
@@ -94,6 +109,8 @@ A cold-start agent with zero prior knowledge of Spectra can:
 This was validated: a subagent spawned with zero priming correctly identified a mint-and-sell-PT loop strategy (YT accumulation via PT discount) in 3 tool calls, using only the mechanics taught in descriptions and the structured hints in output.
 
 The competing-branch design was motivated by a real failure: an agent analyzing a multi-chain wallet collapsed all activity into "YT accumulator" despite different pools showing different patterns (spread capture, market making, LP cycling). The single-narrative failure mode — where the agent picks one interpretation and defends it — is the most dangerous because it looks like good analysis from inside.
+
+The observation coverage layer addresses a deeper problem: even perfect interpretation of observed data is misleading when the data covers a minority of behavior. Competing branches solve the *narrative* problem (which story fits?). Coverage metrics solve the *exposure* problem (how much of the picture am I seeing?). An agent that picks the best interpretation branch but ignores 65% invisible activity is sizing conviction to coherence, not evidence.
 
 ## Tools
 
@@ -288,7 +305,9 @@ src/
                       Layer 3 output hints (Position Shape, LP APY breakdown,
                       volume signals, Morpho market hints, portfolio signals,
                       competing interpretation branches, statistical confidence boundaries,
-                      flow accounting with competing hypotheses)
+                      flow accounting with competing hypotheses),
+                      Layer 4 observation coverage (value coverage, temporal gaps,
+                      data source coverage, activity diversity, boundary markers)
   tools/            Layer 2: each tool description teaches domain-specific mechanics
     context.ts      get_protocol_context (Layer 1 protocol mechanics, callable on-demand)
     pt.ts           get_pt_details, list_pools, get_best_fixed_yields, compare_yield
@@ -296,7 +315,8 @@ src/
     portfolio.ts    get_portfolio (balance ratio strategy signals, portfolio-level hints, cross-ref nudges)
     pool.ts         get_pool_volume (with volume/liquidity hints), get_pool_activity (PT address resolution, Router batching,
                       address isolation w/ cycle detection, flow accounting, contract detection,
-                      gas estimates, pool impact warnings), get_address_activity (cross-pool scanner)
+                      gas estimates, pool impact warnings, observation coverage metrics),
+                      get_address_activity (cross-pool scanner with coverage boundary markers)
     morpho.ts       get_morpho_markets (with capacity/utilization hints), get_morpho_rate (with PT spread analysis)
     protocol.ts     get_protocol_stats, get_supported_chains
     quote.ts        quote_trade (on-chain Curve get_dy() with math fallback)
@@ -309,7 +329,7 @@ src/
     onchain.ts      get_onchain_activity (historical eth_getLogs, Curve pool + PT vault event decoding, dynamic RPC)
 test.cjs              Integration test suite (371 tests, McpTestClient over stdio)
 test-agent.cjs        Agent reasoning test suite (13 multi-tool workflow tests)
-AGENT-TESTS.md        31-question subjective test suite with grading rubrics (incl. open emergence tier)
+AGENT-TESTS.md        34-question subjective test suite with grading rubrics (incl. open emergence + coverage tiers)
 docs/
   recursive-meta-process.md    Open Emergence metaframework specification
   dissolution-conditions.md    Dissolution conditions for every structural decision
@@ -458,8 +478,9 @@ When adding new tools, follow the three-layer architecture:
 
 1. **Description (Layer 2):** Teach any protocol mechanics that affect interpretation of the tool's data. Use "could be" language for ambiguous signals. Add cross-reference nudges to at least one related tool.
 2. **Output (Layer 3):** If the data contains signals that require domain knowledge to notice (e.g., a ratio that implies a strategy, an event that could mean different things), compute a structured hint and include it in the output. Make it salient but not prescriptive. When an observable pattern has multiple valid interpretations, present them as competing branches with equal weight — do not pick one. Flag small sample sizes as statistically insufficient.
-3. **Resource (Layer 1):** If the new tool introduces fundamental protocol concepts not covered by existing resources, update `spectra-overview` in `index.ts`.
-4. **Dissolution condition:** Document when the new structure would no longer serve, in `docs/dissolution-conditions.md`. Every Layer 3 hint, architectural pattern, and generative friction point carries a dissolution condition — a prompt for re-evaluation when circumstances change.
+3. **Coverage (Layer 4):** If the tool's output covers only a subset of the address's or pool's full behavior, quantify the blind spots. Report value coverage (observable activity vs position size), temporal gaps, and which data sources were used vs available. End with a boundary marker: "Position sizing should assume this analysis is incomplete, not comprehensive." Coverage metrics bound ALL interpretation branches — high-confidence assessment + low coverage = false confidence.
+4. **Resource (Layer 1):** If the new tool introduces fundamental protocol concepts not covered by existing resources, update `spectra-overview` in `index.ts`.
+5. **Dissolution condition:** Document when the new structure would no longer serve, in `docs/dissolution-conditions.md`. Every Layer 3 hint, architectural pattern, and generative friction point carries a dissolution condition — a prompt for re-evaluation when circumstances change.
 
 The goal: a cold-start agent reading only the tool descriptions and output hints should be able to use the tool correctly and compose it with other tools into novel analytical workflows.
 

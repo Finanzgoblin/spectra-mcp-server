@@ -7,7 +7,7 @@ import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork, API_NETWORKS, CHAIN_GAS_ESTIMATES } from "../config.js";
 import type { SpectraPt } from "../types.js";
 import { fetchSpectra, fetchAddressType } from "../api.js";
-import { formatUsd, formatDate, formatActivityType, parsePtResponse, detectActivityCycles, formatCycleAnalysis, formatFlowAccounting, formatBalance, formatVolumeHints } from "../formatters.js";
+import { formatUsd, formatDate, formatActivityType, parsePtResponse, detectActivityCycles, formatCycleAnalysis, formatFlowAccounting, formatObservationCoverage, formatBalance, formatVolumeHints } from "../formatters.js";
 
 /**
  * Resolve a PT address to its Curve pool address.
@@ -258,6 +258,14 @@ address only, sorts chronologically (oldest first), and adds:
 - Gas Estimates: estimates total gas cost from transaction count using chain-specific
   gas heuristics. Shows gas as percentage of activity volume and position value.
 - Pool Context: fetches pool liquidity and implied APY for baseline context.
+- Observation Coverage: quantifies the blind spots of this analysis. Shows:
+  (1) Value coverage — what % of the position is explained by observable activity.
+  (2) Temporal coverage — active days vs dark periods with no observable events.
+  (3) Data source coverage — which of the available data sources were consulted.
+  CRITICAL: coverage metrics bound the domain of validity for ALL interpretations above.
+  If value coverage is low (<50%), the competing interpretation branches are based on a
+  minority of the address's actual behavior. Position sizing should reflect the coverage
+  level, not the confidence of the best-fitting interpretation.
 
 For multi-pool activity scanning, use get_address_activity to find all pools an address
 has interacted with in a single call.`,
@@ -621,6 +629,30 @@ has interacted with in a single call.`,
           if (entries.length > 10) {
             lines.push(`    ⚠ High-frequency pattern (${entries.length} txns). Cross-reference with get_portfolio to see resulting PT/YT/LP balances.`);
           }
+
+          // -------------------------------------------------------
+          // Observation Coverage — quantifying blind spots
+          // -------------------------------------------------------
+          {
+            const ptPriceUsd = poolData?.pools?.[0]?.ptPrice?.usd || 0;
+            const ytPriceUsd = poolData?.pools?.[0]?.ytPrice?.usd || 0;
+            const positionValueUsd = portfolioFetched
+              ? (ptBalance * ptPriceUsd + ytBalance * ytPriceUsd)
+              : 0;
+            const coverageLines = formatObservationCoverage({
+              totalActivityVolumeUsd: totalValue,
+              currentPositionValueUsd: positionValueUsd,
+              entryTimestamps: entries.map(e => e.timestamp || 0).filter(t => t > 0),
+              portfolioFetched,
+              poolContextFetched: poolLiquidityUsd > 0,
+              onchainConsulted: false,
+              crossChainConsulted: false,
+              poolLiquidityUsd,
+              distinctActivityTypes: Object.keys(typeCounts).length,
+            });
+            lines.push(``);
+            lines.push(...coverageLines);
+          }
         }
 
         // Recent activity table
@@ -666,7 +698,12 @@ Cross-pool totals show the address's aggregate engagement with Spectra.
 
 For deep per-pool analysis (cycle detection, flow accounting, contract detection),
 use get_pool_activity with the address parameter on the specific pool of interest.
-Use get_portfolio to see current holdings across all pools.`,
+Use get_portfolio to see current holdings across all pools.
+
+Includes an Observation Coverage section that quantifies blind spots: which pools were
+scanned, what event types are visible vs invisible (standalone mints, yield claims, and
+non-Spectra operations are never visible here), and whether activity is concentrated on
+one chain. Position sizing should assume this scan is incomplete, not comprehensive.`,
     {
       address: EVM_ADDRESS.describe("The wallet address to scan (0x...)"),
       chain: CHAIN_ENUM
@@ -879,6 +916,23 @@ Use get_portfolio to see current holdings across all pools.`,
         for (const [t, s] of Object.entries(crossPoolTotals).sort((a, b) => b[1].value - a[1].value)) {
           lines.push(`    ${formatActivityType(t).padEnd(18)} ${String(s.count).padEnd(6)} txns  ${formatUsd(s.value)}`);
         }
+
+        // Observation Coverage — cross-pool boundary marker
+        lines.push(``);
+        lines.push(`  -- Observation Coverage --`);
+        lines.push(`    Pools scanned: ${chain ? `all active pools on ${chain}` : `all active pools across ${networks.length} chains`} + expired pools from portfolio.`);
+        lines.push(`    Visible: Curve pool swaps (BUY_PT, SELL_PT) and LP events (ADD/REMOVE). ${allPoolActivities.length} pools with activity found.`);
+        lines.push(`    Invisible: standalone mints (deposit→PT+YT), yield claims, cross-protocol operations, and any non-Spectra activity.`);
+        if (allPoolActivities.length === 1) {
+          lines.push(`    ⚠ Activity found in only 1 pool. This may represent the address's full Spectra engagement, or activity on other pools/chains may exist outside this scan's scope.`);
+        }
+        const chainsWithActivity = new Set(allPoolActivities.map(pa => pa.chain));
+        if (chainsWithActivity.size === 1 && !chain) {
+          lines.push(`    Note: Activity concentrated on 1 chain (${[...chainsWithActivity][0]}). Cross-chain strategies would not appear as connected here.`);
+        }
+        lines.push(`    This scan shows pool-level aggregates. For cycle detection, flow accounting, and coverage metrics per pool, use get_pool_activity with address parameter.`);
+        lines.push(`    ─────────────────────────────────────────`);
+        lines.push(`    Position sizing should assume this scan is incomplete, not comprehensive.`);
 
         // Next-step hints with prioritized drill-down
         lines.push(``);

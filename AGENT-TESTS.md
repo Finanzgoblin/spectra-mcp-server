@@ -18,7 +18,7 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 | ❌ C  | Weak — parrots tool output without interpreting, or misuses tools |
 | ❌ F  | Fails — hallucinates data, gives dangerous advice, or fundamentally misunderstands protocol |
 
-**Target: 24+ of 31 at ✅ (A or A+) for a production-quality agent.**
+**Target: 27+ of 34 at ✅ (A or A+) for a production-quality agent.**
 
 ---
 
@@ -485,6 +485,67 @@ A weak agent picks one branch and runs with it.
 
 ---
 
+## Tier 9: Observation Coverage — Sizing Conviction to Evidence
+
+These tests evaluate whether the agent uses coverage metrics to bound its confidence.
+The tool output now includes observation coverage: value coverage, temporal gaps, data
+source coverage, and a boundary marker. A good agent sizes its conviction to the coverage
+level. A weak agent ignores coverage and presents high-confidence conclusions from partial data.
+
+### Q32: Low Value Coverage — Confidence Calibration ⭐⭐
+**Prompt:** "Analyze this wallet's strategy on the Spectra pools. Here's the address: 0xc0e88f859de5c9ebdddd7e5c4c46ab7fcecd65d7"
+
+**Tests:** When tool output shows low value coverage (observable activity explains <50% of position), does the agent calibrate its confidence accordingly?
+
+**Expected:** The tool output will include "Value Coverage: X%" and may show that observable activity explains a minority of the position. A good agent should note the coverage gap prominently, qualify all strategy interpretations with the coverage level, and explicitly state that position sizing based on this analysis would be betting on incomplete information. Should NOT deliver confident strategy conclusions while coverage metrics show most behavior is invisible.
+
+**Grading:**
+- ✅ A+ Prominently surfaces coverage metrics, explicitly ties confidence level to coverage percentage, qualifies all conclusions with coverage caveat, mentions what's invisible
+- ✅ A  Notes coverage metrics and adjusts language accordingly, but doesn't quantify the confidence-coverage relationship
+- ⚠️ B  Mentions coverage exists in tool output but doesn't let it affect the confidence of conclusions
+- ❌ C  Ignores coverage section entirely, delivers high-confidence strategy assessment
+- ❌ F  Doesn't notice the coverage section or actively contradicts it ("despite low coverage, we can be confident...")
+
+**Key failure mode:** Conviction-coverage decoupling — the agent sees coverage metrics, maybe even mentions them, but the actual confidence of its conclusions doesn't change. The coverage section becomes a disclaimer that gets read then ignored.
+
+---
+
+### Q33: Dark Periods — Temporal Gap Awareness ⭐
+**Prompt:** "A wallet had 15 SELL_PT transactions on a Spectra pool over 3 weeks, then went dark for 45 days, then had 5 BUY_PT transactions. What's happening?"
+
+**Tests:** Does the agent treat the dark period as meaningful, or does it stitch the two phases together into a single narrative?
+
+**Expected:** A good agent should note that 45 days of silence is a significant temporal gap. During that time, the address could have been: inactive, operating on other pools/chains, using channels invisible to pool activity, or the strategy could have fundamentally changed. The pre-gap and post-gap behavior should be analyzed as potentially separate strategies, not as two phases of one strategy. Should NOT say "they accumulated YT for 3 weeks then started unwinding" as if it's one continuous plan.
+
+**Grading:**
+- ✅ A+ Treats the dark period as a boundary between potentially different strategies, presents competing explanations for the gap, does not assume continuity
+- ✅ A  Notes the gap and lists what could have happened, but still leans toward a unified narrative
+- ⚠️ B  Mentions the gap but treats pre/post as clearly one strategy in two phases
+- ❌ C  Ignores the gap entirely, analyzes all transactions as one continuous sequence
+- ❌ F  Doesn't notice or mention the temporal gap at all
+
+**Key failure mode:** Continuity assumption — the agent assumes that the same address doing things at different times is executing one plan, when the temporal gap may indicate a completely different context, market condition, or even wallet operator.
+
+---
+
+### Q34: Data Source Coverage — Tool Composition Awareness ⭐⭐
+**Prompt:** "I've analyzed this wallet using get_pool_activity. Can I now confidently say what their strategy is?"
+
+**Tests:** Does the agent understand what a single tool's coverage means, and what's missing?
+
+**Expected:** The tool output includes "Data Sources: 3/5 available sources consulted" and lists what was NOT consulted (on-chain events, cross-chain scan). A good agent should say: no, pool activity alone is insufficient for a confident strategy assessment. It should enumerate what's invisible (standalone mints, yield claims, cross-protocol operations, activity on other chains), and recommend specific follow-up tools. Should quantify: "you're looking at Curve AMM events on one pool on one chain — that's a narrow slice of possible on-chain behavior."
+
+**Grading:**
+- ✅ A+ Explicitly says "no, not confidently" and explains what's invisible, recommends specific follow-up tools, quantifies the coverage gap
+- ✅ A  Says "not entirely" and lists some gaps, but doesn't quantify or recommend specific next steps
+- ⚠️ B  Says "mostly yes, but with caveats" — doesn't fully internalize coverage limitations
+- ❌ C  Says "yes, based on the data we can see their strategy is X"
+- ❌ F  Confirms confidence without any qualification
+
+**Key failure mode:** Tool sufficiency illusion — the agent treats a single tool's output as a complete picture because the output is detailed and well-structured. The detail creates a false sense of completeness.
+
+---
+
 ## Key Failure Modes to Watch For
 
 1. **Parrot mode** — Agent repeats tool output verbatim without interpreting
@@ -500,6 +561,9 @@ A weak agent picks one branch and runs with it.
 11. **Premature collapse** — Tool output presents competing interpretation branches (A/B/C) but agent picks one and delivers it as the answer, destroying the friction the tool preserved
 12. **Small-N extrapolation** — Treats 3-5 cycle repetitions as a confirmed pattern and projects it forward as a prediction
 13. **Narrative coherence bias** — Forces a unified "strategy" narrative across data that shows contradictory patterns on different pools/chains
+14. **Conviction-coverage decoupling** — Tool output shows low observation coverage (<50%), agent mentions it but delivers high-confidence conclusions anyway. The coverage section becomes a disclaimer that doesn't affect the actual analysis
+15. **Continuity assumption** — Two phases of activity separated by a long dark period get stitched into one continuous strategy, ignoring that the gap may represent a context change
+16. **Tool sufficiency illusion** — Single tool's detailed output is treated as a complete picture. The structure and detail of the output creates false confidence about coverage
 
 ## Running These Tests
 
@@ -507,7 +571,7 @@ A weak agent picks one branch and runs with it.
 2. Let the agent call whatever tools it wants
 3. Grade against the rubric
 4. Record: number of tool calls, grade, and notable observations
-5. Target: ≥24/31 at ✅ grade
+5. Target: ≥27/34 at ✅ grade
 
 Questions marked with ⭐ are the most discriminating — they consistently separate agents
 that truly understand the protocol from those that just relay tool outputs.
