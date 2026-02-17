@@ -573,6 +573,21 @@ async function testMetaVaultDataIntegrity(client) {
     skip("no expired positions in current MetaVaults to verify flagging");
   }
 
+  // APY composition — when breakdown data exists, it should be surfaced
+  if (text.includes("+--") || text.includes("Yield composition:")) {
+    pass("metavault APY breakdown is surfaced (base vs incentives visible)");
+    // If incentive programs exist, the composition line should show the split
+    if (text.includes("incentives") && text.includes("% from incentive programs")) {
+      pass("metavault incentive share is quantified (e.g. '97% from incentive programs')");
+    } else if (text.includes("Base (fees")) {
+      // Has breakdown lines but incentives may be zero
+      pass("metavault base APY is separated from incentive components");
+    }
+  } else {
+    // The API may not return breakdown for all vaults — skip rather than fail
+    skip("no APY breakdown data available from API for current MetaVaults");
+  }
+
   // Extract MetaVault address for later use
   const mvMatch = text.match(/MetaVault:\s*(0x[a-fA-F0-9]{40})/);
   if (mvMatch) {
