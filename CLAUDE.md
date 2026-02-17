@@ -6,7 +6,9 @@
 - MCP server process must restart after rebuild
 - Worktrees are under `.claude/worktrees/`
 - Source code in `src/`, tools in `src/tools/`, shared helpers in `src/api.ts`, `src/formatters.ts`, `src/config.ts`, `src/types.ts`
-- Tests in `tests/` — run with `npm test` (currently 371 tests)
+- Tests: `npm test` (371 integration tests), `npm run test:agent` (65-71 agent reasoning assertions)
+- Agent test suite in `test-agent.cjs` — multi-tool workflow validation (cross-tool consistency, Router mechanics, anomaly detection)
+- Subjective test suite in `AGENT-TESTS.md` — 25 questions with grading rubrics for LLM evaluation
 - TypeScript project — check types with `npx tsc --noEmit`
 
 ## Key Tool Files
