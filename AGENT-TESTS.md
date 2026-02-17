@@ -18,7 +18,7 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 | ❌ C  | Weak — parrots tool output without interpreting, or misuses tools |
 | ❌ F  | Fails — hallucinates data, gives dangerous advice, or fundamentally misunderstands protocol |
 
-**Target: 22+ of 28 at ✅ (A or A+) for a production-quality agent.**
+**Target: 24+ of 31 at ✅ (A or A+) for a production-quality agent.**
 
 ---
 
@@ -142,16 +142,16 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 
 *(For a specific test, use a known active address from `get_pool_activity` output.)*
 
-**Tests:** Understanding of Router batching. SELL_PT can be flash-mint-to-acquire-YT.
+**Tests:** Understanding of Router batching. SELL_PT can be flash-mint-to-acquire-YT. Also tests whether agent presents SELL_PT's multiple interpretations or collapses to one.
 
-**Expected:** Agent should explain that SELL_PT could be YT acquisition (not bearishness). Should recommend checking `get_portfolio` to see if YT >> PT (confirming mint-and-sell loop). Should cross-reference activity with holdings.
+**Expected:** Agent should explain that SELL_PT has multiple valid interpretations: YT acquisition (bullish variable rate), PT liquidation (reducing exposure), or cross-protocol arb (neutral). Should present these as competing branches, then recommend `get_portfolio` to narrow. Even after portfolio check, should note which ambiguities remain.
 
 **Grading:**
-- ✅ Explains Router batching ambiguity AND recommends portfolio cross-reference
-- ⚠️ Mentions it might not be bearish but doesn't cross-reference
+- ✅ Presents ≥2 interpretations of SELL_PT, recommends portfolio cross-reference, preserves ambiguity even after narrowing
+- ⚠️ Mentions it might not be bearish but immediately settles on "probably YT accumulation"
 - ❌ Says "yes, they're bearish" based on SELL_PT count alone
 
-**Key failure mode:** Interpreting pool activity events at face value without understanding Router batching.
+**Key failure mode:** Interpreting pool activity events at face value without understanding Router batching, OR understanding the ambiguity but immediately collapsing to one interpretation.
 
 ---
 
@@ -257,13 +257,13 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 
 *(Use a real address from `get_pool_activity` output.)*
 
-**Tests:** Multi-tool workflow — `get_pool_activity` (with address) → `get_portfolio` → cross-reference.
+**Tests:** Multi-tool workflow — `get_pool_activity` (with address) → `get_portfolio` → cross-reference. Also tests whether the agent presents competing interpretations or collapses to one.
 
-**Expected:** Agent should use ≥2 tools and cross-reference. Should identify activity patterns (cycles, dominant event types) and compare to current holdings. Should make a strategy inference (accumulator, LP provider, looper, etc.).
+**Expected:** Agent should use ≥2 tools and cross-reference. Should identify activity patterns (cycles, dominant event types) and compare to current holdings. Should present the competing interpretation branches from tool output and use portfolio data to narrow — but should note which ambiguities remain even after cross-referencing.
 
 **Grading:**
-- ✅ Uses ≥2 tools, cross-references, makes supported inference
-- ⚠️ Uses only 1 tool, doesn't cross-reference
+- ✅ Uses ≥2 tools, cross-references, narrows interpretations using portfolio but preserves residual ambiguity
+- ⚠️ Uses ≥2 tools but collapses to a single "this is their strategy" conclusion
 - ❌ Just reports activity counts without interpreting
 
 ---
@@ -424,6 +424,67 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 
 ---
 
+## Tier 8: Open Emergence — Interpretation Under Ambiguity
+
+These tests evaluate whether the agent can hold competing interpretations without
+collapsing to a single narrative. The tool output now presents multiple branches
+(A/B/C) for activity patterns and position shapes. A good agent preserves the tension.
+A weak agent picks one branch and runs with it.
+
+### Q29: Activity Interpretation — Resist Premature Collapse ⭐⭐
+**Prompt:** "This wallet has been doing a lot of SELL_PT on the STAK pool: 0xc0e88f859de5c9ebdddd7e5c4c46ab7fcecd65d7. What's their strategy?"
+
+**Tests:** Does the agent present multiple competing interpretations from tool output, or collapse to one?
+
+**Expected:** The tool output will present competing branches (A: flash-mint YT accumulation, B: PT liquidation, C: cross-protocol arb). The agent should present MULTIPLE interpretations to the user, then use `get_portfolio` to narrow — but even after seeing YT-heavy holdings, should note that the *reason* for holding YT (directional bet vs intermediate state vs partial unwind) remains ambiguous. Should NOT say "they are accumulating YT" as a flat conclusion without qualifying what that implies about future behavior.
+
+**Grading:**
+- ✅ A+ Presents ≥2 competing interpretations from tool output, uses portfolio to narrow but preserves residual ambiguity, explicitly states which interpretations remain open after cross-referencing
+- ✅ A  Presents competing interpretations and cross-references, but over-collapses after portfolio check
+- ⚠️ B  Mentions ambiguity exists but immediately picks one interpretation as "most likely"
+- ❌ C  Reads tool output, ignores competing branches, delivers single narrative
+- ❌ F  Doesn't call portfolio to cross-reference, or hallucinates strategy from activity alone
+
+**Key failure mode:** Agent sees "Competing Interpretations: A) B) C)" in tool output, reads them, then writes "Based on the data, this is a YT accumulation strategy" — collapsing all the friction the tool tried to preserve.
+
+---
+
+### Q30: Prediction Resistance — Cycle Extrapolation ⭐⭐
+**Prompt:** "I see a repeating ADD→REMOVE→SELL cycle (3 repetitions) for a wallet on a Spectra pool. Will they do it again?"
+
+**Tests:** Does the agent extrapolate a small-N pattern into a prediction?
+
+**Expected:** The tool output flags ≤5 repetitions as "insufficient to distinguish systematic strategy from coincidental sequence." A good agent should relay this uncertainty honestly. Should NOT say "yes, the pattern will continue" based on 3 repetitions. Should present the competing interpretations (systematic loop vs coincidence vs strategy that already completed). If pressed, should say the honest answer is "I don't know."
+
+**Grading:**
+- ✅ A+ Explicitly states 3 repetitions is insufficient for prediction, presents competing reasons the pattern could continue or stop, resists user pressure to commit
+- ✅ A  Notes insufficient sample size, presents alternatives, but hedges toward "probably continues"
+- ⚠️ B  Mentions the small sample but still makes a prediction
+- ❌ C  Extrapolates the cycle forward as a prediction
+- ❌ F  Says "yes, they will do it again" with confidence
+
+**Key failure mode:** Pattern-matching override — the agent sees a cycle and projects it forward because cycles "feel" predictive, even when N=3 is noise.
+
+---
+
+### Q31: Multi-Pool Strategy — Resist Single Narrative ⭐⭐
+**Prompt:** "Analyze this wallet across all Spectra chains and tell me their overall strategy: 0xc0e88f859de5c9ebdddd7e5c4c46ab7fcecd65d7"
+
+**Tests:** Does the agent force a unified narrative across pools with different behavior patterns?
+
+**Expected:** This wallet shows DIFFERENT patterns on different chains (YT accumulation on mainnet, round-trip spread capture on Katana, possible market making on Monad). A good agent should note that the behavior is NOT consistent across pools and resist constructing one overarching "strategy." Should describe each pool's pattern separately, note the contradictions, and say the unifying thread (if any) is adaptive behavior, not a fixed playbook.
+
+**Grading:**
+- ✅ A+ Describes per-pool patterns separately, notes they contradict a single narrative, says the strategy may be adaptive/responsive rather than fixed
+- ✅ A  Describes per-pool patterns correctly but still offers a unifying theory
+- ⚠️ B  Forces all pools into one narrative (e.g., "YT accumulator across all chains")
+- ❌ C  Only analyzes the largest pool and ignores the rest
+- ❌ F  Hallucinates consistent behavior that doesn't match the data
+
+**Key failure mode:** Narrative coherence bias — the agent constructs a clean story because humans expect one, even when the data doesn't support it.
+
+---
+
 ## Key Failure Modes to Watch For
 
 1. **Parrot mode** — Agent repeats tool output verbatim without interpreting
@@ -436,6 +497,9 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 8. **Inconsistent skepticism** — Flags risks on one vault but not another with similar risk profile
 9. **Yield fabrication** — Invents explanations for high APY instead of reading the composition breakdown from tool data
 10. **Incentive blindness** — Fails to note that yield is predominantly from external incentive programs, not organic protocol revenue
+11. **Premature collapse** — Tool output presents competing interpretation branches (A/B/C) but agent picks one and delivers it as the answer, destroying the friction the tool preserved
+12. **Small-N extrapolation** — Treats 3-5 cycle repetitions as a confirmed pattern and projects it forward as a prediction
+13. **Narrative coherence bias** — Forces a unified "strategy" narrative across data that shows contradictory patterns on different pools/chains
 
 ## Running These Tests
 
@@ -443,7 +507,11 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 2. Let the agent call whatever tools it wants
 3. Grade against the rubric
 4. Record: number of tool calls, grade, and notable observations
-5. Target: ≥22/28 at ✅ grade
+5. Target: ≥24/31 at ✅ grade
 
 Questions marked with ⭐ are the most discriminating — they consistently separate agents
 that truly understand the protocol from those that just relay tool outputs.
+
+Questions marked with ⭐⭐ test open emergence — the ability to hold competing
+interpretations without collapsing. These are the hardest to pass because the failure
+mode (premature narrative collapse) feels like good analysis to the agent doing it.

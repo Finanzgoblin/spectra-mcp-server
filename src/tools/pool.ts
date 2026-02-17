@@ -216,15 +216,17 @@ Do not assume SELL_PT means "user is bearish on PT" or AMM_ADD_LIQUIDITY means
 to see what the address actually holds (PT, YT, LP balances) — the holdings reveal
 the true strategy better than the activity log alone.
 
-Analysis tips:
-- If an address has high SELL_PT count but holds mostly YT → mint-and-sell loop
-  (YT accumulation via PT discount). Check if YT balance >> PT balance.
-- If an address has BUY_PT events → could be YT flash-redeem (selling YT).
-  Check if their YT balance is low/zero relative to activity volume.
-- If an address has paired ADD/REMOVE liquidity → likely cycling through LP as
-  part of a mint loop, not long-term liquidity provision.
-- Compare activity volume to current position size. Large activity volume with
-  small current holdings = capital recycling (looping strategy).
+Analysis tips — IMPORTANT: each observation below has multiple valid interpretations.
+The tool output now presents these as competing branches. Do not collapse to one
+interpretation without cross-referencing get_portfolio and other data sources.
+- High SELL_PT count: could be flash-mint YT accumulation (check YT balance >> PT)
+  OR simple PT liquidation OR one leg of cross-protocol arb. Portfolio resolves this.
+- BUY_PT events: could be fixed-rate accumulation OR flash-redeem YT selling
+  (check if YT balance dropped). These predict opposite future behavior.
+- Paired ADD/REMOVE liquidity: could be LP cycling in a mint loop OR fee harvesting
+  OR rebalancing. The intent is not observable from pool activity alone.
+- Large volume vs small holdings: could be capital recycling (looping) OR completed
+  round-trip (entered and exited) OR funds moved to another venue.
 
 Output includes an Address Concentration section with full addresses and per-address
 type breakdowns. Use get_portfolio on those addresses to see their PT, YT, and LP
@@ -233,17 +235,22 @@ addresses from Address Concentration, and compare_yield or get_pt_details for ra
 
 Address isolation mode: When you provide an 'address' parameter, the tool filters to that
 address only, sorts chronologically (oldest first), and adds:
-- Sequence Analysis: detects repeating action cycles (e.g., ADD→REMOVE→SELL repeated 8×)
-  that reveal looping strategies. Uses "could be" language — cycles are structural patterns,
-  not conclusions about intent.
+- Sequence Analysis: detects repeating action cycles (e.g., ADD→REMOVE→SELL repeated 8×).
+  Presents COMPETING INTERPRETATION BRANCHES (A/B/C) that predict different future behavior.
+  Small repetition counts (≤5) are flagged as statistically insufficient for extrapolation.
+  CRITICAL: do NOT collapse these branches into a single narrative without external evidence
+  from get_portfolio or other tools. The branches exist as friction against premature
+  pattern-matching — the tension between them IS the information.
+- Flow Accounting: cross-references portfolio data to show PT/YT flow reconciliation.
+  When position shape is observable (e.g., YT-only, PT-only, fully exited), presents
+  competing hypotheses for WHY the position looks that way. Each hypothesis predicts
+  different future behavior. Do not select one without additional evidence.
 - Capital Efficiency: compares total activity volume against the address's throughput,
   flagging high ratios that indicate capital recycling (looping) vs accumulation.
 - If the address shows high-frequency activity (>10 txns), consider checking whether it is
   a contract (programmatic execution via Router execute()) vs an EOA (manual/scripted).
   Contracts execute atomically; EOAs submit separate transactions. This distinction affects
   whether apparent "sequences" are truly sequential or batched.
-- Flow Accounting: automatically cross-references portfolio data to infer invisible mints
-  and show PT/YT flow reconciliation. Compares YT holdings vs PT sell volume.
 - Contract Detection: checks whether the address is a contract or EOA via on-chain
   eth_getCode. Contracts execute atomically; EOAs submit sequential transactions.
 - Pool Impact: flags when SELL_PT or BUY_PT volume is significant relative to pool
@@ -403,7 +410,8 @@ has interacted with in a single call.`,
             lines.push(`      ${typeParts.join("  ")}`);
           }
 
-          // Pattern hints: flag activity that likely involves Router batching
+          // Pattern hints: flag ambiguity from Router batching.
+          // Present competing readings so the agent cannot collapse prematurely.
           const sellPt = stats.types["SELL_PT"] || 0;
           const buyPt = stats.types["BUY_PT"] || 0;
           const addLiq = stats.types["AMM_ADD_LIQUIDITY"] || 0;
@@ -411,18 +419,20 @@ has interacted with in a single call.`,
 
           const hints: string[] = [];
           if (addLiq > 0 && (sellPt > 0 || remLiq > 0)) {
-            hints.push("LP adds may include minted YT (Router batching)");
+            hints.push("LP adds may include minted YT (Router batching). Equally: could be pure LP provision. get_portfolio resolves this.");
           }
           if (sellPt > 0 && buyPt === 0 && addLiq === 0) {
-            hints.push("SELL_PT with no LP — could be flash-mint YT acquisition or simple PT selling");
+            hints.push("SELL_PT only — either flash-mint YT accumulation OR simple PT liquidation. These predict opposite future behavior.");
           }
           if (buyPt > 0 && sellPt === 0 && addLiq === 0 && remLiq === 0) {
-            hints.push("BUY_PT only — could be flash-redeem YT selling");
-          } else if (buyPt > 0 && sellPt === 0) {
-            hints.push("BUY_PT events may include flash-redeem YT sells");
+            hints.push("BUY_PT only — either fixed-rate accumulation OR flash-redeem YT exit. These predict opposite position intent.");
+          } else if (buyPt > 0 && sellPt > 0) {
+            hints.push("Mixed BUY_PT + SELL_PT — could be market making, strategy pivot, or two distinct phases. Direction is ambiguous.");
+          } else if (buyPt > 0 && sellPt === 0 && (addLiq > 0 || remLiq > 0)) {
+            hints.push("BUY_PT + LP activity — could be flash-redeem YT selling, or fixed-rate accumulation with LP cycling.");
           }
           if (hints.length > 0) {
-            lines.push(`      ⚠ ${hints.join("; ")}. Use get_portfolio to check actual holdings.`);
+            lines.push(`      ⚠ ${hints.join(" ")}`);
           }
         }
         if (sortedAddrs.length > 5) {

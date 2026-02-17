@@ -53,7 +53,13 @@ Layer 3: Structured Output Hints (computed at runtime in tool output)
   → Portfolio Signals: concentration, maturity alerts, strategy shape across positions
   → Volume Signals: volume/liquidity ratio, buy/sell skew, trend detection
   → Morpho Market Hints: capacity warnings, utilization alerts, spread analysis
-  → Pattern hints (⚠ warnings) in activity data per-address
+  → Competing Interpretation Branches (A/B/C) in activity analysis per-address:
+    multiple explanations for the same observable pattern, presented with equal weight.
+    The agent must bring external evidence to collapse branches — the tension IS the info.
+  → Statistical confidence boundaries: small-N cycle repetitions (≤5) flagged as
+    insufficient for extrapolation, preventing false pattern-matching
+  → Flow Accounting with competing hypotheses: YT-only, PT-only, fully exited positions
+    each get multiple explanations that predict different future behavior
   → Address isolation mode: cycle detection, flow accounting, contract/EOA detection,
     pool impact warnings, gas estimates, pool context
   → Capital-aware warnings: short maturity, low liquidity, negative effective APY
@@ -70,6 +76,8 @@ Layer 3: Structured Output Hints (computed at runtime in tool output)
 ### Design Principles
 
 - **Teach mechanics, not conclusions.** The server explains that AMM_ADD_LIQUIDITY *could be* a mint+LP batch operation — it doesn't conclude "this user is accumulating YT."
+- **Present competing interpretations, not single narratives.** Activity analysis outputs multiple interpretation branches (A/B/C) that predict different future behavior. The agent must bring external evidence to collapse them. This friction surface prevents premature pattern-matching — the most common failure mode in wallet strategy analysis.
+- **Flag statistical insufficiency.** Small repetition counts (≤5 cycle detections) are explicitly flagged as insufficient for extrapolation. The agent cannot treat N=3 as a confirmed pattern.
 - **Every tool cross-references at least one other tool.** This creates analytical workflows without dictating them. The agent learns to check `get_portfolio` after seeing activity patterns, not because it was told to.
 - **Hidden mechanics are called out where they can mislead.** The Spectra Router batches multiple operations atomically. A `SELL_PT` event might actually be YT acquisition via flash-mint. Tool descriptions teach this so agents don't draw wrong conclusions from pool data alone.
 - **Full addresses in output, never truncated.** When addresses appear in activity data, they're shown in full so the agent can pass them directly to `get_portfolio` without needing a block explorer.
@@ -84,6 +92,8 @@ A cold-start agent with zero prior knowledge of Spectra can:
 4. Identify novel strategies the server was never explicitly programmed to detect
 
 This was validated: a subagent spawned with zero priming correctly identified a mint-and-sell-PT loop strategy (YT accumulation via PT discount) in 3 tool calls, using only the mechanics taught in descriptions and the structured hints in output.
+
+The competing-branch design was motivated by a real failure: an agent analyzing a multi-chain wallet collapsed all activity into "YT accumulator" despite different pools showing different patterns (spread capture, market making, LP cycling). The single-narrative failure mode — where the agent picks one interpretation and defends it — is the most dangerous because it looks like good analysis from inside.
 
 ## Tools
 
@@ -100,7 +110,7 @@ This was validated: a subagent spawned with zero priming correctly identified a 
 | `get_supported_chains` | List available networks (10 chains). |
 | `get_portfolio` | Wallet positions across PT, YT, and LP with USD values and claimable yield. |
 | `get_pool_volume` | Historical buy/sell trading volume for a specific pool. Accepts PT address or pool address. |
-| `get_pool_activity` | Recent individual transactions (buys, sells, liquidity events) with filtering, address isolation mode (cycle detection, flow accounting, contract/EOA detection, gas estimates). Accepts PT or pool address. |
+| `get_pool_activity` | Recent individual transactions (buys, sells, liquidity events) with filtering. Address isolation mode presents competing interpretation branches (A/B/C), statistical confidence boundaries on cycles, flow accounting with competing hypotheses, contract/EOA detection, gas estimates. Accepts PT or pool address. |
 | `get_address_activity` | Cross-pool address scanner — finds all pools an address has interacted with on a chain (or all chains) in one call. Includes expired/matured pools via portfolio lookup. Per-pool breakdown + cross-pool aggregates. |
 | `quote_trade` | PT trade quoting with on-chain Curve `get_dy()` for exact output (falls back to math estimate). Shows price impact, slippage, minOut, pool reserves with ratio, and IBT APR composition. |
 | `simulate_portfolio_after_trade` | Preview portfolio BEFORE/AFTER a hypothetical PT trade with deltas, warnings, and on-chain quoting. |
@@ -276,7 +286,9 @@ src/
                       price impact, fractional-day maturity, boost computation,
                       slim envelope helpers, token amount formatting (BigInt → human-readable),
                       Layer 3 output hints (Position Shape, LP APY breakdown,
-                      volume signals, Morpho market hints, portfolio signals, cycle detection)
+                      volume signals, Morpho market hints, portfolio signals,
+                      competing interpretation branches, statistical confidence boundaries,
+                      flow accounting with competing hypotheses)
   tools/            Layer 2: each tool description teaches domain-specific mechanics
     context.ts      get_protocol_context (Layer 1 protocol mechanics, callable on-demand)
     pt.ts           get_pt_details, list_pools, get_best_fixed_yields, compare_yield
@@ -297,7 +309,7 @@ src/
     onchain.ts      get_onchain_activity (historical eth_getLogs, Curve pool + PT vault event decoding, dynamic RPC)
 test.cjs              Integration test suite (371 tests, McpTestClient over stdio)
 test-agent.cjs        Agent reasoning test suite (13 multi-tool workflow tests)
-AGENT-TESTS.md        28-question subjective test suite with grading rubrics
+AGENT-TESTS.md        31-question subjective test suite with grading rubrics (incl. open emergence tier)
 docs/
   recursive-meta-process.md    Open Emergence metaframework specification
   dissolution-conditions.md    Dissolution conditions for every structural decision
@@ -380,7 +392,7 @@ npm run test:agent
 
 ### Subjective Test Suite (`AGENT-TESTS.md`)
 
-28 copy-pasteable questions across 7 tiers (basic tool usage → yield composition) with grading rubrics for evaluating LLM agent quality when using the MCP tools. Designed to be run by spawning subagents and scoring responses manually or with LLM-as-judge.
+31 copy-pasteable questions across 8 tiers (basic tool usage → open emergence) with grading rubrics for evaluating LLM agent quality when using the MCP tools. Tier 8 tests "open emergence" — the ability to hold competing interpretations without collapsing to a single narrative. These are marked ⭐⭐ and test the hardest failure mode: premature narrative collapse that feels like good analysis from inside. Designed to be run by spawning subagents and scoring responses manually or with LLM-as-judge.
 
 ## API Reference
 
@@ -445,7 +457,7 @@ Agent flow: portfolio shows PT but no pool trades → get_onchain_activity(pt_ad
 When adding new tools, follow the three-layer architecture:
 
 1. **Description (Layer 2):** Teach any protocol mechanics that affect interpretation of the tool's data. Use "could be" language for ambiguous signals. Add cross-reference nudges to at least one related tool.
-2. **Output (Layer 3):** If the data contains signals that require domain knowledge to notice (e.g., a ratio that implies a strategy, an event that could mean different things), compute a structured hint and include it in the output. Make it salient but not prescriptive.
+2. **Output (Layer 3):** If the data contains signals that require domain knowledge to notice (e.g., a ratio that implies a strategy, an event that could mean different things), compute a structured hint and include it in the output. Make it salient but not prescriptive. When an observable pattern has multiple valid interpretations, present them as competing branches with equal weight — do not pick one. Flag small sample sizes as statistically insufficient.
 3. **Resource (Layer 1):** If the new tool introduces fundamental protocol concepts not covered by existing resources, update `spectra-overview` in `index.ts`.
 4. **Dissolution condition:** Document when the new structure would no longer serve, in `docs/dissolution-conditions.md`. Every Layer 3 hint, architectural pattern, and generative friction point carries a dissolution condition — a prompt for re-evaluation when circumstances change.
 
