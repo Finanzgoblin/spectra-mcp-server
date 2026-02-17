@@ -85,7 +85,11 @@ export function formatPoolCompact(pt: SpectraPt, pool: SpectraPool, chain: strin
   const days = daysToMaturity(pt.maturity);
   const lpApy = pool.lpApy?.total ? ` | LP ${formatPct(pool.lpApy.total)}` : "";
   const ibtAddr = pt.ibt?.address ? ` | IBT: ${pt.ibt.address}` : "";
-  return `${pt.name} (${chain}) | APY ${apy} | TVL ${tvl} | Liq ${liq} | ${days}d${lpApy} | PT: ${pt.address} | Pool: ${pool.address || "?"}${ibtAddr}`;
+  const tags = pt.tags && pt.tags.length > 0 ? ` | ${pt.tags.join(",")}` : "";
+  const points = pt.multipliers && pt.multipliers.length > 0
+    ? ` | Points: ${pt.multipliers.map(m => `${m.name} ${m.amount}x`).join(", ")}`
+    : "";
+  return `${pt.name} (${chain}) | APY ${apy} | TVL ${tvl} | Liq ${liq} | ${days}d${lpApy} | PT: ${pt.address} | Pool: ${pool.address || "?"}${ibtAddr}${tags}${points}`;
 }
 
 /** One-line scan opportunity summary for compact output. */
@@ -93,7 +97,10 @@ export function formatScanOpportunityCompact(opp: ScanOpportunity, rank: number)
   const loopTag = opp.looping
     ? ` | Loop ${formatPct(opp.looping.optimalEffectiveNetApy)} @${opp.looping.optimalLoops}x`
     : "";
-  return `#${rank} ${opp.pt.name} (${opp.chain}) | Eff ${formatPct(opp.effectiveApy)} | Impl ${formatPct(opp.impliedApy)} | Impact ${formatPct(opp.entryImpactPct)} | ${opp.daysToMaturity}d${loopTag} | PT: ${opp.ptAddress} | Pool: ${opp.poolAddress}`;
+  const points = opp.pt.multipliers && opp.pt.multipliers.length > 0
+    ? ` | Points: ${opp.pt.multipliers.map(m => `${m.name} ${m.amount}x`).join(", ")}`
+    : "";
+  return `#${rank} ${opp.pt.name} (${opp.chain}) | Eff ${formatPct(opp.effectiveApy)} | Impl ${formatPct(opp.impliedApy)} | Impact ${formatPct(opp.entryImpactPct)} | ${opp.daysToMaturity}d${loopTag} | PT: ${opp.ptAddress} | Pool: ${opp.poolAddress}${points}`;
 }
 
 /** One-line YT arb opportunity summary for compact output. */
@@ -135,7 +142,7 @@ export function formatPoolSummary(pt: SpectraPt, pool: SpectraPool, chain: strin
     `  Maturity: ${formatDate(pt.maturity)} (${daysToMaturity(pt.maturity)} days)`,
     `  TVL: ${formatUsd(pt.tvl?.usd || 0)}`,
     `  Implied APY: ${formatPct(pool.impliedApy || 0)}`,
-    `  PT Price: ${formatUsd(pool.ptPrice?.usd || 0)}`,
+    `  PT Price: ${formatUsd(pool.ptPrice?.usd || 0)}${pool.ptPrice?.underlying != null ? ` (${pool.ptPrice.underlying.toFixed(6)} underlying)` : ""}`,
     `  YT Price: ${formatUsd(pool.ytPrice?.usd || 0)}`,
     `  YT Leverage: ${(pool.ytLeverage || 0).toFixed(1)}x`,
     `  Pool Liquidity: ${formatUsd(pool.liquidity?.usd || 0)}`,
@@ -173,14 +180,53 @@ export function formatPoolSummary(pt: SpectraPt, pool: SpectraPool, chain: strin
     lines.push(`  Underlying Address: ${pt.underlying.address}`);
   }
   lines.push(
-    `  IBT: ${pt.ibt?.symbol || "?"} -- Base APR: ${formatPct(pt.ibt?.apr?.total || 0)}`,
+    `  IBT: ${pt.ibt?.symbol || "?"} -- APR: ${formatPct(pt.ibt?.apr?.total || 0)}`,
   );
+
+  // IBT APR breakdown — surface composition so agents can reason about yield sources
+  const ibtDetails = pt.ibt?.apr?.details;
+  if (ibtDetails) {
+    if (ibtDetails.base != null) {
+      lines.push(`    +-- Base: ${formatPct(ibtDetails.base)}`);
+    }
+    if (ibtDetails.rewards && Object.keys(ibtDetails.rewards).length > 0) {
+      for (const [token, apy] of Object.entries(ibtDetails.rewards)) {
+        lines.push(`    +-- ${token}: ${formatPct(apy)}`);
+      }
+    }
+  }
+
   if (pt.ibt?.address) {
     lines.push(`  IBT Address: ${pt.ibt.address}`);
   }
   lines.push(
     `  IBT Protocol: ${pt.ibt?.protocol || "Unknown"}`,
   );
+
+  // BaseIbt — unwrapped token for sw-* wrappers (reveals the actual underlying IBT)
+  if (pt.baseIbt?.symbol) {
+    lines.push(`  Base IBT: ${pt.baseIbt.symbol} (${pt.baseIbt.name || "?"})`);
+    if (pt.baseIbt.address) lines.push(`  Base IBT Address: ${pt.baseIbt.address}`);
+  }
+
+  // Maturity value — what 1 PT redeems for at maturity
+  if (pt.maturityValue) {
+    const parts: string[] = [];
+    if (pt.maturityValue.underlying != null) parts.push(`${pt.maturityValue.underlying.toFixed(6)} underlying`);
+    if (pt.maturityValue.usd != null) parts.push(formatUsd(pt.maturityValue.usd));
+    if (parts.length > 0) lines.push(`  Maturity Value (per PT): ${parts.join(" / ")}`);
+  }
+
+  // Points program multipliers (e.g. Drops 3x, InfiniFi 12x)
+  if (pt.multipliers && pt.multipliers.length > 0) {
+    const mParts = pt.multipliers.map(m => `${m.name} ${m.amount}x`);
+    lines.push(`  Points: ${mParts.join(", ")}`);
+  }
+
+  // Asset tags (stable, eth, etc.)
+  if (pt.tags && pt.tags.length > 0) {
+    lines.push(`  Tags: ${pt.tags.join(", ")}`);
+  }
 
   return lines.join("\n");
 }
@@ -245,6 +291,20 @@ export function formatPositionSummary(pos: SpectraPt, chain: string): PositionRe
     lines.push(`    Already Claimed: ${claimedAmt.toLocaleString("en-US", { maximumFractionDigits: 6 })} ${pos.ibt?.symbol || "IBT"}`);
   }
 
+  // Maturity value — what 1 PT redeems for at maturity
+  if (pos.maturityValue) {
+    const mvParts: string[] = [];
+    if (pos.maturityValue.underlying != null) mvParts.push(`${pos.maturityValue.underlying.toFixed(6)} underlying`);
+    if (pos.maturityValue.usd != null) mvParts.push(formatUsd(pos.maturityValue.usd));
+    if (mvParts.length > 0) lines.push(`    Maturity Value (per PT): ${mvParts.join(" / ")}`);
+  }
+
+  // Points programs
+  if (pos.multipliers && pos.multipliers.length > 0) {
+    const mParts = pos.multipliers.map(m => `${m.name} ${m.amount}x`);
+    lines.push(`  Points: ${mParts.join(", ")}`);
+  }
+
   // Current rates for context
   if (pool) {
     lines.push(``);
@@ -260,11 +320,29 @@ export function formatPositionSummary(pos: SpectraPt, chain: string): PositionRe
       }
     }
     lines.push(`    IBT Variable APR: ${formatPct(pos.ibt?.apr?.total || 0)}`);
+    // IBT APR breakdown — surface composition
+    const ibtDet = pos.ibt?.apr?.details;
+    if (ibtDet) {
+      const ibtParts: string[] = [];
+      if (ibtDet.base != null) ibtParts.push(`base ${formatPct(ibtDet.base)}`);
+      if (ibtDet.rewards) {
+        for (const [token, apy] of Object.entries(ibtDet.rewards)) {
+          ibtParts.push(`${token} ${formatPct(apy)}`);
+        }
+      }
+      if (ibtParts.length > 0) {
+        lines.push(`      (${ibtParts.join(" + ")})`);
+      }
+    }
   }
 
   if (expired) {
     lines.push(``);
-    lines.push(`  MATURED -- PT redeemable 1:1. Consider claiming.`);
+    if (pos.maturityValue?.underlying != null) {
+      lines.push(`  MATURED -- PT redeems at ${pos.maturityValue.underlying.toFixed(6)} underlying. Consider claiming.`);
+    } else {
+      lines.push(`  MATURED -- PT redeemable at maturity value. Consider claiming.`);
+    }
   }
 
   // Position shape — show balance ratios so the agent can reason about strategy
@@ -1374,6 +1452,17 @@ export function formatScanOpportunity(opp: ScanOpportunity, rank: number, boostI
   // Underlying info
   lines.push(`    Underlying: ${opp.underlying} | IBT: ${opp.ibtSymbol} (${opp.ibtProtocol})`);
 
+  // Points programs
+  if (opp.pt.multipliers && opp.pt.multipliers.length > 0) {
+    const mParts = opp.pt.multipliers.map(m => `${m.name} ${m.amount}x`);
+    lines.push(`    Points: ${mParts.join(", ")}`);
+  }
+
+  // Tags
+  if (opp.pt.tags && opp.pt.tags.length > 0) {
+    lines.push(`    Tags: ${opp.pt.tags.join(", ")}`);
+  }
+
   // Addresses
   lines.push(`    PT Address: ${opp.ptAddress}`);
   if (opp.ibtAddress) {
@@ -1471,6 +1560,17 @@ export function formatYtArbitrageOpportunity(opp: YtArbitrageOpportunity, rank: 
 
   // Underlying info
   lines.push(`    Underlying: ${opp.underlying} | IBT: ${opp.ibtSymbol} (${opp.ibtProtocol})`);
+
+  // Points programs
+  if (opp.pt.multipliers && opp.pt.multipliers.length > 0) {
+    const mParts = opp.pt.multipliers.map(m => `${m.name} ${m.amount}x`);
+    lines.push(`    Points: ${mParts.join(", ")}`);
+  }
+
+  // Tags
+  if (opp.pt.tags && opp.pt.tags.length > 0) {
+    lines.push(`    Tags: ${opp.pt.tags.join(", ")}`);
+  }
 
   // Addresses
   lines.push(`    PT Address: ${opp.ptAddress}`);
@@ -1630,6 +1730,28 @@ export function formatMetavaultSummary(mv: SpectraMetavault, chain: string): str
       const lpApyStr = pool?.lpApy?.total ? ` | LP APY ${formatPct(pool.lpApy.total)}` : "";
       lines.push(`    ${pos.symbol} -- ${formatDate(pos.maturity)} (${matLabel}) -- TVL ${formatUsd(pos.tvl?.usd || 0)}${ptApyStr}${lpApyStr}`);
       lines.push(`      PT: ${pos.address}${pool ? ` | Pool: ${pool.address}` : ""}`);
+
+      // LP APY breakdown per position — surface composition
+      const lpDetails = pool?.lpApy?.details;
+      if (lpDetails) {
+        const parts: string[] = [];
+        if (lpDetails.fees) parts.push(`fees ${formatPct(lpDetails.fees)}`);
+        if (lpDetails.pt) parts.push(`PT ${formatPct(lpDetails.pt)}`);
+        if (lpDetails.ibt) parts.push(`IBT ${formatPct(lpDetails.ibt)}`);
+        if (lpDetails.rewards) {
+          for (const [token, apy] of Object.entries(lpDetails.rewards)) {
+            parts.push(`${token} ${formatPct(apy)}`);
+          }
+        }
+        if (lpDetails.boostedRewards) {
+          for (const [token, range] of Object.entries(lpDetails.boostedRewards)) {
+            parts.push(`${token} gauge ${formatPct(range.min)}-${formatPct(range.max)}`);
+          }
+        }
+        if (parts.length > 0) {
+          lines.push(`      LP: ${parts.join(" + ")}`);
+        }
+      }
     }
   }
 
