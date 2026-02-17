@@ -35,12 +35,18 @@ const TOPICS: Record<string, string> = {
   "position_analysis": `Reading Wallet Strategy from Holdings
 - Minting always produces equal PT and YT. Any imbalance means tokens were traded.
 - get_portfolio shows Position Shape as a balance ratio (e.g., "YT/PT 4:1" or "PT only").
-- Key ratios to reason about:
-    YT >> PT: the holder sold or LPed PT after minting
-    PT >> YT: the holder sold YT, or bought PT without minting
-    LP present with low PT/YT: tokens were absorbed into the pool
-    Balanced PT + YT: recently minted, no directional trade yet
-- Large activity volume with small current holdings → capital recycled through the position
+- IMPORTANT: Each observable position shape has MULTIPLE valid explanations.
+  get_pool_activity now presents these as competing interpretation branches (A/B/C).
+  Do not collapse to one interpretation without cross-referencing portfolio + activity.
+- Observable ratios (what you see) vs interpretations (what it could mean):
+    YT >> PT: EITHER sold PT after minting (YT accumulation) OR intermediate state before next move OR partial unwind in progress
+    PT >> YT: EITHER sold YT via flash-redeem (fixed-rate preference) OR bought PT without minting OR preparing LP deposit
+    LP present with low PT/YT: EITHER tokens absorbed into pool OR LP-centric strategy OR residual from mint loop
+    Balanced PT + YT: EITHER recently minted (no trade yet) OR deliberate balanced position OR about to split
+    Fully exited (0 PT, 0 YT): EITHER completed round-trip OR capital moved elsewhere OR temporary exit
+- Large activity volume with small current holdings: EITHER capital recycled (looping) OR completed round-trip OR funds moved to another venue. Cannot distinguish without cross-referencing.
+- Multi-pool wallets may show DIFFERENT strategies per pool. Do not force a unified narrative.
+  The absence of a single consistent strategy IS a signal — it may indicate adaptive behavior.
 - Strategies often span multiple wallets — check all concentrated addresses.`,
 
   "looping": `Looping Strategy (leveraged fixed yield via Morpho)
