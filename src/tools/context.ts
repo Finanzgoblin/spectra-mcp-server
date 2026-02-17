@@ -47,7 +47,15 @@ const TOPICS: Record<string, string> = {
 - Large activity volume with small current holdings: EITHER capital recycled (looping) OR completed round-trip OR funds moved to another venue. Cannot distinguish without cross-referencing.
 - Multi-pool wallets may show DIFFERENT strategies per pool. Do not force a unified narrative.
   The absence of a single consistent strategy IS a signal — it may indicate adaptive behavior.
-- Strategies often span multiple wallets — check all concentrated addresses.`,
+- Strategies often span multiple wallets — check all concentrated addresses.
+- OBSERVATION COVERAGE: get_pool_activity now quantifies its own blind spots:
+  (1) Value coverage — % of position explained by observable activity. Low coverage
+      means most behavior is invisible to the tool (direct mints, transfers, cross-chain).
+  (2) Temporal gaps — dark periods with no observable events.
+  (3) Data source coverage — which of 5 available sources were actually consulted.
+  Coverage metrics bound the domain of validity for ALL interpretations. If value
+  coverage is <50%, the interpretation branches are based on a MINORITY of behavior.
+  Always check coverage before sizing confidence or positions.`,
 
   "looping": `Looping Strategy (leveraged fixed yield via Morpho)
 1. Deposit underlying into ERC-4626 vault → get IBT
@@ -82,6 +90,10 @@ Goal: "Analyze a wallet's strategy"
   Then: get_address_activity(address) for cross-pool pattern discovery
   Portfolio shows WHAT they hold; activity shows HOW they got there. Neither alone tells
   the full story — always cross-reference both.
+  CHECK OBSERVATION COVERAGE in get_pool_activity output. If value coverage is low,
+  most of the address's behavior is invisible. Do not present high-confidence strategy
+  assessments when coverage is below 50%. Size conviction to coverage, not to the
+  coherence of the interpretation.
 
 Goal: "Evaluate a specific opportunity in depth"
   Start with: get_pt_details(chain, pt_address) for base data
