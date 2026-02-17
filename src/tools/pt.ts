@@ -30,15 +30,17 @@ export function register(server: McpServer): void {
     "get_pt_details",
     `Get detailed information about a specific Spectra Principal Token (PT).
 Returns: maturity date, TVL, implied APY, PT/YT prices, pool liquidity, LP APY breakdown,
-underlying asset info, IBT protocol, and yield leverage.
-Use this when you know the specific PT address and chain.
+underlying asset info, IBT protocol, yield leverage, pool reserves (IBT/PT amounts),
+maturity redemption value, points program multipliers, asset tags, and base IBT info.
 
 Protocol context:
 - PT trades at a discount to its underlying (the discount IS the fixed yield).
-  At maturity, PT redeems 1:1 for the underlying asset.
+  At maturity, PT redeems for the maturityValue shown (may differ from 1:1).
 - PT + YT = 1 underlying at maturity. YT price = 1 - PT price (in underlying terms).
 - YT leverage shows how much yield exposure 1 unit of YT provides relative to holding
   the underlying directly. Higher leverage = more amplified yield exposure.
+- IBT APR breakdown shows organic yield vs external incentive programs. High APR from
+  incentives alone may not be sustainable.
 
 Use compare_yield to compare fixed vs. variable rates. Use get_looping_strategy to
 calculate leveraged fixed yield via Morpho. Use get_portfolio to check wallet holdings.
@@ -90,7 +92,8 @@ Use get_pool_activity to see trading patterns on this pool.`,
     "list_pools",
     `List all active Spectra pools on a given chain.
 Returns a summary of each pool including: asset name, maturity, TVL, implied APY,
-LP APY, and pool liquidity. Useful for discovering available yield opportunities.
+LP APY, pool liquidity, pool reserves (IBT/PT amounts with ratio), IBT APR breakdown
+(organic vs incentive yield), maturity redemption value, points multipliers, and asset tags.
 
 Each pool is a Curve StableSwap-NG AMM pair of IBT (interest-bearing token) and PT
 (Principal Token). Implied APY is the fixed rate you lock in by buying PT at discount.
