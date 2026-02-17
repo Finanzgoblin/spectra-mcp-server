@@ -766,6 +766,171 @@ export function formatFlowAccounting(opts: {
 }
 
 // =============================================================================
+// Observation Coverage — quantifying blind spots
+// =============================================================================
+
+/**
+ * Compute and format observation coverage metrics for address-specific analysis.
+ *
+ * Coverage metrics tell you HOW MUCH of the address's behavior this analysis
+ * actually sees.  They do NOT interpret behavior — they bound the domain of
+ * validity for any interpretation.
+ *
+ * Three dimensions:
+ *   1. Value coverage — observable activity volume vs current position value
+ *   2. Temporal coverage — active periods vs dark periods (no observable events)
+ *   3. Data source coverage — which tools contributed vs which are available
+ *
+ * Design: these are not interpretations.  They are structural measurements
+ * of the analysis's own incompleteness.  An agent that sees "35% value coverage"
+ * should size its confidence (and any downstream position) accordingly.
+ */
+export function formatObservationCoverage(opts: {
+  /** Total USD value of all observable pool activity for this address */
+  totalActivityVolumeUsd: number;
+  /** Current position value in USD (PT + YT + LP) */
+  currentPositionValueUsd: number;
+  /** Array of entry timestamps (unix seconds) — used for temporal gap analysis */
+  entryTimestamps: number[];
+  /** Whether portfolio data was successfully fetched */
+  portfolioFetched: boolean;
+  /** Whether pool context (liquidity, APY) was successfully fetched */
+  poolContextFetched: boolean;
+  /** Whether on-chain data was consulted (get_onchain_activity) */
+  onchainConsulted?: boolean;
+  /** Whether cross-chain data was consulted (get_address_activity) */
+  crossChainConsulted?: boolean;
+  /** Pool liquidity USD — for sizing context */
+  poolLiquidityUsd?: number;
+  /** Number of distinct activity types observed */
+  distinctActivityTypes: number;
+}): string[] {
+  const lines: string[] = [];
+  lines.push(`  Observation Coverage (what this analysis can and cannot see):`);
+
+  const {
+    totalActivityVolumeUsd,
+    currentPositionValueUsd,
+    entryTimestamps,
+    portfolioFetched,
+    poolContextFetched,
+    onchainConsulted = false,
+    crossChainConsulted = false,
+    poolLiquidityUsd = 0,
+    distinctActivityTypes,
+  } = opts;
+
+  // -------------------------------------------------------
+  // 1. Value coverage — does activity volume explain position size?
+  // -------------------------------------------------------
+  if (currentPositionValueUsd > 0 && totalActivityVolumeUsd > 0) {
+    const ratio = totalActivityVolumeUsd / currentPositionValueUsd;
+    const pct = (ratio * 100).toFixed(0);
+
+    if (ratio < 0.5) {
+      // Activity volume is much less than position — large invisible component
+      lines.push(`    Value Coverage: ${pct}% — observable activity (${formatUsd(totalActivityVolumeUsd)}) explains less than half of current position (${formatUsd(currentPositionValueUsd)}).`);
+      lines.push(`      ⚠ Significant invisible activity: direct mints, cross-protocol moves, L2 bridges, or transfers not visible in pool data.`);
+      lines.push(`      Implication: any strategy inference from pool activity alone is based on a minority of this address's behavior.`);
+    } else if (ratio < 1.5) {
+      lines.push(`    Value Coverage: ${pct}% — observable activity roughly matches position size. Pool activity may explain most of the position.`);
+    } else {
+      // Activity volume >> position — capital recycling or completed round-trips
+      lines.push(`    Value Coverage: ${pct}% — observable activity (${formatUsd(totalActivityVolumeUsd)}) significantly exceeds current position (${formatUsd(currentPositionValueUsd)}).`);
+      lines.push(`      This suggests capital recycling (looping), completed round-trips (entered and exited), or funds that moved elsewhere.`);
+    }
+  } else if (currentPositionValueUsd === 0 && totalActivityVolumeUsd > 0) {
+    lines.push(`    Value Coverage: Position is zero despite ${formatUsd(totalActivityVolumeUsd)} in observable activity.`);
+    lines.push(`      Address has fully exited, or position is held in a form not visible here (different pool, chain, or protocol).`);
+  } else if (currentPositionValueUsd > 0 && totalActivityVolumeUsd === 0) {
+    lines.push(`    Value Coverage: 0% — no observable pool activity, but position value is ${formatUsd(currentPositionValueUsd)}.`);
+    lines.push(`      ⚠ Entire position was built through channels invisible to this tool (direct mints, transfers, other pools).`);
+  }
+
+  // -------------------------------------------------------
+  // 2. Temporal coverage — when was this address active vs dark?
+  // -------------------------------------------------------
+  if (entryTimestamps.length >= 2) {
+    const sorted = [...entryTimestamps].sort((a, b) => a - b);
+    const firstTs = sorted[0];
+    const lastTs = sorted[sorted.length - 1];
+    const spanDays = Math.max(1, (lastTs - firstTs) / 86400);
+    const activeDays = new Set(sorted.map(ts => Math.floor(ts / 86400))).size;
+
+    // Find the longest gap between consecutive entries
+    let maxGapSeconds = 0;
+    for (let i = 1; i < sorted.length; i++) {
+      const gap = sorted[i] - sorted[i - 1];
+      if (gap > maxGapSeconds) maxGapSeconds = gap;
+    }
+    const maxGapDays = maxGapSeconds / 86400;
+
+    const activePct = ((activeDays / spanDays) * 100).toFixed(0);
+    lines.push(`    Temporal Coverage: active on ${activeDays} of ~${spanDays.toFixed(0)} days spanned (${activePct}%).`);
+
+    if (maxGapDays > 7) {
+      lines.push(`      Longest dark period: ${maxGapDays.toFixed(1)} days with no observable pool activity.`);
+      lines.push(`      During dark periods, the address may have been: inactive, operating on other pools/chains, or using channels invisible to pool activity data.`);
+    }
+  }
+
+  // -------------------------------------------------------
+  // 3. Data source coverage — what contributed to this analysis?
+  // -------------------------------------------------------
+  const sourcesUsed: string[] = ["pool activity (Curve AMM events)"];
+  const sourcesAvailable: string[] = ["pool activity (Curve AMM events)"];
+
+  if (portfolioFetched) {
+    sourcesUsed.push("portfolio (PT/YT/LP balances)");
+  }
+  sourcesAvailable.push("portfolio (PT/YT/LP balances)");
+
+  if (poolContextFetched) {
+    sourcesUsed.push("pool context (liquidity, implied APY)");
+  }
+  sourcesAvailable.push("pool context (liquidity, implied APY)");
+
+  sourcesAvailable.push("on-chain events (eth_getLogs: mints, redeems, yield claims)");
+  if (onchainConsulted) {
+    sourcesUsed.push("on-chain events (eth_getLogs)");
+  }
+
+  sourcesAvailable.push("cross-chain scan (all Spectra pools)");
+  if (crossChainConsulted) {
+    sourcesUsed.push("cross-chain scan");
+  }
+
+  const coverageRatio = `${sourcesUsed.length}/${sourcesAvailable.length}`;
+  lines.push(`    Data Sources: ${coverageRatio} available sources consulted.`);
+  lines.push(`      Used: ${sourcesUsed.join(", ")}`);
+
+  const unused = sourcesAvailable.filter(s => !sourcesUsed.includes(s));
+  if (unused.length > 0) {
+    lines.push(`      Not consulted: ${unused.join(", ")}`);
+    lines.push(`      → Invisible to this analysis: standalone mints/redeems (no pool event), yield claims, cross-chain activity, and any non-Spectra operations.`);
+  }
+
+  // -------------------------------------------------------
+  // 4. Activity type coverage — how many event types observed?
+  // -------------------------------------------------------
+  if (distinctActivityTypes === 1) {
+    lines.push(`    Activity Diversity: only 1 event type observed. Single-type activity is the highest-ambiguity pattern — competing interpretations diverge maximally.`);
+  } else if (distinctActivityTypes === 2) {
+    lines.push(`    Activity Diversity: 2 event types observed. Paired types constrain interpretations somewhat, but multiple strategies produce the same pairs.`);
+  }
+
+  // -------------------------------------------------------
+  // Boundary marker — the meta-statement
+  // -------------------------------------------------------
+  lines.push(`    ─────────────────────────────────────────`);
+  lines.push(`    This analysis covers interpretations consistent with observed history.`);
+  lines.push(`    It cannot account for unprecedented behavior or invisible activity.`);
+  lines.push(`    Position sizing should assume this analysis is incomplete, not comprehensive.`);
+
+  return lines;
+}
+
+// =============================================================================
 // Math Helpers
 // =============================================================================
 
