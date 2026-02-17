@@ -60,6 +60,9 @@ Layer 3: Structured Output Hints (computed at runtime in tool output)
   → Yield Dimensions in scan output: fixed, variable, LP, looping side-by-side
   → Strategy Tension: competing PT looping vs YT accumulation on same pool
   → On-chain quote source indicators: "(on-chain Curve get_dy)" vs "(estimated)"
+  → Yield composition: IBT APR breakdown (organic base vs external incentives) in scans and quotes
+  → Pool reserves: IBT/PT amounts with ratio for AMM imbalance analysis
+  → Points multipliers: external programs (Drops, InfiniFi, Firelight) with amounts
   → "Could be" / "at current rates" language: preserves ambiguity in ranked output
   → Makes key signals SALIENT without prescribing interpretation
 ```
@@ -87,8 +90,8 @@ This was validated: a subagent spawned with zero priming correctly identified a 
 | Tool | Description |
 |------|-------------|
 | `get_best_fixed_yields` | Scan ALL chains for top fixed-rate opportunities. The main discovery tool. Supports `compact` mode. |
-| `list_pools` | List all active pools on a specific chain, sorted by APY/TVL/maturity. Supports `compact` mode and `include_expired` flag. |
-| `get_pt_details` | Deep dive on a specific Principal Token -- full data. |
+| `list_pools` | List all active pools on a specific chain, sorted by APY/TVL/maturity. Surfaces pool reserves, IBT APR composition, maturityValue, multipliers, and tags. Supports `compact` mode and `include_expired` flag. |
+| `get_pt_details` | Deep dive on a specific Principal Token -- full data including maturityValue, multipliers (points programs), tags, pool reserves, IBT APR composition, and baseIbt for wrapper tokens. |
 | `compare_yield` | Fixed (PT) vs. variable (IBT) yield comparison with spread mechanics and entry cost analysis. |
 | `get_looping_strategy` | Calculate leveraged yield via PT + Morpho looping with effective liquidation margins. Auto-fetches live Morpho rates when a matching market exists. |
 | `get_morpho_markets` | Find Morpho lending markets that accept Spectra PTs as collateral. Filter by chain or symbol. |
@@ -99,10 +102,10 @@ This was validated: a subagent spawned with zero priming correctly identified a 
 | `get_pool_volume` | Historical buy/sell trading volume for a specific pool. Accepts PT address or pool address. |
 | `get_pool_activity` | Recent individual transactions (buys, sells, liquidity events) with filtering, address isolation mode (cycle detection, flow accounting, contract/EOA detection, gas estimates). Accepts PT or pool address. |
 | `get_address_activity` | Cross-pool address scanner — finds all pools an address has interacted with on a chain (or all chains) in one call. Includes expired/matured pools via portfolio lookup. Per-pool breakdown + cross-pool aggregates. |
-| `quote_trade` | PT trade quoting with on-chain Curve `get_dy()` for exact output (falls back to math estimate). Shows price impact, slippage, and minOut. |
+| `quote_trade` | PT trade quoting with on-chain Curve `get_dy()` for exact output (falls back to math estimate). Shows price impact, slippage, minOut, pool reserves with ratio, and IBT APR composition. |
 | `simulate_portfolio_after_trade` | Preview portfolio BEFORE/AFTER a hypothetical PT trade with deltas, warnings, and on-chain quoting. |
-| `scan_opportunities` | Capital-aware opportunity scanner: price impact at your size, effective APY, Morpho looping, pool capacity. Supports `compact` mode. |
-| `scan_yt_arbitrage` | YT rate vs IBT rate arbitrage scanner -- finds pools where YT is mispriced relative to underlying yield. Supports `compact` mode. |
+| `scan_opportunities` | Capital-aware opportunity scanner: price impact at your size, effective APY, Morpho looping, pool capacity, IBT APR composition, and points multipliers. Supports `compact` mode. |
+| `scan_yt_arbitrage` | YT rate vs IBT rate arbitrage scanner -- finds pools where YT is mispriced relative to underlying yield. Includes IBT APR composition for spread sustainability analysis. Supports `compact` mode. |
 | `get_ve_info` | Live veSPECTRA data from Base chain (total supply via on-chain read) + boost calculator with per-pool multipliers. |
 | `get_metavaults` | List live MetaVaults across all chains (or a specific chain). Returns curator info, TVL, live APY, share price, active positions, and epoch history. |
 | `model_metavault_strategy` | MetaVault "double loop" strategy modeler for curators. Live mode (chain + metavault_address) auto-fetches APY from API; manual mode accepts base_apy directly. Models curator economics (fee revenue, TVL creation, effective ROI). |
@@ -293,8 +296,8 @@ src/
     pendle.ts       list_pendle_markets, compare_pendle_spectra (cross-protocol yield comparison)
     onchain.ts      get_onchain_activity (historical eth_getLogs, Curve pool + PT vault event decoding, dynamic RPC)
 test.cjs              Integration test suite (371 tests, McpTestClient over stdio)
-test-agent.cjs        Agent reasoning test suite (12 multi-tool workflow tests)
-AGENT-TESTS.md        25-question subjective test suite with grading rubrics
+test-agent.cjs        Agent reasoning test suite (13 multi-tool workflow tests)
+AGENT-TESTS.md        28-question subjective test suite with grading rubrics
 docs/
   recursive-meta-process.md    Open Emergence metaframework specification
   dissolution-conditions.md    Dissolution conditions for every structural decision
@@ -359,7 +362,7 @@ npm run test:agent
 
 ### Agent Reasoning Tests (`test-agent.cjs`)
 
-12 multi-tool workflow tests that verify the "reasoning surface" — can an agent using these tools detect anomalies, cross-reference data, and avoid protocol-mechanic traps? Tests include:
+13 multi-tool workflow tests that verify the "reasoning surface" — can an agent using these tools detect anomalies, cross-reference data, and avoid protocol-mechanic traps? Tests include:
 
 - **Protocol context completeness** — all topics present, Router batching ambiguities explained, cross-reference guidance included
 - **Anomaly detection** — raw APY vs capital-aware rankings produce different results (intentional divergence)
@@ -373,10 +376,11 @@ npm run test:agent
 - **Morpho market classification** — Spectra vs Pendle/Other labels, unsupported chain handling
 - **MetaVault scan inclusion** — `include_metavaults` flag correctly shows/hides MetaVault section
 - **Pendle comparison** — head-to-head matched pairs with delta, Pendle-only markets, aggregates
+- **Surfaced API fields** — maturityValue, multipliers (points programs), tags, pool reserves with ratio, IBT APR composition, baseIbt for wrapper tokens
 
 ### Subjective Test Suite (`AGENT-TESTS.md`)
 
-25 copy-pasteable questions across 6 tiers (basic tool usage → edge cases) with grading rubrics for evaluating LLM agent quality when using the MCP tools. Designed to be run by spawning subagents and scoring responses manually or with LLM-as-judge.
+28 copy-pasteable questions across 7 tiers (basic tool usage → yield composition) with grading rubrics for evaluating LLM agent quality when using the MCP tools. Designed to be run by spawning subagents and scoring responses manually or with LLM-as-judge.
 
 ## API Reference
 

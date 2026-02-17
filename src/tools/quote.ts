@@ -12,7 +12,7 @@ import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork } from "../config.js";
 import { fetchSpectra, fetchCurveGetDy } from "../api.js";
 import type { TradeQuote } from "../types.js";
-import { parsePtResponse, buildQuoteFromPt, formatTradeQuote, formatPct } from "../formatters.js";
+import { parsePtResponse, buildQuoteFromPt, formatTradeQuote, formatPct, formatBalance } from "../formatters.js";
 
 /**
  * Try to build a TradeQuote from an on-chain Curve get_dy() call.
@@ -81,8 +81,9 @@ pool directly — YT is acquired by minting (deposit IBT to get PT+YT) or sold v
 flash-redeem. To estimate YT value: YT price = 1 - PT price in underlying terms.
 
 Returns: expected output amount, spot & effective rates, price impact,
-and minOut at the specified slippage tolerance. The output indicates whether the
-quote came from on-chain (exact) or math estimate (conservative upper bound).
+and minOut at the specified slippage tolerance. Also includes pool context: IBT/PT
+reserves with ratio, and IBT APR composition (organic vs incentive yield).
+The output indicates whether the quote came from on-chain (exact) or math estimate.
 
 On-chain quotes reflect the actual Curve StableSwap-NG amplification parameter
 and current pool state — significantly more accurate than the math estimate,
@@ -150,6 +151,32 @@ makes sense relative to variable rates.`,
 
         const quoteText = formatTradeQuote(quote);
 
+        // Pool context: reserves + IBT APR composition (helps agents assess pool health)
+        const contextLines: string[] = [];
+        if (pool.ibtAmount && pool.ptAmount) {
+          const ibtDec = pt.ibt?.decimals ?? pt.decimals ?? 18;
+          const ptDec = pt.decimals ?? 18;
+          const ibtReserve = formatBalance(pool.ibtAmount, ibtDec);
+          const ptReserve = formatBalance(pool.ptAmount, ptDec);
+          if (ibtReserve > 0 || ptReserve > 0) {
+            const ratio = ibtReserve > 0 ? (ptReserve / ibtReserve).toFixed(2) : "N/A";
+            contextLines.push(`  Pool Reserves: ${ibtReserve.toLocaleString("en-US", { maximumFractionDigits: 2 })} IBT / ${ptReserve.toLocaleString("en-US", { maximumFractionDigits: 2 })} PT (ratio ${ratio})`);
+          }
+        }
+        const ibtDetails = pt.ibt?.apr?.details;
+        if (ibtDetails) {
+          const parts: string[] = [];
+          if (ibtDetails.base != null) parts.push(`base ${formatPct(ibtDetails.base)}`);
+          if (ibtDetails.rewards) {
+            for (const [token, apy] of Object.entries(ibtDetails.rewards)) {
+              parts.push(`${token} ${formatPct(apy)}`);
+            }
+          }
+          if (parts.length > 0) {
+            contextLines.push(`  IBT APR: ${formatPct(pt.ibt?.apr?.total || 0)} (${parts.join(" + ")})`);
+          }
+        }
+
         // Next-step hints + negative signal for high impact
         const nextLines: string[] = [``, `--- Next Steps ---`];
         nextLines.push(`• Preview portfolio: simulate_portfolio_after_trade(chain="${chain}", pt_address="${pt_address}", address=YOUR_WALLET, amount=${amount}, side="${side}")`);
@@ -161,7 +188,8 @@ makes sense relative to variable rates.`,
           nextLines.push(`⚠ High impact (${formatPct(quote.priceImpactPct)}): consider reducing trade size, or check pool depth via get_pool_volume(chain="${chain}", pool_address="${pool.address || pt_address}")`);
         }
 
-        const text = quoteText + nextLines.join("\n");
+        const contextStr = contextLines.length > 0 ? "\n\n--- Pool Context ---\n" + contextLines.join("\n") : "";
+        const text = quoteText + contextStr + nextLines.join("\n");
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
         const text = `Error quoting trade: ${e.message}`;

@@ -48,6 +48,8 @@ Unlike get_best_fixed_yields (which ranks by raw APY), this tool computes:
 - Effective APY after amortizing entry cost over days to maturity
 - Morpho looping availability and optimal leveraged net APY
 - Pool capacity (max capital before price impact exceeds your threshold)
+- IBT APR composition (organic base yield vs external incentive programs)
+- Points program multipliers and asset tags per opportunity
 - Risk warnings (low liquidity, short maturity, high impact)
 - MetaVault alternatives (curated auto-rolling LP vaults with YT compounding)
 
