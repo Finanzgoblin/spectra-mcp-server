@@ -370,6 +370,26 @@ check your current positions. Use scan_opportunities for multi-chain comparison.
           ``,
           `  Fixed (Spectra PT):   ${formatPct(fixedApy)} APY`,
           `  Variable (${pt.ibt?.symbol || "IBT"}${pt.ibt?.address ? ` @ ${pt.ibt.address}` : ""}):   ${formatPct(variableApr)} APR`,
+        ];
+
+        // IBT APR breakdown — surface composition so agents can reason about variable rate sources
+        const ibtDetails = pt.ibt?.apr?.details;
+        if (ibtDetails) {
+          const parts: string[] = [];
+          if (ibtDetails.base != null) {
+            parts.push(`base ${formatPct(ibtDetails.base)}`);
+          }
+          if (ibtDetails.rewards && Object.keys(ibtDetails.rewards).length > 0) {
+            for (const [token, apy] of Object.entries(ibtDetails.rewards)) {
+              parts.push(`${token} ${formatPct(apy)}`);
+            }
+          }
+          if (parts.length > 0) {
+            lines.push(`    +-- Composition: ${parts.join(" + ")}`);
+          }
+        }
+
+        lines.push(
           `  Spread:               ${spread >= 0 ? "+" : ""}${formatPct(spread)}`,
           ``,
           `  Maturity: ${formatDate(pt.maturity)} (${maturityDays} days)`,
@@ -385,7 +405,7 @@ check your current positions. Use scan_opportunities for multi-chain comparison.
           `  Entry cost narrows spread by ${formatPct(annualizedEntryCost)} annualized — scales with trade size relative to pool depth.`,
           ``,
           `  LP Alternative: ${formatPct(lpData.lpApy)} APY (${lpParts.join(" + ")})`,
-        ];
+        );
         if (lpData.lpApyBoostedTotal > lpData.lpApy) {
           lines.push(`  LP (Max Boost): ${formatPct(lpData.lpApyBoostedTotal)} APY (with max veSPECTRA boost)`);
         }

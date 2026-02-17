@@ -20,16 +20,21 @@ export interface SpectraPoolLpApy {
 
 export interface SpectraPool {
   address?: string;
+  type?: string;                       // AMM type (e.g. "CURVE_SNG")
+  chainId?: number;
   impliedApy?: number;
   ptPrice?: { usd?: number; underlying?: number };
   ytPrice?: { usd?: number };
   liquidity?: { usd?: number };
   lpApy?: SpectraPoolLpApy;
   ytLeverage?: number;
+  ibtAmount?: string;                  // raw pool reserves — IBT side (BigInt string, divide by 10^ibt.decimals)
+  ptAmount?: string;                   // raw pool reserves — PT side (BigInt string, divide by 10^pt.decimals)
   lpt?: {
     balance?: string;
     decimals?: number;
-    price?: { usd?: number };
+    supply?: string;                   // total LP token supply (BigInt string)
+    price?: { usd?: number; underlying?: number };
   };
 }
 
@@ -39,25 +44,48 @@ export interface SpectraIbt {
   name?: string;
   protocol?: string;
   decimals?: number;
-  apr?: { total?: number };
+  price?: { underlying?: number; usd?: number };
+  apr?: {
+    total?: number;
+    details?: {
+      base?: number;                          // organic yield (e.g. lending rate)
+      rewards?: Record<string, number>;       // external incentives (e.g. { "KAT Base": 35, "KAT App Rewards": 5.94 })
+    };
+  };
 }
 
 export interface SpectraUnderlying {
   address?: string;
   symbol?: string;
   name?: string;
+  decimals?: number;
+  price?: { usd?: number };
 }
 
 export interface SpectraPt {
   name: string;
+  symbol?: string;
   address: string;
+  chainId?: number;
   maturity: number;
   decimals?: number;
   balance?: string;
-  tvl?: { usd?: number };
+  rate?: string;                       // PT rate (BigInt string)
+  createdAt?: number;                  // Unix timestamp of PT creation
+  tvl?: { usd?: number; underlying?: number };
+  maturityValue?: { underlying?: number; usd?: number };  // what 1 PT redeems for at maturity
+  tags?: string[];                     // asset classification (e.g. ["stable"], ["eth"])
+  multipliers?: Array<{ amount: number; name: string }>;  // points programs (e.g. Drops, InfiniFi, Firelight)
   pools?: SpectraPool[];
   underlying?: SpectraUnderlying;
   ibt?: SpectraIbt;
+  baseIbt?: {                          // unwrapped IBT for sw-* tokens (only present on Spectra wrappers)
+    address?: string;
+    symbol?: string;
+    name?: string;
+    decimals?: number;
+    price?: { usd?: number };
+  };
   yt?: {
     balance?: string;
     decimals?: number;
@@ -272,7 +300,7 @@ export interface SpectraMetavaultPosition {
   pools: Array<{
     address: string;
     ptApy: number;
-    lpApy: { total: number };
+    lpApy: SpectraPoolLpApy;
   }>;
 }
 
@@ -285,6 +313,7 @@ export interface SpectraMetavaultEpoch {
     details?: {
       rewards?: Record<string, number>;
       boostedRewards?: Record<string, { min: number; max: number }>;
+      ibtRewards?: Record<string, number>;    // IBT-level external incentives (e.g. { "KAT Base": 22.63 })
     };
     boostedTotal?: number;
   };
