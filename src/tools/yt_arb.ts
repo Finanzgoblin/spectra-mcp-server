@@ -43,8 +43,9 @@ market price. When these diverge significantly, an arbitrage opportunity may exi
   - Positive spread (IBT APR > YT implied rate): IBT earns more than the YT price implies
   - Negative spread (IBT APR < YT implied rate): IBT earns less than the YT price implies
 
-Returns opportunities sorted by absolute spread, with capital-aware entry sizing
-and break-even analysis.
+Returns opportunities sorted by absolute spread, with capital-aware entry sizing,
+break-even analysis, and IBT APR composition (organic base yield vs external incentive
+programs — critical for assessing whether the spread is driven by sustainable yield).
 
 Execution mechanics:
 - Buying YT: The Spectra Router can flash-mint (flash-borrow IBT → mint PT+YT → sell PT
