@@ -1568,6 +1568,50 @@ export function formatMetavaultSummary(mv: SpectraMetavault, chain: string): str
   lines.push(`  TVL: ${formatUsd(mv.tvl?.usd || 0)} (${(mv.tvl?.underlying || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })} ${mv.underlying?.symbol || "tokens"})`);
   lines.push(`  Live APY: ${formatPct(mv.liveApy?.total || 0)}`);
 
+  // APY breakdown — surface composition so agents can reason about yield sources
+  const apyDetails = mv.liveApy?.details;
+  if (apyDetails) {
+    if (apyDetails.base != null) {
+      lines.push(`    +-- Base (fees + PT + IBT): ${formatPct(apyDetails.base)}`);
+    }
+    if (apyDetails.ibtRewards && Object.keys(apyDetails.ibtRewards).length > 0) {
+      for (const [token, apy] of Object.entries(apyDetails.ibtRewards)) {
+        lines.push(`    +-- ${token} (IBT reward): ${formatPct(apy)}`);
+      }
+    }
+    if (apyDetails.mvRewards && Object.keys(apyDetails.mvRewards).length > 0) {
+      for (const [token, apy] of Object.entries(apyDetails.mvRewards)) {
+        lines.push(`    +-- ${token} (MetaVault reward): ${formatPct(apy)}`);
+      }
+    }
+    if (apyDetails.boostedRewards && Object.keys(apyDetails.boostedRewards).length > 0) {
+      for (const [token, range] of Object.entries(apyDetails.boostedRewards)) {
+        lines.push(`    +-- ${token} Gauge: ${formatPct(range.min)} -> ${formatPct(range.max)} (with veSPECTRA boost)`);
+      }
+    }
+
+    // Compute incentive share — surface the composition ratio
+    const baseApy = apyDetails.base || 0;
+    const totalApy = mv.liveApy?.total || 0;
+    if (totalApy > 0 && baseApy < totalApy) {
+      const incentiveApy = totalApy - baseApy;
+      const incentivePct = (incentiveApy / totalApy) * 100;
+      // Summarize all incentive token names
+      const incentiveTokens = [
+        ...Object.keys(apyDetails.ibtRewards || {}),
+        ...Object.keys(apyDetails.mvRewards || {}),
+      ];
+      const tokenList = incentiveTokens.length > 0
+        ? ` (${[...new Set(incentiveTokens)].join(", ")})`
+        : "";
+      lines.push(`    Yield composition: ${formatPct(baseApy)} base + ${formatPct(incentiveApy)} incentives${tokenList} (${incentivePct.toFixed(0)}% from incentive programs)`);
+    }
+  }
+
+  if (mv.liveApy?.boostedTotal && mv.liveApy.boostedTotal > (mv.liveApy?.total || 0)) {
+    lines.push(`  Live APY (Max Boost): ${formatPct(mv.liveApy.boostedTotal)}`);
+  }
+
   // Price & exchange rate
   if (mv.price) {
     lines.push(`  Share Price: ${formatUsd(mv.price.usd || 0)} (${(mv.price.underlying || 0).toFixed(6)} underlying)`);
@@ -1683,7 +1727,9 @@ export function formatMetavaultCompact(mv: SpectraMetavault, chain: string): str
   const apy = formatPct(mv.liveApy?.total || 0);
   const tvl = formatUsd(mv.tvl?.usd || 0);
   const posCount = mv.positions?.length || 0;
-  return `${mv.metadata?.title || mv.name} (${chain}) | ${mv.underlying?.symbol || "?"} | APY ${apy} | TVL ${tvl} | ${posCount} position(s) | Curator: ${mv.curator?.name || "?"} | ${mv.address}`;
+  const baseApy = mv.liveApy?.details?.base;
+  const baseNote = baseApy != null ? ` (base ${formatPct(baseApy)})` : "";
+  return `${mv.metadata?.title || mv.name} (${chain}) | ${mv.underlying?.symbol || "?"} | APY ${apy}${baseNote} | TVL ${tvl} | ${posCount} position(s) | Curator: ${mv.curator?.name || "?"} | ${mv.address}`;
 }
 
 /** Concise per-MetaVault format for the scan_opportunities output section. */
@@ -1705,6 +1751,21 @@ export function formatMetavaultScanEntry(mv: SpectraMetavault, chain: string, ra
 
   lines.push(`  MV#${rank}  ${mv.metadata?.title || mv.name} (${mv.symbol}) -- ${chain}`);
   lines.push(`        APY: ${apy} | TVL: ${tvl} | Underlying: ${underlying}`);
+
+  // Surface yield composition — base vs incentive
+  const apyDetails = mv.liveApy?.details;
+  const baseApy = apyDetails?.base || 0;
+  const totalApy = mv.liveApy?.total || 0;
+  if (apyDetails && totalApy > 0 && baseApy < totalApy) {
+    const incentiveApy = totalApy - baseApy;
+    const incentiveTokens = [
+      ...Object.keys(apyDetails.ibtRewards || {}),
+      ...Object.keys(apyDetails.mvRewards || {}),
+    ];
+    const tokenList = [...new Set(incentiveTokens)].join(", ");
+    lines.push(`        Yield: ${formatPct(baseApy)} base + ${formatPct(incentiveApy)} incentives${tokenList ? ` (${tokenList})` : ""}`);
+  }
+
   lines.push(`        Curator: ${curator} | ${posCount} active position(s)${bestLpApy > 0 ? ` (best LP APY: ${formatPct(bestLpApy)})` : ""}`);
   lines.push(`        Address: ${mv.address}`);
   lines.push(`        \u2192 model_metavault_strategy(chain="${chain}", metavault_address="${mv.address}")`);

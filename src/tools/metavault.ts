@@ -92,7 +92,7 @@ YT yield back into LP positions. They are managed by curators who earn
 performance fees on depositor yield.
 
 Returns all MetaVaults with:
-  - Curator info, TVL, live APY, share price
+  - Curator info, TVL, live APY with full breakdown (base vs external incentives)
   - Active positions (PT markets the vault is deployed in)
   - Underlying asset details
   - Vault flows: epoch-by-epoch deposit/withdrawal analysis (net inflows vs outflows
@@ -253,7 +253,7 @@ revenue for managing the vault (rolling positions, compounding YT, maintaining a
             }
             const tvlStr = formatUsd(mv.tvl?.usd || 0);
             const curatorName = mv.curator?.name || "Unknown";
-            liveDataNote = [
+            const noteLines = [
               `--- Live MetaVault Data ---`,
               `  Name: ${mv.metadata?.title || mv.name} (${mv.symbol})`,
               `  Chain: ${chain}`,
@@ -263,8 +263,42 @@ revenue for managing the vault (rolling positions, compounding YT, maintaining a
               `  Live APY: ${formatPct(liveApy)}${resolvedBaseApy !== liveApy ? ` (overridden to ${formatPct(resolvedBaseApy!)})` : " (used as base_apy)"}`,
               `  Share Price: ${formatUsd(mv.price?.usd || 0)}`,
               `  Positions: ${mv.positions?.length || 0} active`,
-              ``,
-            ].join("\n");
+            ];
+
+            // Surface APY composition — let agent reason about what's base vs incentive
+            const apyDetails = mv.liveApy?.details;
+            if (apyDetails) {
+              noteLines.push(``);
+              noteLines.push(`  APY Composition:`);
+              if (apyDetails.base != null) {
+                noteLines.push(`    Base (fees + PT + IBT): ${formatPct(apyDetails.base)}`);
+              }
+              if (apyDetails.ibtRewards && Object.keys(apyDetails.ibtRewards).length > 0) {
+                for (const [token, apy] of Object.entries(apyDetails.ibtRewards)) {
+                  noteLines.push(`    ${token} (IBT reward): ${formatPct(apy)}`);
+                }
+              }
+              if (apyDetails.mvRewards && Object.keys(apyDetails.mvRewards).length > 0) {
+                for (const [token, apy] of Object.entries(apyDetails.mvRewards)) {
+                  noteLines.push(`    ${token} (MetaVault reward): ${formatPct(apy)}`);
+                }
+              }
+              if (apyDetails.boostedRewards && Object.keys(apyDetails.boostedRewards).length > 0) {
+                for (const [token, range] of Object.entries(apyDetails.boostedRewards)) {
+                  noteLines.push(`    ${token} Gauge: ${formatPct(range.min)} -> ${formatPct(range.max)}`);
+                }
+              }
+
+              const baseApy = apyDetails.base || 0;
+              if (liveApy > 0 && baseApy < liveApy) {
+                const incentiveApy = liveApy - baseApy;
+                const incentivePct = (incentiveApy / liveApy) * 100;
+                noteLines.push(`    => ${formatPct(baseApy)} base + ${formatPct(incentiveApy)} incentives (${incentivePct.toFixed(0)}% from incentive programs)`);
+              }
+            }
+
+            noteLines.push(``);
+            liveDataNote = noteLines.join("\n");
           } else {
             liveDataNote = [
               `--- Live MetaVault Data ---`,
