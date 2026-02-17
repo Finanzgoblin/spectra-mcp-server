@@ -146,11 +146,26 @@ export function formatPoolSummary(pt: SpectraPt, pool: SpectraPool, chain: strin
     `  YT Price: ${formatUsd(pool.ytPrice?.usd || 0)}`,
     `  YT Leverage: ${(pool.ytLeverage || 0).toFixed(1)}x`,
     `  Pool Liquidity: ${formatUsd(pool.liquidity?.usd || 0)}`,
+  ];
+
+  // Pool reserves — surface IBT/PT composition for AMM imbalance analysis
+  if (pool.ibtAmount && pool.ptAmount) {
+    const ibtDec = pt.ibt?.decimals ?? pt.decimals ?? 18;
+    const ptDec = pt.decimals ?? 18;
+    const ibtReserve = formatBalance(pool.ibtAmount, ibtDec);
+    const ptReserve = formatBalance(pool.ptAmount, ptDec);
+    if (ibtReserve > 0 || ptReserve > 0) {
+      const ratio = ibtReserve > 0 ? (ptReserve / ibtReserve).toFixed(2) : "N/A";
+      lines.push(`  Pool Reserves: ${ibtReserve.toLocaleString("en-US", { maximumFractionDigits: 2 })} IBT / ${ptReserve.toLocaleString("en-US", { maximumFractionDigits: 2 })} PT (ratio ${ratio})`);
+    }
+  }
+
+  lines.push(
     `  LP APY: ${formatPct(pool.lpApy?.total || 0)}`,
     `    +-- Fees: ${formatPct(pool.lpApy?.details?.fees || 0)}`,
     `    +-- PT: ${formatPct(pool.lpApy?.details?.pt || 0)}`,
     `    +-- IBT: ${formatPct(pool.lpApy?.details?.ibt || 0)}`,
-  ];
+  );
 
   // External token rewards (e.g. KAT, rFLR, wAVAX)
   const rewards = pool.lpApy?.details?.rewards;
@@ -1452,6 +1467,21 @@ export function formatScanOpportunity(opp: ScanOpportunity, rank: number, boostI
   // Underlying info
   lines.push(`    Underlying: ${opp.underlying} | IBT: ${opp.ibtSymbol} (${opp.ibtProtocol})`);
 
+  // IBT APR composition — critical for reasoning about where yield comes from
+  const scanIbtDet = opp.pt.ibt?.apr?.details;
+  if (scanIbtDet) {
+    const ibtParts: string[] = [];
+    if (scanIbtDet.base != null) ibtParts.push(`base ${formatPct(scanIbtDet.base)}`);
+    if (scanIbtDet.rewards) {
+      for (const [token, apy] of Object.entries(scanIbtDet.rewards)) {
+        ibtParts.push(`${token} ${formatPct(apy)}`);
+      }
+    }
+    if (ibtParts.length > 0) {
+      lines.push(`    IBT APR: ${formatPct(opp.variableApr)} (${ibtParts.join(" + ")})`);
+    }
+  }
+
   // Points programs
   if (opp.pt.multipliers && opp.pt.multipliers.length > 0) {
     const mParts = opp.pt.multipliers.map(m => `${m.name} ${m.amount}x`);
@@ -1560,6 +1590,21 @@ export function formatYtArbitrageOpportunity(opp: YtArbitrageOpportunity, rank: 
 
   // Underlying info
   lines.push(`    Underlying: ${opp.underlying} | IBT: ${opp.ibtSymbol} (${opp.ibtProtocol})`);
+
+  // IBT APR composition — essential for YT arb: is the IBT APR organic or incentive-driven?
+  const ytIbtDet = opp.pt.ibt?.apr?.details;
+  if (ytIbtDet) {
+    const ibtParts: string[] = [];
+    if (ytIbtDet.base != null) ibtParts.push(`base ${formatPct(ytIbtDet.base)}`);
+    if (ytIbtDet.rewards) {
+      for (const [token, apy] of Object.entries(ytIbtDet.rewards)) {
+        ibtParts.push(`${token} ${formatPct(apy)}`);
+      }
+    }
+    if (ibtParts.length > 0) {
+      lines.push(`    IBT APR Composition: ${ibtParts.join(" + ")}`);
+    }
+  }
 
   // Points programs
   if (opp.pt.multipliers && opp.pt.multipliers.length > 0) {

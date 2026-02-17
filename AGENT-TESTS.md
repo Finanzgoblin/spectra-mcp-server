@@ -18,7 +18,7 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 | ❌ C  | Weak — parrots tool output without interpreting, or misuses tools |
 | ❌ F  | Fails — hallucinates data, gives dangerous advice, or fundamentally misunderstands protocol |
 
-**Target: 20+ of 25 at ✅ (A or A+) for a production-quality agent.**
+**Target: 22+ of 28 at ✅ (A or A+) for a production-quality agent.**
 
 ---
 
@@ -378,6 +378,52 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 
 ---
 
+## Tier 7: Yield Composition & Data Transparency
+
+### Q26: Yield Composition Reasoning ⭐
+**Prompt:** "The ClearStar MetaVault on Katana shows ~150% APY. Where is this yield coming from? Is it sustainable?"
+
+**Tests:** Can the agent decompose yield into its constituent parts using tool data?
+
+**Expected:** Agent should call `get_metavaults` and see the APY breakdown (base ~3.5% + KAT incentive programs ~147%). Should explicitly note that ~97% of the APY comes from external incentive programs (KAT tokens), not organic yield. Should discuss sustainability: incentive programs can end, token price can drop.
+
+**Grading:**
+- ✅ Decomposes APY into base vs incentives, quantifies the split, discusses sustainability
+- ⚠️ Notes yield is "high" but doesn't decompose it
+- ❌ Accepts 150% at face value or fabricates an explanation (e.g., "YT compounding")
+
+**Key failure mode:** Agent fabricates a yield explanation instead of reading the breakdown data from the tool output.
+
+---
+
+### Q27: IBT APR Composition
+**Prompt:** "What's driving the variable rate on the syUSD pool on Katana?"
+
+**Tests:** Can the agent read IBT APR breakdown from `get_pt_details` or `compare_yield`?
+
+**Expected:** Should call a tool that surfaces IBT APR details and identify that the variable rate is composed of a base organic rate plus external incentives (e.g., KAT Base, KAT App Rewards). Should note the split between organic and incentivized yield.
+
+**Grading:**
+- ✅ Identifies base rate vs incentive components with specific numbers
+- ⚠️ Reports total APR but doesn't decompose it
+- ❌ Makes up a reason for the high variable rate
+
+---
+
+### Q28: Points Programs Discovery
+**Prompt:** "Are there any Spectra pools with points multipliers? What programs are available?"
+
+**Tests:** Can the agent discover and report multipliers from pool data?
+
+**Expected:** Should use `list_pools` on Katana/Flare and identify multipliers (e.g., Drops 3x, InfiniFi 12x, Firelight 1x). Should explain these are external points programs layered on top of yield.
+
+**Grading:**
+- ✅ Discovers multipliers, names the programs, explains what they mean
+- ⚠️ Mentions points exist but doesn't identify specific programs
+- ❌ Says there are no points programs or invents fake ones
+
+---
+
 ## Key Failure Modes to Watch For
 
 1. **Parrot mode** — Agent repeats tool output verbatim without interpreting
@@ -388,6 +434,8 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 6. **No cross-referencing** — Analyzes wallet activity without checking portfolio, or vice versa
 7. **Risk blindness** — Recommends high-APY vaults without discussing composability risk, chain maturity, or curator dependency
 8. **Inconsistent skepticism** — Flags risks on one vault but not another with similar risk profile
+9. **Yield fabrication** — Invents explanations for high APY instead of reading the composition breakdown from tool data
+10. **Incentive blindness** — Fails to note that yield is predominantly from external incentive programs, not organic protocol revenue
 
 ## Running These Tests
 
@@ -395,7 +443,7 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 2. Let the agent call whatever tools it wants
 3. Grade against the rubric
 4. Record: number of tool calls, grade, and notable observations
-5. Target: ≥20/25 at ✅ grade
+5. Target: ≥22/28 at ✅ grade
 
 Questions marked with ⭐ are the most discriminating — they consistently separate agents
 that truly understand the protocol from those that just relay tool outputs.

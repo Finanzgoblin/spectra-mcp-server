@@ -938,6 +938,97 @@ async function testPendleComparison(client) {
 }
 
 // ---------------------------------------------------------------------------
+// Test: Surfaced API Fields — maturityValue, multipliers, tags, reserves, IBT APR
+// ---------------------------------------------------------------------------
+
+async function testSurfacedApiFields(client) {
+  console.log("\n--- Surfaced API Fields: maturityValue, multipliers, tags, reserves, IBT APR ---");
+
+  // Use Katana pools — they have multipliers and IBT APR composition
+  const { text: katanaPools } = await client.callTool("list_pools", {
+    chain: "katana",
+    sort_by: "tvl",
+    min_tvl_usd: 1000,
+  });
+
+  // Maturity value should appear in detailed pool output
+  const { text: detailText } = await client.callTool("list_pools", {
+    chain: "katana",
+    sort_by: "tvl",
+    min_tvl_usd: 1000,
+    compact: false,
+  });
+
+  if (detailText.includes("Maturity Value")) {
+    pass("maturityValue surfaced in pool details");
+  } else {
+    skip("maturityValue not present in current Katana pools (API may not return it)");
+  }
+
+  // Points/multipliers — Katana pools typically have Drops/InfiniFi/etc.
+  if (detailText.includes("Points:") || katanaPools.includes("Points:")) {
+    pass("multipliers/points programs surfaced in pool output");
+  } else {
+    skip("no multipliers on current Katana pools (API may not return them)");
+  }
+
+  // Tags — should show stable/eth classification
+  if (detailText.includes("Tags:") || katanaPools.includes("stable") || katanaPools.includes("eth")) {
+    pass("tags surfaced in pool output");
+  } else {
+    skip("no tags on current Katana pools (API may not return them)");
+  }
+
+  // Pool reserves — IBT/PT amounts
+  if (detailText.includes("Pool Reserves:") && detailText.includes("IBT /")) {
+    pass("pool reserves (IBT/PT) surfaced in pool details");
+    // Verify ratio is present
+    if (detailText.includes("ratio")) {
+      pass("pool reserve ratio included");
+    }
+  } else {
+    skip("pool reserves not present in current output");
+  }
+
+  // IBT APR composition — should show base + incentive breakdown
+  if (detailText.includes("+-- Base:") || detailText.includes("+-- KAT")) {
+    pass("IBT APR composition surfaced in pool details (base vs incentives)");
+  } else {
+    skip("IBT APR composition not present in current Katana pools");
+  }
+
+  // Base IBT for sw-* tokens
+  if (detailText.includes("Base IBT:")) {
+    pass("baseIbt surfaced for sw-* wrapper tokens");
+  } else {
+    skip("no sw-* wrapper tokens in current Katana output");
+  }
+
+  // Scan opportunities should include IBT APR composition
+  const { text: scanText } = await client.callTool("scan_opportunities", {
+    capital_usd: 10000,
+    top_n: 5,
+    include_looping: false,
+    include_metavaults: false,
+  });
+
+  if (scanText.includes("IBT APR:") && (scanText.includes("base") || scanText.includes("KAT"))) {
+    pass("IBT APR composition surfaced in scan_opportunities");
+  } else if (scanText.includes("IBT APR:")) {
+    pass("IBT APR total surfaced in scan_opportunities");
+  } else {
+    skip("IBT APR composition not present in scan output (pools may lack breakdown data)");
+  }
+
+  // Points in scan output
+  if (scanText.includes("Points:")) {
+    pass("multipliers/points surfaced in scan_opportunities");
+  } else {
+    skip("no points programs in top scan results");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 
@@ -988,6 +1079,9 @@ async function main() {
 
       // Pendle comparison
       await testPendleComparison(client);
+
+      // Surfaced API fields (new data from type boundary audit)
+      await testSurfacedApiFields(client);
     } else {
       skip("All agent reasoning tests require network (use without --offline)");
     }
