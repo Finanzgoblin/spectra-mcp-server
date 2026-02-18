@@ -2,7 +2,7 @@
  * Data formatting helpers — USD, percentages, dates, balances, pool/position/Morpho summaries.
  */
 
-import type { SpectraPt, SpectraPool, SpectraMetavault, MorphoMarket, PendleMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavaultBridgeTx } from "./types.js";
+import type { SpectraPt, SpectraPool, SpectraMetavault, MorphoMarket, PendleMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavaultBridgeTx, MerklTokenReward } from "./types.js";
 import { SUPPORTED_CHAINS } from "./config.js";
 
 // =============================================================================
@@ -383,6 +383,64 @@ export function formatPositionSummary(pos: SpectraPt, chain: string): PositionRe
   }
 
   return { text: lines.join("\n"), totalValue };
+}
+
+// =============================================================================
+// Merkl Rewards Formatting
+// =============================================================================
+
+/** Format Merkl reward lines for a single position. Returns indented lines to append. */
+export function formatMerklRewards(rewards: MerklTokenReward[]): string[] {
+  if (!rewards || rewards.length === 0) return [];
+
+  const lines: string[] = [];
+  lines.push(`  Merkl Rewards:`);
+
+  for (const r of rewards) {
+    const parts: string[] = [];
+    if (r.unclaimed > 0) {
+      parts.push(`unclaimed: ${r.unclaimed.toLocaleString("en-US", { maximumFractionDigits: 4 })}`);
+    }
+    if (r.pending > 0) {
+      parts.push(`pending: ${r.pending.toLocaleString("en-US", { maximumFractionDigits: 4 })}`);
+    }
+    if (r.accumulated > 0) {
+      parts.push(`total earned: ${r.accumulated.toLocaleString("en-US", { maximumFractionDigits: 4 })}`);
+    }
+    if (parts.length > 0) {
+      lines.push(`    ${r.symbol}: ${parts.join(" | ")}`);
+    }
+  }
+
+  return lines.length > 1 ? lines : [];
+}
+
+/** Format unmatched Merkl rewards (from pools no longer in portfolio). */
+export function formatUnmatchedMerklRewards(
+  unmatchedByChain: Array<{ chain: string; rewards: MerklTokenReward[] }>,
+): string {
+  const allRewards = unmatchedByChain.filter(c => c.rewards.length > 0);
+  if (allRewards.length === 0) return "";
+
+  const lines: string[] = [
+    ``,
+    `--- Unclaimed Merkl Rewards (from exited positions) ---`,
+  ];
+
+  for (const { chain, rewards } of allRewards) {
+    for (const r of rewards) {
+      const parts: string[] = [];
+      if (r.unclaimed > 0) parts.push(`unclaimed: ${r.unclaimed.toLocaleString("en-US", { maximumFractionDigits: 4 })}`);
+      if (r.pending > 0) parts.push(`pending: ${r.pending.toLocaleString("en-US", { maximumFractionDigits: 4 })}`);
+      if (parts.length > 0) {
+        lines.push(`  ${r.symbol} (${chain}): ${parts.join(" | ")}`);
+      }
+    }
+  }
+
+  lines.push(`  Note: These rewards are from pools you may have exited. Claim on https://app.merkl.xyz/`);
+
+  return lines.length > 2 ? lines.join("\n") : "";
 }
 
 // =============================================================================
