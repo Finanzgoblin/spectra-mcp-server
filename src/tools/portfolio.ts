@@ -3,10 +3,10 @@
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { CHAIN_ENUM, EVM_ADDRESS, API_NETWORKS, resolveNetwork } from "../config.js";
-import type { SpectraPt, MorphoMarket } from "../types.js";
-import { fetchSpectra, findMorphoMarketsForPts } from "../api.js";
-import { formatUsd, formatPositionSummary, formatPortfolioHints, daysToMaturity, formatBalance } from "../formatters.js";
+import { CHAIN_ENUM, EVM_ADDRESS, API_NETWORKS, SUPPORTED_CHAINS, resolveNetwork } from "../config.js";
+import type { SpectraPt, MerklTokenReward, MerklChainRewards } from "../types.js";
+import { fetchSpectra, findMorphoMarketsForPts, fetchMerkl, parseMerklRewards } from "../api.js";
+import { formatUsd, formatPositionSummary, formatPortfolioHints, formatMerklRewards, formatUnmatchedMerklRewards, daysToMaturity, formatBalance } from "../formatters.js";
 import type { SpectraPool } from "../types.js";
 
 export function register(server: McpServer): void {
@@ -16,6 +16,10 @@ export function register(server: McpServer): void {
 Returns PT, YT, and LP balances with USD values, claimable yield,
 and current rates. Queries a single chain or all chains.
 Use this to understand what a wallet currently holds on Spectra.
+
+Also fetches unclaimed Merkl rewards (SPECTRA gauge emissions and other
+incentive programs) per position. Merkl rewards are best-effort — if the
+Merkl API is unavailable, the portfolio still displays without reward data.
 
 Protocol context:
 - Depositing IBT always mints BOTH PT and YT in equal amounts. If a wallet holds
@@ -46,16 +50,28 @@ Protocol context:
 
         type Position = { pos: SpectraPt; chain: string };
         const failedChains: string[] = [];
+        const merklFailedChains: string[] = [];
 
-        const portfolioResults = await Promise.allSettled(
-          networks.map(async (net): Promise<Position[]> => {
-            const raw = await fetchSpectra(`/${net}/portfolio/${address}`) as any;
-            const items = Array.isArray(raw) ? raw : raw?.data || [];
-            return items.map((pos: SpectraPt) => ({ pos, chain: net }));
-          })
-        );
+        // Fire portfolio + Merkl fetches in parallel (no added latency)
+        const [portfolioResults, merklSettled] = await Promise.all([
+          Promise.allSettled(
+            networks.map(async (net): Promise<Position[]> => {
+              const raw = await fetchSpectra(`/${net}/portfolio/${address}`) as any;
+              const items = Array.isArray(raw) ? raw : raw?.data || [];
+              return items.map((pos: SpectraPt) => ({ pos, chain: net }));
+            })
+          ),
+          Promise.allSettled(
+            networks.map(async (net): Promise<{ chain: string; raw: Record<string, any> }> => {
+              const chainInfo = SUPPORTED_CHAINS[net];
+              if (!chainInfo) return { chain: net, raw: {} };
+              const raw = await fetchMerkl(address, chainInfo.id);
+              return { chain: net, raw };
+            })
+          ),
+        ]);
 
-        // Collect results and track which chains failed
+        // Collect portfolio results and track which chains failed
         const allPositions: Position[] = [];
         portfolioResults.forEach((result, i) => {
           if (result.status === "fulfilled") {
@@ -67,6 +83,44 @@ Protocol context:
 
         const chainWarning = failedChains.length > 0
           ? `\nNote: ${failedChains.length} chain(s) failed to respond (${failedChains.join(", ")}). Results may be partial.\n`
+          : "";
+
+        // Build set of known pool addresses for Merkl matching
+        const knownPoolAddresses = new Set<string>();
+        for (const { pos } of allPositions) {
+          for (const pool of pos.pools || []) {
+            if (pool.address) knownPoolAddresses.add(pool.address.toLowerCase());
+          }
+        }
+
+        // Parse Merkl rewards and match to portfolio positions
+        const merklByChain: MerklChainRewards[] = [];
+        merklSettled.forEach((result, i) => {
+          if (result.status === "fulfilled") {
+            const { raw, chain: c } = result.value;
+            if (Object.keys(raw).length > 0) {
+              merklByChain.push(parseMerklRewards(raw, knownPoolAddresses, c));
+            }
+          } else {
+            merklFailedChains.push(networks[i]);
+          }
+        });
+
+        // Build unified lookup: poolAddress -> MerklTokenReward[]
+        const merklByPool = new Map<string, MerklTokenReward[]>();
+        for (const chainRewards of merklByChain) {
+          for (const [poolAddr, rewards] of chainRewards.matched) {
+            const existing = merklByPool.get(poolAddr);
+            if (existing) {
+              existing.push(...rewards);
+            } else {
+              merklByPool.set(poolAddr, [...rewards]);
+            }
+          }
+        }
+
+        const merklWarning = merklFailedChains.length > 0
+          ? `\nNote: Merkl rewards unavailable for ${merklFailedChains.join(", ")}. Reward totals may be incomplete.\n`
           : "";
 
         // Format only positions with non-zero balances, collecting totalValue from each
@@ -107,7 +161,19 @@ Protocol context:
         for (const { pos, chain: c } of allPositions) {
           const result = formatPositionSummary(pos, c);
           if (result) {
-            summaries.push(result.text);
+            // Append Merkl rewards if any exist for this position's pool
+            let positionText = result.text;
+            const poolAddr = pos.pools?.[0]?.address?.toLowerCase();
+            if (poolAddr) {
+              const merklRewards = merklByPool.get(poolAddr);
+              if (merklRewards && merklRewards.length > 0) {
+                const rewardLines = formatMerklRewards(merklRewards);
+                if (rewardLines.length > 0) {
+                  positionText += "\n" + rewardLines.join("\n");
+                }
+              }
+            }
+            summaries.push(positionText);
             totalPortfolioValue += result.totalValue;
             // Collect data for portfolio-level hints
             const decimals = pos.decimals ?? 18;
@@ -146,12 +212,21 @@ Protocol context:
         const scope = chain || "all chains";
         const header = `Spectra Portfolio for ${address} (${scope}):\n` +
           `Total Positions: ${summaries.length} | Estimated Value: ${formatUsd(totalPortfolioValue)}\n`;
-        let text = header + chainWarning + "\n" + summaries.join("\n\n");
+        let text = header + chainWarning + merklWarning + "\n" + summaries.join("\n\n");
 
         // Layer 3: Portfolio-level hints for multi-position portfolios
         const portfolioHintLines = formatPortfolioHints(hintData, totalPortfolioValue);
         if (portfolioHintLines.length > 0) {
           text += "\n" + portfolioHintLines.join("\n");
+        }
+
+        // Unmatched Merkl rewards (from exited positions)
+        const unmatchedByChain = merklByChain
+          .filter(c => c.unmatched.length > 0)
+          .map(c => ({ chain: c.chain, rewards: c.unmatched }));
+        const unmatchedText = formatUnmatchedMerklRewards(unmatchedByChain);
+        if (unmatchedText) {
+          text += unmatchedText;
         }
 
         // Next-step hints: Morpho looping opportunities + general follow-ups

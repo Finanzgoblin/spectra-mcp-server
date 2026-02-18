@@ -1029,6 +1029,63 @@ async function testSurfacedApiFields(client) {
 }
 
 // ---------------------------------------------------------------------------
+// Test: Merkl Rewards in Portfolio
+// ---------------------------------------------------------------------------
+
+async function testMerklRewardsInPortfolio(client) {
+  console.log("\n--- Merkl Rewards: portfolio integration ---");
+
+  // Test 1: Portfolio with known Merkl rewards includes "Merkl Rewards" section
+  // Using an address known to have SPECTRA gauge rewards on mainnet
+  const { text } = await client.callTool("get_portfolio", {
+    address: "0x411f9D604766f55cBEa7ca57c2d84d27D8193682",
+    chain: "mainnet",
+  }, 30_000);
+
+  if (text.includes("No active Spectra positions")) {
+    skip("test address has no active positions — cannot test Merkl integration");
+    return;
+  }
+
+  // Portfolio should load without errors
+  assert(!text.includes("Error fetching portfolio"), "portfolio loads successfully", text.slice(0, 200));
+
+  // Merkl rewards section should appear (SPECTRA gauge emissions)
+  if (text.includes("Merkl Rewards")) {
+    pass("portfolio includes Merkl Rewards section");
+
+    // SPECTRA token should be in the rewards
+    if (text.includes("SPECTRA")) {
+      pass("Merkl rewards include SPECTRA token");
+    } else {
+      skip("SPECTRA not in Merkl rewards (may be fully claimed)");
+    }
+
+    // Should show unclaimed amounts
+    if (text.includes("unclaimed:") || text.includes("pending:")) {
+      pass("Merkl rewards show unclaimed/pending amounts");
+    } else {
+      fail("Merkl rewards missing amount details", "Expected 'unclaimed:' or 'pending:' in rewards");
+    }
+  } else {
+    skip("no Merkl Rewards section — Merkl API may be unavailable or rewards fully claimed");
+  }
+
+  // Test 2: Portfolio for empty address still works (Merkl failure doesn't break it)
+  const { text: emptyText } = await client.callTool("get_portfolio", {
+    address: "0x0000000000000000000000000000000000000001",
+    chain: "mainnet",
+  }, 30_000);
+
+  assert(
+    !emptyText.startsWith("Error"),
+    "portfolio works for address with no Merkl rewards",
+    "Portfolio should not error when Merkl returns empty"
+  );
+  pass("empty-address portfolio handles Merkl gracefully");
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 
@@ -1082,6 +1139,9 @@ async function main() {
 
       // Surfaced API fields (new data from type boundary audit)
       await testSurfacedApiFields(client);
+
+      // Merkl rewards integration
+      await testMerklRewardsInPortfolio(client);
     } else {
       skip("All agent reasoning tests require network (use without --offline)");
     }
