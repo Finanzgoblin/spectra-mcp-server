@@ -459,3 +459,26 @@ export interface PositionResult {
   text: string;
   totalValue: number;
 }
+
+// =============================================================================
+// Merkl Rewards Interfaces
+// =============================================================================
+
+/** A single reward token from the Merkl API, parsed into human-readable units. */
+export interface MerklTokenReward {
+  tokenAddress: string;
+  symbol: string;
+  decimals: number;
+  accumulated: number;  // total ever earned (human units)
+  unclaimed: number;    // available to claim now
+  pending: number;      // accrued but not yet claimable
+}
+
+/** Merkl reward data for a user on a single chain. */
+export interface MerklChainRewards {
+  chain: string;
+  /** Rewards matched to known portfolio pool addresses. Key = lowercased pool address. */
+  matched: Map<string, MerklTokenReward[]>;
+  /** Rewards from pools NOT in the current portfolio (user may have exited). */
+  unmatched: MerklTokenReward[];
+}

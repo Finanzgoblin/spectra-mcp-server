@@ -17,7 +17,7 @@ import {
   CHAIN_RPC_URLS,
   MAX_LOG_BLOCK_RANGE,
 } from "./config.js";
-import type { MorphoMarket, SpectraPt, SpectraPool, SpectraMetavault, PendleMarket, RawPoolOpportunity, ChainScanResult } from "./types.js";
+import type { MorphoMarket, SpectraPt, SpectraPool, SpectraMetavault, PendleMarket, RawPoolOpportunity, ChainScanResult, MerklTokenReward, MerklChainRewards } from "./types.js";
 
 // =============================================================================
 // Retry Logic
@@ -1033,4 +1033,151 @@ export async function fetchLogs(
   });
 
   return [allLogs, chunksSucceeded, chunksTotal];
+}
+
+// =============================================================================
+// Merkl Rewards API
+// =============================================================================
+
+const MERKL_API = "https://api.merkl.xyz/v3";
+
+/**
+ * Fetch raw Merkl rewards for a user on a specific chain.
+ * Best-effort — returns empty object on any error.
+ */
+export async function fetchMerkl(
+  address: string,
+  chainId: number,
+): Promise<Record<string, any>> {
+  try {
+    const url = `${MERKL_API}/userRewards?user=${address}&chainId=${chainId}&proof=false`;
+    const res = await fetchWithRetry(() =>
+      fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
+    );
+    if (!res.ok) return {};
+    try {
+      const json = await res.json();
+      return (json && typeof json === "object") ? json as Record<string, any> : {};
+    } catch {
+      return {};
+    }
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Extract an EVM address from a Merkl reason key.
+ * Handles: "ERC20_0xAddr", "Aave_Supply_0xAddr", "MultiLog_123_ERC20_0xAddr", etc.
+ * Returns the last 0x+40hex match, or null if none found.
+ */
+export function extractPoolAddressFromReasonKey(reasonKey: string): string | null {
+  const matches = reasonKey.match(/0x[a-fA-F0-9]{40}/g);
+  if (!matches || matches.length === 0) return null;
+  return matches[matches.length - 1];
+}
+
+/**
+ * Parse a raw wei string to human-readable number. Returns 0 on invalid input.
+ */
+export function parseWei(raw: string | null | undefined, decimals: number): number {
+  if (!raw || raw === "0") return 0;
+  try {
+    const bi = BigInt(raw);
+    const safeDec = Math.max(0, Math.round(decimals));
+    let divisor = 1n;
+    for (let i = 0; i < safeDec; i++) divisor *= 10n;
+    const intPart = bi / divisor;
+    const fracPart = bi % divisor;
+    return Number(intPart) + Number(fracPart) / Number(divisor);
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Parse raw Merkl response into structured rewards, matching against known pool addresses.
+ */
+export function parseMerklRewards(
+  raw: Record<string, any>,
+  knownPoolAddresses: Set<string>,
+  chain: string,
+): MerklChainRewards {
+  const matchedMap = new Map<string, Map<string, { symbol: string; decimals: number; accumulated: number; unclaimed: number; pending: number }>>();
+  const unmatchedMap = new Map<string, { symbol: string; decimals: number; accumulated: number; unclaimed: number; pending: number }>();
+
+  for (const [tokenAddr, tokenData] of Object.entries(raw)) {
+    if (!tokenData || typeof tokenData !== "object") continue;
+    const symbol: string = (tokenData as any).symbol || "???";
+    const decimals: number = (tokenData as any).decimals ?? 18;
+    const reasons: Record<string, any> = (tokenData as any).reasons || {};
+
+    for (const [reasonKey, reasonData] of Object.entries(reasons)) {
+      if (!reasonData || typeof reasonData !== "object") continue;
+
+      const poolAddr = extractPoolAddressFromReasonKey(reasonKey);
+      if (!poolAddr) continue;
+
+      const accumulated = parseWei((reasonData as any).accumulated, decimals);
+      const unclaimed = parseWei((reasonData as any).unclaimed, decimals);
+      const pending = parseWei((reasonData as any).pending, decimals);
+
+      if (accumulated === 0 && unclaimed === 0 && pending === 0) continue;
+
+      const poolLower = poolAddr.toLowerCase();
+      if (knownPoolAddresses.has(poolLower)) {
+        if (!matchedMap.has(poolLower)) matchedMap.set(poolLower, new Map());
+        const poolTokens = matchedMap.get(poolLower)!;
+        const tokenKey = tokenAddr.toLowerCase();
+        const existing = poolTokens.get(tokenKey);
+        if (existing) {
+          existing.accumulated += accumulated;
+          existing.unclaimed += unclaimed;
+          existing.pending += pending;
+        } else {
+          poolTokens.set(tokenKey, { symbol, decimals, accumulated, unclaimed, pending });
+        }
+      } else {
+        const key = `${tokenAddr.toLowerCase()}_${poolLower}`;
+        const existing = unmatchedMap.get(key);
+        if (existing) {
+          existing.accumulated += accumulated;
+          existing.unclaimed += unclaimed;
+          existing.pending += pending;
+        } else {
+          unmatchedMap.set(key, { symbol, decimals, accumulated, unclaimed, pending });
+        }
+      }
+    }
+  }
+
+  // Convert matchedMap to MerklTokenReward arrays
+  const matched = new Map<string, MerklTokenReward[]>();
+  for (const [poolAddr, tokenMap] of matchedMap) {
+    const rewards: MerklTokenReward[] = [];
+    for (const [tokenAddr, data] of tokenMap) {
+      rewards.push({ tokenAddress: tokenAddr, ...data });
+    }
+    matched.set(poolAddr, rewards);
+  }
+
+  // Consolidate unmatched by token address
+  const unmatchedByToken = new Map<string, MerklTokenReward>();
+  for (const [key, data] of unmatchedMap) {
+    const tokenAddr = key.split("_")[0];
+    const existing = unmatchedByToken.get(tokenAddr);
+    if (existing) {
+      existing.accumulated += data.accumulated;
+      existing.unclaimed += data.unclaimed;
+      existing.pending += data.pending;
+    } else {
+      unmatchedByToken.set(tokenAddr, { tokenAddress: tokenAddr, ...data });
+    }
+  }
+
+  return {
+    chain,
+    matched,
+    unmatched: Array.from(unmatchedByToken.values()).filter(r => r.unclaimed > 0 || r.pending > 0),
+  };
 }
