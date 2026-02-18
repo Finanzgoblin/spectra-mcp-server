@@ -12,7 +12,7 @@ Any AI agent (Claude, GPT, open-source) that supports MCP can now:
 - **Analyze** specific PT/YT positions with full data (APY, TVL, liquidity, prices)
 - **Calculate** leveraged looping strategies (Spectra PT + Morpho collateral) with auto-detected borrow rates
 - **Compare** fixed vs. variable yields to make informed decisions
-- **Track** wallet portfolios across all Spectra positions (PT, YT, LP)
+- **Track** wallet portfolios across all Spectra positions (PT, YT, LP) with Merkl reward integration for complete PnL
 - **Monitor** pool trading volume, individual transaction activity, and cross-pool address scanning
 - **Quote** PT trades with on-chain Curve `get_dy()` for exact output, falling back to math estimates
 - **Simulate** portfolio state after a hypothetical trade (BEFORE / TRADE / AFTER with deltas)
@@ -125,7 +125,7 @@ The observation coverage layer addresses a deeper problem: even perfect interpre
 | `get_morpho_rate` | Get live borrow rate and state for a specific Morpho market. |
 | `get_protocol_stats` | SPECTRA tokenomics, emissions schedule, fee distribution, governance info. |
 | `get_supported_chains` | List available networks (10 chains). |
-| `get_portfolio` | Wallet positions across PT, YT, and LP with USD values and claimable yield. |
+| `get_portfolio` | Wallet positions across PT, YT, and LP with USD values, claimable yield, and Merkl rewards (SPECTRA gauge emissions + incentive programs). Rewards matched to specific pools via reason key parsing. |
 | `get_pool_volume` | Historical buy/sell trading volume for a specific pool. Accepts PT address or pool address. |
 | `get_pool_activity` | Recent individual transactions (buys, sells, liquidity events) with filtering. Address isolation mode presents competing interpretation branches (A/B/C), statistical confidence boundaries on cycles, flow accounting with competing hypotheses, contract/EOA detection, gas estimates. Accepts PT or pool address. |
 | `get_address_activity` | Cross-pool address scanner — finds all pools an address has interacted with on a chain (or all chains) in one call. Includes expired/matured pools via portfolio lookup. Per-pool breakdown + cross-pool aggregates. |
@@ -240,7 +240,7 @@ Once connected, you can ask Claude things like:
 - "What Morpho markets accept Spectra PTs as collateral?"
 - "What's the borrow rate on that Morpho PT-USDC market?"
 - "What are the current SPECTRA emissions and lock rate?"
-- "Show me the portfolio for 0xABC...DEF across all chains"
+- "Show me the portfolio for 0xABC...DEF across all chains — include any unclaimed Merkl rewards"
 - "What's the recent trading activity on this pool?"
 - "Scan all pools on mainnet for activity from address 0xABC...DEF"
 - "Check if address 0xABC...DEF is a contract or EOA and show their trading patterns"
@@ -277,6 +277,7 @@ Spectra MCP Server (this)
   +-- api.spectra.finance/v1/{chain}/pools/{pool}/activity
   +-- api.spectra.finance/v1/{chain}/metavaults
   +-- app.spectra.finance/api/v1/spectra/*
+  +-- api.merkl.xyz/v3/userRewards (unclaimed Merkl rewards per wallet)
   +-- api.morpho.org/graphql (PT collateral markets, borrow rates)
   +-- api-v2.pendle.finance/core/* (Pendle market data for cross-protocol comparison)
   +-- mainnet.base.org (veSPECTRA on-chain reads via raw eth_call)
@@ -293,12 +294,14 @@ src/
                       curator-strategy-guide), main(), graceful shutdown
   config.ts         Constants, chain config, Zod schemas, protocol parameters, veSPECTRA constants,
                       block time constants per chain, RPC URL resolution (hardcoded + dynamic override)
-  types.ts          TypeScript interfaces (SpectraPt, MorphoMarket, ScanOpportunity, etc.)
+  types.ts          TypeScript interfaces (SpectraPt, MorphoMarket, ScanOpportunity, MerklTokenReward, MerklChainRewards, etc.)
   api.ts            Fetch helpers with retry, GraphQL sanitization, Morpho batch lookup,
                       veSPECTRA RPC with Promise-based dedup cache, 30s TTL pool data cache,
                       Curve get_dy() on-chain quoting, eth_getCode contract detection,
                       MetaVault multi-chain scanning, API response validation at system boundary,
-                      chunked eth_getLogs with retry for historical event log fetching
+                      chunked eth_getLogs with retry for historical event log fetching,
+                      Merkl reward fetching and parsing (pool address extraction from reason keys,
+                      BigInt wei→human conversion, matched/unmatched reward categorization)
   formatters.ts     Formatting, BigInt LLTV parsing, closed-form leverage math,
                       price impact, fractional-day maturity, boost computation,
                       slim envelope helpers, token amount formatting (BigInt → human-readable),
@@ -307,12 +310,14 @@ src/
                       competing interpretation branches, statistical confidence boundaries,
                       flow accounting with competing hypotheses),
                       Layer 4 observation coverage (value coverage, temporal gaps,
-                      data source coverage, activity diversity, boundary markers)
+                      data source coverage, activity diversity, boundary markers),
+                      Merkl reward display (per-position matched rewards, unmatched/exited rewards)
   tools/            Layer 2: each tool description teaches domain-specific mechanics
     context.ts      get_protocol_context (Layer 1 protocol mechanics, callable on-demand)
     pt.ts           get_pt_details, list_pools, get_best_fixed_yields, compare_yield
     looping.ts      get_looping_strategy
-    portfolio.ts    get_portfolio (balance ratio strategy signals, portfolio-level hints, cross-ref nudges)
+    portfolio.ts    get_portfolio (balance ratio strategy signals, portfolio-level hints, cross-ref nudges,
+                      Merkl rewards integration — parallel fetch, per-position matching, unmatched rewards)
     pool.ts         get_pool_volume (with volume/liquidity hints), get_pool_activity (PT address resolution, Router batching,
                       address isolation w/ cycle detection, flow accounting, contract detection,
                       gas estimates, pool impact warnings, observation coverage metrics),
@@ -328,8 +333,8 @@ src/
     pendle.ts       list_pendle_markets, compare_pendle_spectra (cross-protocol yield comparison)
     onchain.ts      get_onchain_activity (historical eth_getLogs, Curve pool + PT vault event decoding, dynamic RPC)
 test.cjs              Integration test suite (371 tests, McpTestClient over stdio)
-test-agent.cjs        Agent reasoning test suite (13 multi-tool workflow tests)
-AGENT-TESTS.md        34-question subjective test suite with grading rubrics (incl. open emergence + coverage tiers)
+test-agent.cjs        Agent reasoning test suite (14 multi-tool workflow tests)
+AGENT-TESTS.md        35-question subjective test suite with grading rubrics (incl. open emergence + coverage tiers)
 docs/
   recursive-meta-process.md    Open Emergence metaframework specification
   dissolution-conditions.md    Dissolution conditions for every structural decision
@@ -368,6 +373,7 @@ All address parameters are validated (`0x` + 40 hex chars). All API calls have a
 - **On-chain quoting**: Curve `get_dy()` via raw `eth_call` on 8 chains with automatic fallback to math estimate on RPC failure
 - **Historical event logs**: Chunked `eth_getLogs` (2000 blocks/chunk) with per-chunk retry — failed chunks are skipped so partial results are still returned. Dynamic `rpc_url` parameter enables any chain without hardcoded RPCs
 - **Contract detection cache**: Permanent `Map` cache for `eth_getCode` results (contract code doesn't change)
+- **Merkl rewards**: Best-effort parallel fetch from Merkl API — failure does not block portfolio display. Pool address matching via regex extraction from reason keys. BigInt `parseWei()` conversion for safe 18-decimal arithmetic
 - **MCP error signaling**: All error catch blocks return `isError: true` so agents can distinguish errors from empty results
 - **PT address resolution**: Pool tools (`get_pool_volume`, `get_pool_activity`) accept either pool address or PT address and resolve automatically
 - **Error logging**: Catch blocks in Morpho lookups log to stderr instead of silently swallowing failures
@@ -384,9 +390,16 @@ npm test
 # Schema/registration only (98 tests, no network)
 npm run test:offline
 
-# Agent reasoning tests (65-71 assertions, requires network)
+# Unit tests (165 tests, no network)
+npm run test:unit
+
+# Agent reasoning tests (88 assertions, requires network)
 npm run test:agent
 ```
+
+### Unit Tests (`api.test.ts`, `formatters.test.ts`, `config.test.ts`)
+
+165 tests covering pure-function logic: GraphQL sanitization, Morpho field constants, Merkl reward parsing (pool address extraction from reason keys, wei-to-human conversion, matched/unmatched categorization), Merkl reward formatting, balance formatting, and configuration validation. No network required.
 
 ### Integration Tests (`test.cjs`)
 
@@ -394,7 +407,7 @@ npm run test:agent
 
 ### Agent Reasoning Tests (`test-agent.cjs`)
 
-13 multi-tool workflow tests that verify the "reasoning surface" — can an agent using these tools detect anomalies, cross-reference data, and avoid protocol-mechanic traps? Tests include:
+14 multi-tool workflow tests that verify the "reasoning surface" — can an agent using these tools detect anomalies, cross-reference data, and avoid protocol-mechanic traps? Tests include:
 
 - **Protocol context completeness** — all topics present, Router batching ambiguities explained, cross-reference guidance included
 - **Anomaly detection** — raw APY vs capital-aware rankings produce different results (intentional divergence)
@@ -409,10 +422,11 @@ npm run test:agent
 - **MetaVault scan inclusion** — `include_metavaults` flag correctly shows/hides MetaVault section
 - **Pendle comparison** — head-to-head matched pairs with delta, Pendle-only markets, aggregates
 - **Surfaced API fields** — maturityValue, multipliers (points programs), tags, pool reserves with ratio, IBT APR composition, baseIbt for wrapper tokens
+- **Merkl rewards in portfolio** — SPECTRA gauge emissions appear in portfolio output, graceful handling for empty wallets
 
 ### Subjective Test Suite (`AGENT-TESTS.md`)
 
-31 copy-pasteable questions across 8 tiers (basic tool usage → open emergence) with grading rubrics for evaluating LLM agent quality when using the MCP tools. Tier 8 tests "open emergence" — the ability to hold competing interpretations without collapsing to a single narrative. These are marked ⭐⭐ and test the hardest failure mode: premature narrative collapse that feels like good analysis from inside. Designed to be run by spawning subagents and scoring responses manually or with LLM-as-judge.
+35 copy-pasteable questions across 10 tiers (basic tool usage → open emergence → reward completeness) with grading rubrics for evaluating LLM agent quality when using the MCP tools. Tier 8 tests "open emergence" — the ability to hold competing interpretations without collapsing to a single narrative. These are marked ⭐⭐ and test the hardest failure mode: premature narrative collapse that feels like good analysis from inside. Designed to be run by spawning subagents and scoring responses manually or with LLM-as-judge.
 
 ## API Reference
 
@@ -426,6 +440,7 @@ This server wraps these endpoints:
 | `GET /v1/{chain}/pools/{pool}/volume` | `get_pool_volume` |
 | `GET /v1/{chain}/pools/{pool}/activity` | `get_pool_activity`, `get_address_activity` (active + expired pools) |
 | `GET /v1/{chain}/metavaults` | `get_metavaults`, `model_metavault_strategy` (live mode) |
+| `GET api.merkl.xyz/v3/userRewards?user={address}&chainId={chainId}` | `get_portfolio` (Merkl reward fetching — SPECTRA gauge emissions + incentive programs) |
 | `GET app.spectra.finance/api/v1/spectra/circulating-supply` | `get_protocol_stats` |
 | `GET app.spectra.finance/api/v1/spectra/total-supply` | `get_protocol_stats` |
 | `POST api.morpho.org/graphql` | `get_morpho_markets`, `get_morpho_rate`, `get_looping_strategy` (auto-detect), `scan_opportunities` (batch) |
