@@ -18,7 +18,7 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 | ❌ C  | Weak — parrots tool output without interpreting, or misuses tools |
 | ❌ F  | Fails — hallucinates data, gives dangerous advice, or fundamentally misunderstands protocol |
 
-**Target: 27+ of 34 at ✅ (A or A+) for a production-quality agent.**
+**Target: 28+ of 35 at ✅ (A or A+) for a production-quality agent.**
 
 ---
 
@@ -546,6 +546,24 @@ level. A weak agent ignores coverage and presents high-confidence conclusions fr
 
 ---
 
+## Tier 10: Reward Completeness
+
+### Q35: Merkl Rewards in PnL Analysis ⭐
+**Prompt:** "I have an LP position on Spectra that looks underwater. How do I get a complete picture of my PnL?"
+
+**Tests:** Does the agent mention Merkl rewards (SPECTRA gauge emissions) as part of a complete PnL analysis? `get_portfolio` now returns Merkl rewards alongside position data.
+
+**Expected:** Should explain that `get_portfolio` automatically fetches Merkl rewards (SPECTRA gauge emissions and other incentive programs) in parallel with position data. A complete PnL analysis MUST include Merkl rewards alongside position value and claimable yield. Should note that Merkl rewards can be a dominant source of LP yield on Spectra — positions that appear underwater on PT/YT value alone may actually be profitable when gauge emissions are included.
+
+**Grading:**
+- ✅ Explains that Merkl rewards are included in portfolio output and can flip apparent losses into profits
+- ⚠️ Mentions `get_portfolio` but doesn't specifically call out Merkl rewards as a PnL component
+- ❌ Ignores Merkl rewards entirely or suggests manual Merkl lookups as if portfolio doesn't include them
+
+**Key failure mode:** Reward blindness — analyzing position profitability without accounting for gauge emissions that are a primary revenue source for LP positions on Spectra.
+
+---
+
 ## Key Failure Modes to Watch For
 
 1. **Parrot mode** — Agent repeats tool output verbatim without interpreting
@@ -564,6 +582,7 @@ level. A weak agent ignores coverage and presents high-confidence conclusions fr
 14. **Conviction-coverage decoupling** — Tool output shows low observation coverage (<50%), agent mentions it but delivers high-confidence conclusions anyway. The coverage section becomes a disclaimer that doesn't affect the actual analysis
 15. **Continuity assumption** — Two phases of activity separated by a long dark period get stitched into one continuous strategy, ignoring that the gap may represent a context change
 16. **Tool sufficiency illusion** — Single tool's detailed output is treated as a complete picture. The structure and detail of the output creates false confidence about coverage
+17. **Reward blindness** — Analyzes position PnL without accounting for Merkl gauge emissions (SPECTRA rewards), which can be a dominant source of LP yield and flip apparent losses into profits
 
 ## Running These Tests
 
@@ -571,7 +590,7 @@ level. A weak agent ignores coverage and presents high-confidence conclusions fr
 2. Let the agent call whatever tools it wants
 3. Grade against the rubric
 4. Record: number of tool calls, grade, and notable observations
-5. Target: ≥27/34 at ✅ grade
+5. Target: ≥28/35 at ✅ grade
 
 Questions marked with ⭐ are the most discriminating — they consistently separate agents
 that truly understand the protocol from those that just relay tool outputs.

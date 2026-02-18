@@ -6,7 +6,7 @@
 - MCP server process must restart after rebuild
 - Worktrees are under `.claude/worktrees/`
 - Source code in `src/`, tools in `src/tools/`, shared helpers in `src/api.ts`, `src/formatters.ts`, `src/config.ts`, `src/types.ts`
-- Tests: `npm test` (371 integration tests), `npm run test:agent` (65-71 agent reasoning assertions)
+- Tests: `npm test` (371 integration tests), `npm run test:unit` (165 unit tests), `npm run test:agent` (88 agent reasoning assertions)
 - Agent test suite in `test-agent.cjs` — multi-tool workflow validation (cross-tool consistency, Router mechanics, anomaly detection)
 - Subjective test suite in `AGENT-TESTS.md` — 25 questions with grading rubrics for LLM evaluation
 - TypeScript project — check types with `npx tsc --noEmit`
@@ -54,6 +54,15 @@ Most user interactions go through the **Spectra Router** (flash-mints, flash-red
 - All Curve events (TokenExchange, AddLiquidity, RemoveLiquidity, RemoveLiquidityOne) and PT vault events (Mint, Redeem, YieldClaimed) have the user/caller as first indexed parameter
 - BUT: Router-batched txns have Router as `topics[1]`, not end user — see Router section above
 
+## Merkl Rewards Integration
+- `get_portfolio` fetches Merkl rewards **in parallel** with portfolio data (no added latency)
+- Merkl API: `GET https://api.merkl.xyz/v3/userRewards?user={address}&chainId={chainId}&proof=false`
+- Chain IDs come from `SUPPORTED_CHAINS[net].id` (already in config.ts)
+- Rewards matched to portfolio positions via pool address extraction from Merkl reason keys (format: `ERC20_0xPoolAddr`)
+- Best-effort: Merkl API failure does NOT block portfolio display
+- Unmatched rewards (from exited positions) shown in a separate section with claim link
+- No USD conversion for reward tokens — shows symbol + amount only
+
 ## Chain-Specific Notes
 - **Katana**: No default RPC in the server. Use `rpc_url="https://rpc.katana.network"` parameter.
 - **Monad**: No default RPC. Requires `rpc_url` parameter.
@@ -61,7 +70,7 @@ Most user interactions go through the **Spectra Router** (flash-mints, flash-red
 - Morpho looping markets exist on: mainnet, base, arbitrum, katana.
 
 ## API Architecture
-- `src/api.ts` contains `fetchSpectra()` for Spectra API calls and `findMorphoMarketsForPts()` for Morpho market lookups
+- `src/api.ts` contains `fetchSpectra()` for Spectra API calls, `findMorphoMarketsForPts()` for Morpho market lookups, and `fetchMerkl()`/`parseMerklRewards()` for Merkl reward integration
 - Spectra API base: `https://app.spectra.finance/api/v1/`
 - Network names in API: `ethereum`, `base`, `arbitrum`, `optimism`, `avalanche`, `katana`, `sonic`, `flare`, `bsc`, `monad`
 - `resolveNetwork()` maps user-facing chain names to API network names (e.g., "mainnet" → "ethereum")
