@@ -25,6 +25,8 @@ import {
   detectActivityCycles,
   formatCycleAnalysis,
   formatFlowAccounting,
+  formatMerklRewards,
+  formatUnmatchedMerklRewards,
 } from "./formatters.js";
 
 // =============================================================================
@@ -950,5 +952,79 @@ describe("formatFlowAccounting", () => {
     // Should not have PT outflows/inflows sections
     assert.ok(!joined.includes("PT Outflows"), "Should not show outflows with zero activity");
     assert.ok(!joined.includes("PT Inflows"), "Should not show inflows with zero activity");
+  });
+});
+
+// =============================================================================
+// Merkl Rewards Formatting
+// =============================================================================
+
+describe("formatMerklRewards", () => {
+  it("formats a single reward token", () => {
+    const lines = formatMerklRewards([
+      { tokenAddress: "0xabc", symbol: "SPECTRA", decimals: 18, accumulated: 2500, unclaimed: 1234.5678, pending: 0 },
+    ]);
+    assert.ok(lines.length >= 2, "Should have header + at least 1 reward line");
+    assert.ok(lines[0].includes("Merkl Rewards"), "Header should say Merkl Rewards");
+    assert.ok(lines[1].includes("SPECTRA"), "Should contain token symbol");
+    assert.ok(lines[1].includes("unclaimed:"), "Should show unclaimed amount");
+    assert.ok(lines[1].includes("total earned:"), "Should show total earned");
+  });
+
+  it("formats multiple reward tokens", () => {
+    const lines = formatMerklRewards([
+      { tokenAddress: "0xabc", symbol: "SPECTRA", decimals: 18, accumulated: 1000, unclaimed: 500, pending: 0 },
+      { tokenAddress: "0xdef", symbol: "ARB", decimals: 18, accumulated: 50, unclaimed: 25, pending: 5 },
+    ]);
+    assert.equal(lines.length, 3, "Header + 2 reward lines");
+    assert.ok(lines[1].includes("SPECTRA"));
+    assert.ok(lines[2].includes("ARB"));
+    assert.ok(lines[2].includes("pending:"), "ARB should show pending");
+  });
+
+  it("returns empty for empty array", () => {
+    const lines = formatMerklRewards([]);
+    assert.equal(lines.length, 0);
+  });
+
+  it("shows pending only when unclaimed is zero", () => {
+    const lines = formatMerklRewards([
+      { tokenAddress: "0xabc", symbol: "TOKEN", decimals: 18, accumulated: 100, unclaimed: 0, pending: 50 },
+    ]);
+    assert.ok(lines.length >= 2);
+    assert.ok(lines[1].includes("pending:"), "Should show pending");
+    assert.ok(!lines[1].includes("unclaimed:"), "Should not show unclaimed when 0");
+  });
+
+  it("returns empty when all values are zero", () => {
+    const lines = formatMerklRewards([
+      { tokenAddress: "0xabc", symbol: "TOKEN", decimals: 18, accumulated: 0, unclaimed: 0, pending: 0 },
+    ]);
+    assert.equal(lines.length, 0, "Should return empty for all-zero rewards");
+  });
+});
+
+describe("formatUnmatchedMerklRewards", () => {
+  it("formats rewards from multiple chains", () => {
+    const result = formatUnmatchedMerklRewards([
+      { chain: "mainnet", rewards: [
+        { tokenAddress: "0xabc", symbol: "SPECTRA", decimals: 18, accumulated: 1000, unclaimed: 500, pending: 0 },
+      ]},
+      { chain: "base", rewards: [
+        { tokenAddress: "0xdef", symbol: "ARB", decimals: 18, accumulated: 200, unclaimed: 100, pending: 0 },
+      ]},
+    ]);
+    assert.ok(result.includes("exited positions"), "Should mention exited positions");
+    assert.ok(result.includes("SPECTRA (mainnet)"), "Should show token with chain");
+    assert.ok(result.includes("ARB (base)"), "Should show second chain");
+    assert.ok(result.includes("merkl.xyz"), "Should include claim link");
+  });
+
+  it("returns empty string for empty input", () => {
+    assert.equal(formatUnmatchedMerklRewards([]), "");
+  });
+
+  it("returns empty string when no chains have rewards", () => {
+    assert.equal(formatUnmatchedMerklRewards([{ chain: "mainnet", rewards: [] }]), "");
   });
 });
