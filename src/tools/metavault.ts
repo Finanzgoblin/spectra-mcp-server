@@ -39,16 +39,20 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { MetavaultLoopRow, MetavaultCuratorEconomics } from "../types.js";
+import type { MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavault } from "../types.js";
 import { CHAIN_ENUM, EVM_ADDRESS } from "../config.js";
 import { fetchMetavaults, scanAllMetavaults } from "../api.js";
 import {
   formatPct,
   formatUsd,
+  formatDate,
+  daysToMaturity,
   cumulativeLeverageAtLoop,
   formatMetavaultStrategy,
   formatMetavaultList,
+  formatCuratorDashboard,
 } from "../formatters.js";
+import type { CuratorDashboardOpts } from "../formatters.js";
 
 function computeLoopRows(
   baseApy: number,
@@ -396,6 +400,230 @@ revenue for managing the vault (rolling positions, compounding YT, maintaining a
         return { content: [{ type: "text" as const, text: liveDataNote + text + nextLines }] };
       } catch (e: any) {
         const text = `Error modeling MetaVault strategy: ${e.message}`;
+        return { content: [{ type: "text" as const, text }], isError: true };
+      }
+    }
+  );
+
+  // ─── get_curator_dashboard ──────────────────────────────────────────────
+
+  server.tool(
+    "get_curator_dashboard",
+    `Operational dashboard for MetaVault curators.
+
+Aggregates vault health, position status, depositor flows, fee revenue estimates,
+and actionable alerts into a single view. Designed for curators managing live
+MetaVaults who need a quick operational overview.
+
+Returns:
+  - Vault health: TVL, live APY with composition (base vs incentives), share price
+  - Position status: each active PT position with maturity countdown, APY, and TVL.
+    Positions approaching maturity are flagged (!!!=14d, !!=30d)
+  - Depositor flows: epoch-by-epoch net inflows/outflows with trend analysis
+  - Fee revenue: estimated annual curator fee revenue based on current TVL and APY
+  - Bridge activity: cross-chain CCTP transfer summary
+  - Action items: auto-generated alerts for expiring positions, outflow trends,
+    pending bridges, high incentive dependency, and missing positions
+
+Requires chain + metavault_address. Use get_metavaults to discover addresses.
+Use model_metavault_strategy for leverage modeling after reviewing the dashboard.
+Use get_address_activity on the curator's EOA for pool-level activity details.`,
+    {
+      chain: CHAIN_ENUM
+        .describe("The blockchain network where the MetaVault lives."),
+      metavault_address: EVM_ADDRESS
+        .describe("The MetaVault contract address. Use get_metavaults to discover addresses."),
+      curator_fee_pct: z
+        .number()
+        .min(0)
+        .max(100)
+        .default(10)
+        .describe("Curator performance fee as % of vault yield (default 10%). Used for fee revenue estimation."),
+    },
+    async ({ chain, metavault_address, curator_fee_pct }) => {
+      try {
+        const mvs = await fetchMetavaults(chain);
+        const mv = mvs.find(
+          (m) => m.address.toLowerCase() === metavault_address.toLowerCase()
+        );
+
+        if (!mv) {
+          const text = `MetaVault ${metavault_address} not found on ${chain}.\nUse get_metavaults(chain="${chain}") to discover available MetaVaults.`;
+          return { content: [{ type: "text" as const, text }], isError: true };
+        }
+
+        const underlyingDecimals = mv.underlying?.decimals || 6;
+        const underlyingPriceUsd = mv.underlying?.price?.usd || 0;
+        const divisor = Math.pow(10, underlyingDecimals);
+        const liveApyTotal = mv.liveApy?.total || 0;
+
+        // ── Build positions ────────────────────────────────────
+        const positions = (mv.positions || []).map((pos) => {
+          const matDays = daysToMaturity(pos.maturity);
+          const expired = pos.maturity * 1000 <= Date.now();
+          const pool = pos.pools?.[0];
+          return {
+            symbol: pos.symbol,
+            ptAddress: pos.address,
+            poolAddress: pool?.address || null,
+            maturityTimestamp: pos.maturity,
+            daysToMaturity: matDays,
+            expired,
+            tvlUsd: pos.tvl?.usd || 0,
+            ptApy: pool?.ptApy || 0,
+            lpApyTotal: pool?.lpApy?.total || 0,
+            lpApyBoostedTotal: pool?.lpApy?.boostedTotal || null,
+          };
+        });
+
+        // ── Epoch flow analysis ────────────────────────────────
+        const epochFlows: CuratorDashboardOpts["epochFlows"] = [];
+        let lifetimeNetFlowUsd = 0;
+        let lifetimeYieldUsd = 0;
+        let firstRate = 0;
+        let lastRate = 0;
+
+        if (mv.epochs && mv.epochs.length >= 2) {
+          const sorted = [...mv.epochs].sort((a, b) => a.timestamp - b.timestamp);
+          firstRate = Number(sorted[0].rate) / 1e6;
+          lastRate = Number(sorted[sorted.length - 1].rate) / 1e6;
+
+          for (let i = 1; i < sorted.length; i++) {
+            const prev = sorted[i - 1];
+            const curr = sorted[i];
+            const prevAssets = Number(prev.assets) / divisor;
+            const currAssets = Number(curr.assets) / divisor;
+            const prevRate = Number(prev.rate) / 1e6;
+            const currRate = Number(curr.rate) / 1e6;
+
+            const assetDelta = currAssets - prevAssets;
+            const yieldAccrual = prevRate > 0 ? prevAssets * (currRate - prevRate) / prevRate : 0;
+            const netDeposits = assetDelta - yieldAccrual;
+
+            epochFlows.push({
+              fromDate: formatDate(prev.timestamp),
+              toDate: formatDate(curr.timestamp),
+              netDepositsUsd: netDeposits * underlyingPriceUsd,
+              yieldAccruedUsd: yieldAccrual * underlyingPriceUsd,
+              tvlAfterUsd: currAssets * underlyingPriceUsd,
+              rateAfter: currRate,
+            });
+          }
+
+          // Lifetime totals
+          const firstAssets = Number(sorted[0].assets) / divisor;
+          const lastAssets = Number(sorted[sorted.length - 1].assets) / divisor;
+          const totalYield = firstRate > 0 ? firstAssets * (lastRate - firstRate) / firstRate : 0;
+          const totalAssetDelta = lastAssets - firstAssets;
+          lifetimeNetFlowUsd = (totalAssetDelta - totalYield) * underlyingPriceUsd;
+          lifetimeYieldUsd = totalYield * underlyingPriceUsd;
+        }
+
+        // ── Bridge summary ─────────────────────────────────────
+        const bridgeTxs = mv.bridge?.transactions || [];
+        const bridgeDirections: CuratorDashboardOpts["bridgeDirections"] = [];
+        if (bridgeTxs.length > 0) {
+          const dirMap = new Map<string, { count: number; totalUsd: number }>();
+          for (const tx of bridgeTxs) {
+            // Use chain IDs since chainIdToName is private in formatters
+            const key = `Chain ${tx.srcChainId} -> Chain ${tx.dstChainId}`;
+            const entry = dirMap.get(key) || { count: 0, totalUsd: 0 };
+            entry.count++;
+            entry.totalUsd += tx.amountUsd || 0;
+            dirMap.set(key, entry);
+          }
+          for (const [direction, { count, totalUsd }] of dirMap) {
+            bridgeDirections.push({ direction, count, totalUsd });
+          }
+        }
+
+        // ── Action items ───────────────────────────────────────
+        const actionItems: string[] = [];
+
+        // Expiring positions
+        for (const pos of positions) {
+          if (pos.expired) {
+            actionItems.push(`[EXPIRED] ${pos.symbol} has matured. Redeem and reallocate to a new pool.`);
+          } else if (pos.daysToMaturity <= 7) {
+            actionItems.push(`[URGENT] ${pos.symbol} expires in ${pos.daysToMaturity}d. Prepare rollover to next maturity.`);
+          } else if (pos.daysToMaturity <= 14) {
+            actionItems.push(`[SOON] ${pos.symbol} expires in ${pos.daysToMaturity}d. Plan rollover strategy.`);
+          } else if (pos.daysToMaturity <= 30) {
+            actionItems.push(`[UPCOMING] ${pos.symbol} expires in ${pos.daysToMaturity}d. Monitor for rollover timing.`);
+          }
+        }
+
+        // No positions
+        if (positions.length === 0) {
+          actionItems.push(`[WARNING] No active positions. Vault capital may be sitting idle.`);
+        }
+
+        // Outflow trend
+        if (epochFlows.length >= 3) {
+          const recent = epochFlows.slice(-3);
+          const allOutflows = recent.every(f => f.netDepositsUsd < 0);
+          if (allOutflows) {
+            actionItems.push(`[OUTFLOWS] 3 consecutive epochs of net outflows. Review depositor retention.`);
+          }
+        }
+
+        // Bridge pending
+        if ((mv.bridge?.totalPendingUsd || 0) > 0) {
+          actionItems.push(`[BRIDGE] ${formatUsd(mv.bridge!.totalPendingUsd)} pending in cross-chain bridge transfers.`);
+        }
+
+        // High incentive dependency
+        const apyBase = mv.liveApy?.details?.base || 0;
+        if (liveApyTotal > 0 && apyBase > 0) {
+          const incentiveShare = (liveApyTotal - apyBase) / liveApyTotal;
+          if (incentiveShare > 0.7) {
+            actionItems.push(`[INCENTIVE] ${(incentiveShare * 100).toFixed(0)}% of APY comes from incentive programs. Base yield is only ${formatPct(apyBase)}.`);
+          }
+        }
+
+        // ── Fee revenue estimate ───────────────────────────────
+        let estimatedAnnualFeeRevenueUsd: number | null = null;
+        if (mv.tvl?.usd && liveApyTotal > 0) {
+          estimatedAnnualFeeRevenueUsd = (curator_fee_pct / 100) * (liveApyTotal / 100) * mv.tvl.usd;
+        }
+
+        const dashOpts: CuratorDashboardOpts = {
+          chain,
+          metavaultAddress: metavault_address,
+          curatorName: mv.curator?.name || "Unknown",
+          curatorAddresses: mv.curator?.addresses || [],
+          vaultName: mv.metadata?.title || mv.name,
+          vaultSymbol: mv.symbol,
+          underlyingSymbol: mv.underlying?.symbol || "?",
+          underlyingDecimals,
+          underlyingPriceUsd,
+          tvlUsd: mv.tvl?.usd || 0,
+          tvlUnderlying: mv.tvl?.underlying || 0,
+          liveApyTotal,
+          liveApyBoostedTotal: mv.liveApy?.boostedTotal || null,
+          liveApyBase: mv.liveApy?.details?.base ?? null,
+          apyDetails: mv.liveApy?.details,
+          sharePriceUsd: mv.price?.usd || 0,
+          sharePriceUnderlying: mv.price?.underlying || 0,
+          positions,
+          epochFlows,
+          lifetimeNetFlowUsd,
+          lifetimeYieldUsd,
+          firstRate,
+          lastRate,
+          epochCount: mv.epochs?.length || 0,
+          bridgeTxCount: bridgeTxs.length,
+          bridgePendingUsd: mv.bridge?.totalPendingUsd || 0,
+          bridgeDirections,
+          actionItems,
+          curatorFeePct: curator_fee_pct,
+          estimatedAnnualFeeRevenueUsd,
+        };
+
+        const text = formatCuratorDashboard(dashOpts);
+        return { content: [{ type: "text" as const, text }] };
+      } catch (e: any) {
+        const text = `Error building curator dashboard: ${e.message}`;
         return { content: [{ type: "text" as const, text }], isError: true };
       }
     }
