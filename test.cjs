@@ -1713,6 +1713,10 @@ async function testGetCuratorDashboard(client) {
     assert(dash.includes("Fee Revenue"), "has fee revenue section", "missing");
     assert(dash.includes("Next Steps"), "has next steps", "missing");
     assert(dash.includes("model_metavault_strategy"), "next steps mention strategy tool", "missing");
+    // Vault allocation: at least some positions should show "Vault $X of $Y pool" when lpt.balance is available
+    const hasVaultAlloc = dash.includes("Vault $") && dash.includes("of $") && dash.includes("pool");
+    const hasPoolTvl = dash.includes("Pool TVL $");
+    assert(hasVaultAlloc || hasPoolTvl, "positions show vault allocation or pool TVL", "neither found");
   } else {
     skip("no MetaVaults found for live dashboard test");
   }
