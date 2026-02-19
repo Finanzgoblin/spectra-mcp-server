@@ -457,11 +457,24 @@ Use get_address_activity on the curator's EOA for pool-level activity details.`,
         const divisor = Math.pow(10, underlyingDecimals);
         const liveApyTotal = mv.liveApy?.total || 0;
 
-        // ── Build positions ────────────────────────────────────
+        // ── Build positions with vault allocation ──────────────
+        // The API returns lpt.balance (MetaVault's LP holding) and lpt.price.usd per pool.
+        // Vault allocation = lpt.balance * lpt.price.usd (no on-chain queries needed).
         const positions = (mv.positions || []).map((pos) => {
+          const pool = pos.pools?.[0];
           const matDays = daysToMaturity(pos.maturity);
           const expired = pos.maturity * 1000 <= Date.now();
-          const pool = pos.pools?.[0];
+
+          // Compute vault's allocation from API-provided LP balance + price
+          let vaultAllocationUsd: number | null = null;
+          if (pool?.lpt?.balance && pool.lpt.price?.usd) {
+            const decimals = pool.lpt.decimals || 18;
+            const raw = BigInt(pool.lpt.balance);
+            const divisor = 10n ** BigInt(decimals);
+            const lpBalance = Number(raw / divisor) + Number(raw % divisor) / Number(divisor);
+            vaultAllocationUsd = lpBalance * pool.lpt.price.usd;
+          }
+
           return {
             symbol: pos.symbol,
             ptAddress: pos.address,
@@ -470,6 +483,7 @@ Use get_address_activity on the curator's EOA for pool-level activity details.`,
             daysToMaturity: matDays,
             expired,
             tvlUsd: pos.tvl?.usd || 0,
+            vaultAllocationUsd,
             ptApy: pool?.ptApy || 0,
             lpApyTotal: pool?.lpApy?.total || 0,
             lpApyBoostedTotal: pool?.lpApy?.boostedTotal || null,

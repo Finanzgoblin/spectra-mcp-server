@@ -2053,7 +2053,7 @@ export function formatMetavaultSummary(mv: SpectraMetavault, chain: string): str
       const pool = pos.pools?.[0];
       const ptApyStr = pool ? ` | PT APY ${formatPct(pool.ptApy || 0)}` : "";
       const lpApyStr = pool?.lpApy?.total ? ` | LP APY ${formatPct(pool.lpApy.total)}` : "";
-      lines.push(`    ${pos.symbol} -- ${formatDate(pos.maturity)} (${matLabel}) -- TVL ${formatUsd(pos.tvl?.usd || 0)}${ptApyStr}${lpApyStr}`);
+      lines.push(`    ${pos.symbol} -- ${formatDate(pos.maturity)} (${matLabel}) -- Pool TVL ${formatUsd(pos.tvl?.usd || 0)}${ptApyStr}${lpApyStr}`);
       lines.push(`      PT: ${pos.address}${pool ? ` | Pool: ${pool.address}` : ""}`);
 
       // LP APY breakdown per position — surface composition
@@ -2479,6 +2479,7 @@ export interface CuratorDashboardOpts {
     daysToMaturity: number;
     expired: boolean;
     tvlUsd: number;
+    vaultAllocationUsd: number | null;
     ptApy: number;
     lpApyTotal: number;
     lpApyBoostedTotal: number | null;
@@ -2569,7 +2570,10 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
     for (const pos of sorted) {
       const matLabel = pos.expired ? "EXPIRED" : `${pos.daysToMaturity}d`;
       const urgencyFlag = !pos.expired && pos.daysToMaturity <= 14 ? " !!!" : !pos.expired && pos.daysToMaturity <= 30 ? " !!" : "";
-      lines.push(`  ${pos.symbol} | ${matLabel}${urgencyFlag} | Pool TVL ${formatUsd(pos.tvlUsd)} | PT APY ${formatPct(pos.ptApy)} | LP APY ${formatPct(pos.lpApyTotal)}${pos.lpApyBoostedTotal && pos.lpApyBoostedTotal > pos.lpApyTotal ? ` (boost: ${formatPct(pos.lpApyBoostedTotal)})` : ""}`);
+      const allocationStr = pos.vaultAllocationUsd != null
+        ? `Vault ${formatUsd(pos.vaultAllocationUsd)} of ${formatUsd(pos.tvlUsd)} pool`
+        : `Pool TVL ${formatUsd(pos.tvlUsd)}`;
+      lines.push(`  ${pos.symbol} | ${matLabel}${urgencyFlag} | ${allocationStr} | PT APY ${formatPct(pos.ptApy)} | LP APY ${formatPct(pos.lpApyTotal)}${pos.lpApyBoostedTotal && pos.lpApyBoostedTotal > pos.lpApyTotal ? ` (boost: ${formatPct(pos.lpApyBoostedTotal)})` : ""}`);
       lines.push(`    PT: ${pos.ptAddress}${pos.poolAddress ? ` | Pool: ${pos.poolAddress}` : ""}`);
     }
   }
