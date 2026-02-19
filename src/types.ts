@@ -296,11 +296,19 @@ export interface SpectraMetavaultPosition {
   address: string;         // PT address
   symbol: string;
   maturity: number;        // Unix timestamp
+  chainId?: number;        // chain where the position lives (may differ from MetaVault home chain)
   tvl: { underlying: number; usd: number };
   pools: Array<{
     address: string;
+    chainId?: number;
     ptApy: number;
     lpApy: SpectraPoolLpApy;
+    lpt?: {
+      balance?: string;    // MetaVault's LP token balance (BigInt string, 18 decimals)
+      supply?: string;     // total LP supply (BigInt string)
+      decimals?: number;
+      price?: { underlying?: number; usd?: number };
+    };
   }>;
 }
 
