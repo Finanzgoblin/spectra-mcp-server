@@ -417,17 +417,35 @@ MetaVaults who need a quick operational overview.
 
 Returns:
   - Vault health: TVL, live APY with composition (base vs incentives), share price
-  - Position status: each active PT position with maturity countdown, APY, and TVL.
+  - Position status: each active PT position with maturity countdown, APY, and size.
     Positions approaching maturity are flagged (!!!=14d, !!=30d)
   - Depositor flows: epoch-by-epoch net inflows/outflows with trend analysis
-  - Fee revenue: estimated annual curator fee revenue based on current TVL and APY
+  - Fee revenue: estimated annual curator fee revenue (at current rates — both TVL
+    and APY are variable, so this is a snapshot projection, not a guarantee)
   - Bridge activity: cross-chain CCTP transfer summary
   - Action items: auto-generated alerts for expiring positions, outflow trends,
     pending bridges, high incentive dependency, and missing positions
 
+CRITICAL — position TVL interpretation:
+  Each position shows EITHER the vault's actual allocation ("Vault $X of $Y pool")
+  OR the pool's total TVL ("Pool TVL $X — vault share unknown"). These are very
+  different numbers. The vault's allocation is computed from lpt.balance when the API
+  provides it. When unavailable (expired positions, some pools), only pool-level TVL
+  is shown — do NOT treat pool TVL as the vault's capital at risk.
+  Example: A $636K vault showing "Pool TVL $814K" on a position does NOT mean $814K
+  is at risk — the vault's actual allocation could be a small fraction of that pool.
+
+Cross-chain positions: MetaVault positions may live on a different chain than the
+MetaVault itself (e.g., Base MetaVault → Avalanche pools via CCTP bridge). Pool
+addresses in positions are on the position's chain, not the MetaVault's home chain.
+
+Epoch flows: Derived from asset snapshots and rate changes. Yield accrual is estimated
+from share rate deltas — actual yield may differ. Use share price trend to corroborate.
+
 Requires chain + metavault_address. Use get_metavaults to discover addresses.
 Use model_metavault_strategy for leverage modeling after reviewing the dashboard.
-Use get_address_activity on the curator's EOA for pool-level activity details.`,
+Use get_pool_activity on specific pool addresses for trading pattern analysis.
+Use get_address_activity on the curator's EOA for cross-pool curator activity.`,
     {
       chain: CHAIN_ENUM
         .describe("The blockchain network where the MetaVault lives."),
