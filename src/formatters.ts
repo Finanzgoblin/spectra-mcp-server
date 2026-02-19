@@ -2053,7 +2053,21 @@ export function formatMetavaultSummary(mv: SpectraMetavault, chain: string): str
       const pool = pos.pools?.[0];
       const ptApyStr = pool ? ` | PT APY ${formatPct(pool.ptApy || 0)}` : "";
       const lpApyStr = pool?.lpApy?.total ? ` | LP APY ${formatPct(pool.lpApy.total)}` : "";
-      lines.push(`    ${pos.symbol} -- ${formatDate(pos.maturity)} (${matLabel}) -- Pool TVL ${formatUsd(pos.tvl?.usd || 0)}${ptApyStr}${lpApyStr}`);
+      // Show vault allocation when lpt.balance is available, otherwise pool-level TVL
+      let sizeStr: string;
+      if (pool?.lpt?.balance && pool.lpt.price?.usd) {
+        const decimals = pool.lpt.decimals || 18;
+        const raw = BigInt(pool.lpt.balance);
+        const divisor = 10n ** BigInt(decimals);
+        const lpBalance = Number(raw / divisor) + Number(raw % divisor) / Number(divisor);
+        const alloc = lpBalance * pool.lpt.price.usd;
+        const poolTvl = pos.tvl?.usd || 0;
+        const sharePct = poolTvl > 0 ? (alloc / poolTvl * 100).toFixed(1) : "?";
+        sizeStr = `Vault ${formatUsd(alloc)} of ${formatUsd(poolTvl)} pool (${sharePct}%)`;
+      } else {
+        sizeStr = `Pool TVL ${formatUsd(pos.tvl?.usd || 0)} (all LPs)`;
+      }
+      lines.push(`    ${pos.symbol} -- ${formatDate(pos.maturity)} (${matLabel}) -- ${sizeStr}${ptApyStr}${lpApyStr}`);
       lines.push(`      PT: ${pos.address}${pool ? ` | Pool: ${pool.address}` : ""}`);
 
       // LP APY breakdown per position — surface composition
@@ -2565,16 +2579,34 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
   if (opts.positions.length === 0) {
     lines.push(`  No active positions. The vault may need reallocation.`);
   } else {
+    lines.push(`  "Vault $X" = this vault's allocation. "Pool TVL $X" = total pool TVL (all LPs), NOT this vault's share.`);
     // Sort by days to maturity ascending (most urgent first)
     const sorted = [...opts.positions].sort((a, b) => a.daysToMaturity - b.daysToMaturity);
+    let knownAllocationCount = 0;
+    let knownAllocationTotal = 0;
     for (const pos of sorted) {
       const matLabel = pos.expired ? "EXPIRED" : `${pos.daysToMaturity}d`;
       const urgencyFlag = !pos.expired && pos.daysToMaturity <= 14 ? " !!!" : !pos.expired && pos.daysToMaturity <= 30 ? " !!" : "";
-      const allocationStr = pos.vaultAllocationUsd != null
-        ? `Vault ${formatUsd(pos.vaultAllocationUsd)} of ${formatUsd(pos.tvlUsd)} pool`
-        : `Pool TVL ${formatUsd(pos.tvlUsd)}`;
+      let allocationStr: string;
+      if (pos.vaultAllocationUsd != null) {
+        knownAllocationCount++;
+        knownAllocationTotal += pos.vaultAllocationUsd;
+        const sharePct = pos.tvlUsd > 0 ? (pos.vaultAllocationUsd / pos.tvlUsd * 100).toFixed(1) : "?";
+        allocationStr = `Vault ${formatUsd(pos.vaultAllocationUsd)} of ${formatUsd(pos.tvlUsd)} pool (${sharePct}%)`;
+      } else {
+        allocationStr = `Pool TVL ${formatUsd(pos.tvlUsd)} (vault share unknown)`;
+      }
       lines.push(`  ${pos.symbol} | ${matLabel}${urgencyFlag} | ${allocationStr} | PT APY ${formatPct(pos.ptApy)} | LP APY ${formatPct(pos.lpApyTotal)}${pos.lpApyBoostedTotal && pos.lpApyBoostedTotal > pos.lpApyTotal ? ` (boost: ${formatPct(pos.lpApyBoostedTotal)})` : ""}`);
       lines.push(`    PT: ${pos.ptAddress}${pos.poolAddress ? ` | Pool: ${pos.poolAddress}` : ""}`);
+    }
+    // Allocation coverage summary
+    const totalPositions = sorted.length;
+    if (knownAllocationCount > 0) {
+      lines.push(`  ──`);
+      lines.push(`  Allocation data: ${knownAllocationCount}/${totalPositions} positions | Known allocation: ${formatUsd(knownAllocationTotal)} of ${formatUsd(opts.tvlUsd)} vault TVL`);
+    } else if (totalPositions > 0) {
+      lines.push(`  ──`);
+      lines.push(`  Allocation data: unavailable for all positions. Pool TVL shown is NOT the vault's capital.`);
     }
   }
   lines.push(``);
@@ -2612,11 +2644,12 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
   }
 
   // ── Fee Revenue ─────────────────────────────────────────────
-  lines.push(`--- Fee Revenue ---`);
+  lines.push(`--- Fee Revenue (at current rates) ---`);
   lines.push(`  Curator Fee: ${formatPct(opts.curatorFeePct)} of vault yield`);
   if (opts.estimatedAnnualFeeRevenueUsd != null) {
     lines.push(`  Estimated Annual Fee Revenue: ~${formatUsd(opts.estimatedAnnualFeeRevenueUsd)}/yr`);
     lines.push(`    = ${formatPct(opts.curatorFeePct)} x ${formatPct(opts.liveApyTotal)} x ${formatUsd(opts.tvlUsd)} TVL`);
+    lines.push(`    Both TVL and APY are variable — this is a snapshot projection.`);
   } else {
     lines.push(`  Fee revenue estimate unavailable (no TVL or APY data).`);
   }
