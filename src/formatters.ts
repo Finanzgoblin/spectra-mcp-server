@@ -2569,7 +2569,7 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
     for (const pos of sorted) {
       const matLabel = pos.expired ? "EXPIRED" : `${pos.daysToMaturity}d`;
       const urgencyFlag = !pos.expired && pos.daysToMaturity <= 14 ? " !!!" : !pos.expired && pos.daysToMaturity <= 30 ? " !!" : "";
-      lines.push(`  ${pos.symbol} | ${matLabel}${urgencyFlag} | TVL ${formatUsd(pos.tvlUsd)} | PT APY ${formatPct(pos.ptApy)} | LP APY ${formatPct(pos.lpApyTotal)}${pos.lpApyBoostedTotal && pos.lpApyBoostedTotal > pos.lpApyTotal ? ` (boost: ${formatPct(pos.lpApyBoostedTotal)})` : ""}`);
+      lines.push(`  ${pos.symbol} | ${matLabel}${urgencyFlag} | Pool TVL ${formatUsd(pos.tvlUsd)} | PT APY ${formatPct(pos.ptApy)} | LP APY ${formatPct(pos.lpApyTotal)}${pos.lpApyBoostedTotal && pos.lpApyBoostedTotal > pos.lpApyTotal ? ` (boost: ${formatPct(pos.lpApyBoostedTotal)})` : ""}`);
       lines.push(`    PT: ${pos.ptAddress}${pos.poolAddress ? ` | Pool: ${pos.poolAddress}` : ""}`);
     }
   }
