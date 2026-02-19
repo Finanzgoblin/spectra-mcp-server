@@ -426,14 +426,9 @@ Returns:
   - Action items: auto-generated alerts for expiring positions, outflow trends,
     pending bridges, high incentive dependency, and missing positions
 
-CRITICAL — position TVL interpretation:
-  Each position shows EITHER the vault's actual allocation ("Vault $X of $Y pool")
-  OR the pool's total TVL ("Pool TVL $X — vault share unknown"). These are very
-  different numbers. The vault's allocation is computed from lpt.balance when the API
-  provides it. When unavailable (expired positions, some pools), only pool-level TVL
-  is shown — do NOT treat pool TVL as the vault's capital at risk.
-  Example: A $636K vault showing "Pool TVL $814K" on a position does NOT mean $814K
-  is at risk — the vault's actual allocation could be a small fraction of that pool.
+Pool allocations show each position as a % of total vault TVL (e.g., "37.1% | $236K"),
+sorted by size. Idle liquidity (undeployed capital) is shown separately.
+When the API doesn't provide LP balance data for a position, it shows "?%".
 
 Cross-chain positions: MetaVault positions may live on a different chain than the
 MetaVault itself (e.g., Base MetaVault → Avalanche pools via CCTP bridge). Pool
@@ -476,8 +471,10 @@ Use get_address_activity on the curator's EOA for cross-pool curator activity.`,
         const liveApyTotal = mv.liveApy?.total || 0;
 
         // ── Build positions with vault allocation ──────────────
-        // The API returns lpt.balance (MetaVault's LP holding) and lpt.price.usd per pool.
-        // Vault allocation = lpt.balance * lpt.price.usd (no on-chain queries needed).
+        // The API provides LP balance in two places:
+        //   1. pool.lpt.balance — standard location
+        //   2. pos.balance — fallback when lpt.balance is missing (cross-chain positions)
+        // Vault allocation = lpBalance * lpt.price.usd
         const positions = (mv.positions || []).map((pos) => {
           const pool = pos.pools?.[0];
           const matDays = daysToMaturity(pos.maturity);
@@ -485,9 +482,10 @@ Use get_address_activity on the curator's EOA for cross-pool curator activity.`,
 
           // Compute vault's allocation from API-provided LP balance + price
           let vaultAllocationUsd: number | null = null;
-          if (pool?.lpt?.balance && pool.lpt.price?.usd) {
+          const rawBalance = pool?.lpt?.balance || pos.balance;
+          if (rawBalance && pool?.lpt?.price?.usd) {
             const decimals = pool.lpt.decimals || 18;
-            const raw = BigInt(pool.lpt.balance);
+            const raw = BigInt(rawBalance);
             const divisor = 10n ** BigInt(decimals);
             const lpBalance = Number(raw / divisor) + Number(raw % divisor) / Number(divisor);
             vaultAllocationUsd = lpBalance * pool.lpt.price.usd;
@@ -569,8 +567,21 @@ Use get_address_activity on the curator's EOA for cross-pool curator activity.`,
           }
         }
 
+        // ── Compute known allocation total ─────────────────────
+        const knownAllocTotal = positions
+          .filter(p => p.vaultAllocationUsd != null)
+          .reduce((sum, p) => sum + p.vaultAllocationUsd!, 0);
+        const vaultTvl = mv.tvl?.usd || 0;
+        const idleLiquidityUsd = vaultTvl > 0 ? Math.max(0, vaultTvl - knownAllocTotal) : 0;
+        const idlePct = vaultTvl > 0 ? idleLiquidityUsd / vaultTvl * 100 : 0;
+
         // ── Action items ───────────────────────────────────────
         const actionItems: string[] = [];
+
+        // Idle liquidity warning
+        if (idlePct > 20 && idleLiquidityUsd > 1000) {
+          actionItems.push(`[IDLE] ${idlePct.toFixed(0)}% of vault capital (${formatUsd(idleLiquidityUsd)}) is sitting idle. Deploy to active pools to generate yield.`);
+        }
 
         // Expiring positions
         for (const pos of positions) {

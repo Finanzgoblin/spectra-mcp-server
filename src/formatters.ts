@@ -2,7 +2,7 @@
  * Data formatting helpers — USD, percentages, dates, balances, pool/position/Morpho summaries.
  */
 
-import type { SpectraPt, SpectraPool, SpectraMetavault, MorphoMarket, PendleMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavaultBridgeTx, MerklTokenReward } from "./types.js";
+import type { SpectraPt, SpectraPool, SpectraMetavault, SpectraMetavaultPosition, MorphoMarket, PendleMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavaultBridgeTx, MerklTokenReward } from "./types.js";
 import { SUPPORTED_CHAINS } from "./config.js";
 
 // =============================================================================
@@ -2044,28 +2044,45 @@ export function formatMetavaultSummary(mv: SpectraMetavault, chain: string): str
 
   // Positions
   if (mv.positions && mv.positions.length > 0) {
+    const vaultTvlUsd = mv.tvl?.usd || 0;
     lines.push(``);
-    lines.push(`  Active Positions (${mv.positions.length}):`);
-    for (const pos of mv.positions) {
+    lines.push(`  Pool Allocations (${mv.positions.length}):`);
+    let knownAllocTotal = 0;
+    let knownAllocCount = 0;
+    // Helper: get LP balance from lpt.balance or pos.balance fallback
+    const getLpAlloc = (pos: SpectraMetavaultPosition): number | null => {
+      const pool = pos.pools?.[0];
+      const rawBalance = pool?.lpt?.balance || pos.balance;
+      if (!rawBalance || !pool?.lpt?.price?.usd) return null;
+      const decimals = pool.lpt.decimals || 18;
+      const raw = BigInt(rawBalance);
+      const divisor = 10n ** BigInt(decimals);
+      const lpBalance = Number(raw / divisor) + Number(raw % divisor) / Number(divisor);
+      return lpBalance * pool.lpt.price.usd;
+    };
+    // Sort by allocation descending (largest first), unknowns at end
+    const sortedPositions = [...mv.positions].sort((a, b) => {
+      const allocA = getLpAlloc(a) ?? -1;
+      const allocB = getLpAlloc(b) ?? -1;
+      return allocB - allocA;
+    });
+    for (const pos of sortedPositions) {
       const matDays = daysToMaturity(pos.maturity);
       const expired = pos.maturity * 1000 <= Date.now();
       const matLabel = expired ? "EXPIRED" : `${matDays}d`;
       const pool = pos.pools?.[0];
       const ptApyStr = pool ? ` | PT APY ${formatPct(pool.ptApy || 0)}` : "";
       const lpApyStr = pool?.lpApy?.total ? ` | LP APY ${formatPct(pool.lpApy.total)}` : "";
-      // Show vault allocation when lpt.balance is available, otherwise pool-level TVL
+      // Show vault allocation as % of vault TVL
       let sizeStr: string;
-      if (pool?.lpt?.balance && pool.lpt.price?.usd) {
-        const decimals = pool.lpt.decimals || 18;
-        const raw = BigInt(pool.lpt.balance);
-        const divisor = 10n ** BigInt(decimals);
-        const lpBalance = Number(raw / divisor) + Number(raw % divisor) / Number(divisor);
-        const alloc = lpBalance * pool.lpt.price.usd;
-        const poolTvl = pos.tvl?.usd || 0;
-        const sharePct = poolTvl > 0 ? (alloc / poolTvl * 100).toFixed(1) : "?";
-        sizeStr = `Vault ${formatUsd(alloc)} of ${formatUsd(poolTvl)} pool (${sharePct}%)`;
+      const alloc = getLpAlloc(pos);
+      if (alloc != null) {
+        knownAllocTotal += alloc;
+        knownAllocCount++;
+        const vaultPct = vaultTvlUsd > 0 ? (alloc / vaultTvlUsd * 100).toFixed(1) : "?";
+        sizeStr = `${vaultPct}% | ${formatUsd(alloc)}`;
       } else {
-        sizeStr = `Pool TVL ${formatUsd(pos.tvl?.usd || 0)} (all LPs)`;
+        sizeStr = `?% | vault share unknown`;
       }
       lines.push(`    ${pos.symbol} -- ${formatDate(pos.maturity)} (${matLabel}) -- ${sizeStr}${ptApyStr}${lpApyStr}`);
       lines.push(`      PT: ${pos.address}${pool ? ` | Pool: ${pool.address}` : ""}`);
@@ -2090,6 +2107,14 @@ export function formatMetavaultSummary(mv: SpectraMetavault, chain: string): str
         if (parts.length > 0) {
           lines.push(`      LP: ${parts.join(" + ")}`);
         }
+      }
+    }
+    // Idle liquidity line
+    if (knownAllocCount > 0 && vaultTvlUsd > 0) {
+      const idleLiquidity = vaultTvlUsd - knownAllocTotal;
+      if (idleLiquidity > 0) {
+        const idlePct = (idleLiquidity / vaultTvlUsd * 100).toFixed(1);
+        lines.push(`    ${mv.underlying?.symbol || "?"} Idle Liquidity -- ${idlePct}% | ${formatUsd(idleLiquidity)}`);
       }
     }
   }
@@ -2575,13 +2600,17 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
   }
 
   // ── Active Positions ────────────────────────────────────────
-  lines.push(`--- Positions (${opts.positions.length}) ---`);
+  lines.push(`--- Pool Allocations (${opts.positions.length}) ---`);
   if (opts.positions.length === 0) {
     lines.push(`  No active positions. The vault may need reallocation.`);
   } else {
-    lines.push(`  "Vault $X" = this vault's allocation. "Pool TVL $X" = total pool TVL (all LPs), NOT this vault's share.`);
-    // Sort by days to maturity ascending (most urgent first)
-    const sorted = [...opts.positions].sort((a, b) => a.daysToMaturity - b.daysToMaturity);
+    // Sort by vault allocation descending (largest first), unknowns at end
+    const sorted = [...opts.positions].sort((a, b) => {
+      if (a.vaultAllocationUsd != null && b.vaultAllocationUsd != null) return b.vaultAllocationUsd - a.vaultAllocationUsd;
+      if (a.vaultAllocationUsd != null) return -1;
+      if (b.vaultAllocationUsd != null) return 1;
+      return a.daysToMaturity - b.daysToMaturity;
+    });
     let knownAllocationCount = 0;
     let knownAllocationTotal = 0;
     for (const pos of sorted) {
@@ -2591,22 +2620,27 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
       if (pos.vaultAllocationUsd != null) {
         knownAllocationCount++;
         knownAllocationTotal += pos.vaultAllocationUsd;
-        const sharePct = pos.tvlUsd > 0 ? (pos.vaultAllocationUsd / pos.tvlUsd * 100).toFixed(1) : "?";
-        allocationStr = `Vault ${formatUsd(pos.vaultAllocationUsd)} of ${formatUsd(pos.tvlUsd)} pool (${sharePct}%)`;
+        // Show allocation as % of vault TVL (how much of the vault's capital is here)
+        const vaultPct = opts.tvlUsd > 0 ? (pos.vaultAllocationUsd / opts.tvlUsd * 100).toFixed(1) : "?";
+        allocationStr = `${vaultPct}% | ${formatUsd(pos.vaultAllocationUsd)}`;
       } else {
-        allocationStr = `Pool TVL ${formatUsd(pos.tvlUsd)} (vault share unknown)`;
+        allocationStr = `?% | vault share unknown`;
       }
       lines.push(`  ${pos.symbol} | ${matLabel}${urgencyFlag} | ${allocationStr} | PT APY ${formatPct(pos.ptApy)} | LP APY ${formatPct(pos.lpApyTotal)}${pos.lpApyBoostedTotal && pos.lpApyBoostedTotal > pos.lpApyTotal ? ` (boost: ${formatPct(pos.lpApyBoostedTotal)})` : ""}`);
       lines.push(`    PT: ${pos.ptAddress}${pos.poolAddress ? ` | Pool: ${pos.poolAddress}` : ""}`);
     }
-    // Allocation coverage summary
-    const totalPositions = sorted.length;
-    if (knownAllocationCount > 0) {
+    // Idle liquidity: vault TVL minus sum of known position allocations
+    if (knownAllocationCount > 0 && opts.tvlUsd > 0) {
+      const idleLiquidity = opts.tvlUsd - knownAllocationTotal;
+      const idlePct = (idleLiquidity / opts.tvlUsd * 100).toFixed(1);
+      if (idleLiquidity > 0) {
+        lines.push(`  ${opts.underlyingSymbol} Idle Liquidity | ${idlePct}% | ${formatUsd(idleLiquidity)}`);
+      }
       lines.push(`  ──`);
-      lines.push(`  Allocation data: ${knownAllocationCount}/${totalPositions} positions | Known allocation: ${formatUsd(knownAllocationTotal)} of ${formatUsd(opts.tvlUsd)} vault TVL`);
-    } else if (totalPositions > 0) {
+      lines.push(`  Deployed: ${formatUsd(knownAllocationTotal)} (${(knownAllocationTotal / opts.tvlUsd * 100).toFixed(1)}%) | Idle: ${formatUsd(Math.max(0, idleLiquidity))} (${Math.max(0, parseFloat(idlePct)).toFixed(1)}%) | Total: ${formatUsd(opts.tvlUsd)}`);
+    } else if (knownAllocationCount === 0 && sorted.length > 0) {
       lines.push(`  ──`);
-      lines.push(`  Allocation data: unavailable for all positions. Pool TVL shown is NOT the vault's capital.`);
+      lines.push(`  Allocation data: unavailable for all positions.`);
     }
   }
   lines.push(``);
