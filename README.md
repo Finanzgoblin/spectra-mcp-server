@@ -2,7 +2,7 @@
 
 Makes [Spectra Finance](https://spectra.finance) discoverable and usable by AI agents via the [Model Context Protocol](https://modelcontextprotocol.io).
 
-24 tools · 10 chains · read-only · on-chain Curve quoting · historical eth_getLogs · zero web3 library dependencies
+25 tools · 10 chains · read-only · on-chain Curve quoting · historical eth_getLogs · zero web3 library dependencies
 
 ## What This Does
 
@@ -21,6 +21,7 @@ Any AI agent (Claude, GPT, open-source) that supports MCP can now:
 - **Compute** real veSPECTRA boost multipliers per-pool using live on-chain data from Base
 - **Discover** live MetaVaults across all chains — curator info, TVL, APY, positions, epoch history
 - **Model** MetaVault "double loop" strategies for curators — vault compounding + Morpho leverage with curator economics, auto-populated from live API data or manual parameters
+- **Monitor** MetaVault operational health — curator dashboard with vault allocation per position, depositor flows, fee revenue, bridge activity, and actionable alerts
 - **Query** Morpho lending markets for PT collateral opportunities
 - **Query** protocol stats, tokenomics, and governance data
 - **Compare** Spectra vs Pendle yield opportunities side-by-side on overlapping chains
@@ -136,6 +137,7 @@ The observation coverage layer addresses a deeper problem: even perfect interpre
 | `get_ve_info` | Live veSPECTRA data from Base chain (total supply via on-chain read) + boost calculator with per-pool multipliers. |
 | `get_metavaults` | List live MetaVaults across all chains (or a specific chain). Returns curator info, TVL, live APY, share price, active positions, and epoch history. |
 | `model_metavault_strategy` | MetaVault "double loop" strategy modeler for curators. Live mode (chain + metavault_address) auto-fetches APY from API; manual mode accepts base_apy directly. Models curator economics (fee revenue, TVL creation, effective ROI). |
+| `get_curator_dashboard` | Operational dashboard for MetaVault curators. Vault health, position status with vault allocation (when available) vs pool TVL, depositor flows, fee revenue estimates, bridge activity, and actionable alerts. Explicitly disambiguates vault allocation from pool-level TVL to prevent misinterpretation. |
 | `list_pendle_markets` | List active Pendle markets on a given chain or all Pendle chains. Supports Pendle-only chains (Mantle, Berachain, HyperEVM, Corn). Supports `compact` mode. |
 | `compare_pendle_spectra` | Side-by-side Pendle vs Spectra yield comparison on overlapping chains (mainnet, base, arbitrum, optimism, sonic, bsc). Auto-matches by underlying asset. |
 | `get_onchain_activity` | Historical on-chain activity via `eth_getLogs` — recovers data when the API has aged out transactions. Supports dynamic `rpc_url` parameter for any chain. Decodes **Curve pool events** (swaps, LP adds/removes) via `pool_address` AND **Spectra PT vault events** (Mint, Redeem, YieldClaimed) via `pt_address`. Both can be provided simultaneously for merged results. |
@@ -329,10 +331,11 @@ src/
     strategy.ts     scan_opportunities (capital-aware, batch Morpho, negative-APY filtering, strategy tension)
     yt_arb.ts       scan_yt_arbitrage (YT execution mechanics, flash-mint/flash-redeem)
     ve.ts           get_ve_info
-    metavault.ts    get_metavaults, model_metavault_strategy (live API + computational modeling)
+    metavault.ts    get_metavaults, model_metavault_strategy (live API + computational modeling),
+                      get_curator_dashboard (vault allocation disambiguation, cross-chain position awareness)
     pendle.ts       list_pendle_markets, compare_pendle_spectra (cross-protocol yield comparison)
     onchain.ts      get_onchain_activity (historical eth_getLogs, Curve pool + PT vault event decoding, dynamic RPC)
-test.cjs              Integration test suite (371 tests, McpTestClient over stdio)
+test.cjs              Integration test suite (388 tests, McpTestClient over stdio)
 test-agent.cjs        Agent reasoning test suite (14 multi-tool workflow tests)
 AGENT-TESTS.md        35-question subjective test suite with grading rubrics (incl. open emergence + coverage tiers)
 docs/
@@ -384,7 +387,7 @@ All address parameters are validated (`0x` + 40 hex chars). All API calls have a
 From a source checkout:
 
 ```bash
-# Full integration suite (371 tests, requires network)
+# Full integration suite (388 tests, requires network)
 npm test
 
 # Schema/registration only (98 tests, no network)
@@ -403,7 +406,7 @@ npm run test:agent
 
 ### Integration Tests (`test.cjs`)
 
-371 tests covering tool registration, schema validation, API responses, on-chain Curve `get_dy()` quoting, cross-pool address scanning, address isolation mode, and malformed-address negative tests. Dynamically discovers pool and PT addresses from the live API, so tests won't go stale when pools mature.
+388 tests covering tool registration, schema validation, API responses, on-chain Curve `get_dy()` quoting, cross-pool address scanning, address isolation mode, and malformed-address negative tests. Dynamically discovers pool and PT addresses from the live API, so tests won't go stale when pools mature.
 
 ### Agent Reasoning Tests (`test-agent.cjs`)
 
