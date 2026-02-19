@@ -297,6 +297,7 @@ export interface SpectraMetavaultPosition {
   symbol: string;
   maturity: number;        // Unix timestamp
   chainId?: number;        // chain where the position lives (may differ from MetaVault home chain)
+  balance?: string;        // MetaVault's LP token balance (BigInt string) — fallback when lpt.balance is missing
   tvl: { underlying: number; usd: number };
   pools: Array<{
     address: string;
