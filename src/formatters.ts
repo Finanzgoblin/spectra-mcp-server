@@ -2446,6 +2446,215 @@ export function formatMetavaultStrategy(opts: {
 }
 
 // =============================================================================
+// Curator Dashboard Formatting
+// =============================================================================
+
+export interface CuratorDashboardOpts {
+  chain: string;
+  metavaultAddress: string;
+  curatorName: string;
+  curatorAddresses: string[];
+  vaultName: string;
+  vaultSymbol: string;
+  underlyingSymbol: string;
+  underlyingDecimals: number;
+  underlyingPriceUsd: number;
+
+  // Current state
+  tvlUsd: number;
+  tvlUnderlying: number;
+  liveApyTotal: number;
+  liveApyBoostedTotal: number | null;
+  liveApyBase: number | null;
+  apyDetails: SpectraMetavault["liveApy"]["details"] | undefined;
+  sharePriceUsd: number;
+  sharePriceUnderlying: number;
+
+  // Positions
+  positions: Array<{
+    symbol: string;
+    ptAddress: string;
+    poolAddress: string | null;
+    maturityTimestamp: number;
+    daysToMaturity: number;
+    expired: boolean;
+    tvlUsd: number;
+    ptApy: number;
+    lpApyTotal: number;
+    lpApyBoostedTotal: number | null;
+  }>;
+
+  // Epoch flow analysis
+  epochFlows: Array<{
+    fromDate: string;
+    toDate: string;
+    netDepositsUsd: number;
+    yieldAccruedUsd: number;
+    tvlAfterUsd: number;
+    rateAfter: number;
+  }>;
+  lifetimeNetFlowUsd: number;
+  lifetimeYieldUsd: number;
+  firstRate: number;
+  lastRate: number;
+  epochCount: number;
+
+  // Bridge summary
+  bridgeTxCount: number;
+  bridgePendingUsd: number;
+  bridgeDirections: Array<{ direction: string; count: number; totalUsd: number }>;
+
+  // Health & action items
+  actionItems: string[];
+  curatorFeePct: number;
+
+  // Revenue estimate
+  estimatedAnnualFeeRevenueUsd: number | null;
+}
+
+export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
+  const lines: string[] = [];
+
+  // ── Header ──────────────────────────────────────────────────
+  lines.push(`== Curator Dashboard ==`);
+  lines.push(`  ${opts.vaultName} (${opts.vaultSymbol})`);
+  lines.push(`  Chain: ${opts.chain} | MetaVault: ${opts.metavaultAddress}`);
+  lines.push(`  Curator: ${opts.curatorName}${opts.curatorAddresses.length ? ` (${opts.curatorAddresses[0]})` : ""}`);
+  lines.push(``);
+
+  // ── Vault Health ────────────────────────────────────────────
+  lines.push(`--- Vault Health ---`);
+  lines.push(`  TVL: ${formatUsd(opts.tvlUsd)} (${opts.tvlUnderlying.toLocaleString("en-US", { maximumFractionDigits: 2 })} ${opts.underlyingSymbol})`);
+  lines.push(`  Live APY: ${formatPct(opts.liveApyTotal)}${opts.liveApyBoostedTotal && opts.liveApyBoostedTotal > opts.liveApyTotal ? ` (max boost: ${formatPct(opts.liveApyBoostedTotal)})` : ""}`);
+  if (opts.liveApyBase != null) {
+    const incentiveApy = opts.liveApyTotal - opts.liveApyBase;
+    if (incentiveApy > 0) {
+      lines.push(`  Yield Mix: ${formatPct(opts.liveApyBase)} base + ${formatPct(incentiveApy)} incentives (${((incentiveApy / opts.liveApyTotal) * 100).toFixed(0)}% incentive-dependent)`);
+    }
+  }
+  lines.push(`  Share Price: ${formatUsd(opts.sharePriceUsd)} (${opts.sharePriceUnderlying.toFixed(6)} underlying)`);
+  lines.push(``);
+
+  // ── APY Composition ─────────────────────────────────────────
+  if (opts.apyDetails) {
+    lines.push(`--- APY Composition ---`);
+    if (opts.apyDetails.base != null) {
+      lines.push(`  Base (fees + PT + IBT): ${formatPct(opts.apyDetails.base)}`);
+    }
+    if (opts.apyDetails.ibtRewards) {
+      for (const [token, apy] of Object.entries(opts.apyDetails.ibtRewards)) {
+        lines.push(`  ${token} (IBT reward): ${formatPct(apy)}`);
+      }
+    }
+    if (opts.apyDetails.mvRewards) {
+      for (const [token, apy] of Object.entries(opts.apyDetails.mvRewards)) {
+        lines.push(`  ${token} (MetaVault reward): ${formatPct(apy)}`);
+      }
+    }
+    if (opts.apyDetails.boostedRewards) {
+      for (const [token, range] of Object.entries(opts.apyDetails.boostedRewards)) {
+        lines.push(`  ${token} Gauge: ${formatPct(range.min)} -> ${formatPct(range.max)}`);
+      }
+    }
+    lines.push(``);
+  }
+
+  // ── Active Positions ────────────────────────────────────────
+  lines.push(`--- Positions (${opts.positions.length}) ---`);
+  if (opts.positions.length === 0) {
+    lines.push(`  No active positions. The vault may need reallocation.`);
+  } else {
+    // Sort by days to maturity ascending (most urgent first)
+    const sorted = [...opts.positions].sort((a, b) => a.daysToMaturity - b.daysToMaturity);
+    for (const pos of sorted) {
+      const matLabel = pos.expired ? "EXPIRED" : `${pos.daysToMaturity}d`;
+      const urgencyFlag = !pos.expired && pos.daysToMaturity <= 14 ? " !!!" : !pos.expired && pos.daysToMaturity <= 30 ? " !!" : "";
+      lines.push(`  ${pos.symbol} | ${matLabel}${urgencyFlag} | TVL ${formatUsd(pos.tvlUsd)} | PT APY ${formatPct(pos.ptApy)} | LP APY ${formatPct(pos.lpApyTotal)}${pos.lpApyBoostedTotal && pos.lpApyBoostedTotal > pos.lpApyTotal ? ` (boost: ${formatPct(pos.lpApyBoostedTotal)})` : ""}`);
+      lines.push(`    PT: ${pos.ptAddress}${pos.poolAddress ? ` | Pool: ${pos.poolAddress}` : ""}`);
+    }
+  }
+  lines.push(``);
+
+  // ── Depositor Flows ─────────────────────────────────────────
+  if (opts.epochFlows.length > 0) {
+    lines.push(`--- Depositor Flows (${opts.epochCount} epochs) ---`);
+    // Show last 5 epoch transitions max to keep it concise
+    const recentFlows = opts.epochFlows.slice(-5);
+    if (opts.epochFlows.length > 5) {
+      lines.push(`  (showing last 5 of ${opts.epochFlows.length} epoch transitions)`);
+    }
+    for (const flow of recentFlows) {
+      const arrow = flow.netDepositsUsd >= 0 ? "IN" : "OUT";
+      const sign = flow.netDepositsUsd >= 0 ? "+" : "";
+      lines.push(`  ${flow.fromDate} -> ${flow.toDate} | ${arrow} ${sign}${formatUsd(Math.abs(flow.netDepositsUsd))} net | Yield ${formatUsd(flow.yieldAccruedUsd)} | TVL ${formatUsd(flow.tvlAfterUsd)}`);
+    }
+    lines.push(`  ──`);
+    lines.push(`  Lifetime net flow: ${opts.lifetimeNetFlowUsd >= 0 ? "+" : ""}${formatUsd(Math.abs(opts.lifetimeNetFlowUsd))} ${opts.lifetimeNetFlowUsd >= 0 ? "(net inflows)" : "(net outflows)"}`);
+    lines.push(`  Lifetime yield: ~${formatUsd(Math.abs(opts.lifetimeYieldUsd))} (rate ${opts.firstRate.toFixed(6)} -> ${opts.lastRate.toFixed(6)})`);
+
+    // Trend signal
+    if (recentFlows.length >= 3) {
+      const recentNetFlows = recentFlows.map(f => f.netDepositsUsd);
+      const positiveCount = recentNetFlows.filter(f => f >= 0).length;
+      if (positiveCount >= 3) {
+        lines.push(`  Trend: Consistent inflows (${positiveCount}/${recentFlows.length} positive epochs)`);
+      } else if (positiveCount === 0) {
+        lines.push(`  Trend: Consistent outflows (${recentFlows.length}/${recentFlows.length} negative epochs)`);
+      } else {
+        lines.push(`  Trend: Mixed flows (${positiveCount}/${recentFlows.length} positive epochs)`);
+      }
+    }
+    lines.push(``);
+  }
+
+  // ── Fee Revenue ─────────────────────────────────────────────
+  lines.push(`--- Fee Revenue ---`);
+  lines.push(`  Curator Fee: ${formatPct(opts.curatorFeePct)} of vault yield`);
+  if (opts.estimatedAnnualFeeRevenueUsd != null) {
+    lines.push(`  Estimated Annual Fee Revenue: ~${formatUsd(opts.estimatedAnnualFeeRevenueUsd)}/yr`);
+    lines.push(`    = ${formatPct(opts.curatorFeePct)} x ${formatPct(opts.liveApyTotal)} x ${formatUsd(opts.tvlUsd)} TVL`);
+  } else {
+    lines.push(`  Fee revenue estimate unavailable (no TVL or APY data).`);
+  }
+  lines.push(``);
+
+  // ── Bridge Activity ─────────────────────────────────────────
+  if (opts.bridgeTxCount > 0) {
+    lines.push(`--- Bridge Activity ---`);
+    for (const dir of opts.bridgeDirections) {
+      lines.push(`  ${dir.direction}: ${dir.count} txn(s), ${formatUsd(dir.totalUsd)} total`);
+    }
+    if (opts.bridgePendingUsd > 0) {
+      lines.push(`  Pending: ${formatUsd(opts.bridgePendingUsd)}`);
+    }
+    lines.push(``);
+  }
+
+  // ── Action Items ────────────────────────────────────────────
+  if (opts.actionItems.length > 0) {
+    lines.push(`--- Action Items ---`);
+    for (const item of opts.actionItems) {
+      lines.push(`  ${item}`);
+    }
+    lines.push(``);
+  }
+
+  // ── Next Steps ──────────────────────────────────────────────
+  lines.push(`--- Next Steps ---`);
+  lines.push(`  - Model leverage: model_metavault_strategy(chain="${opts.chain}", metavault_address="${opts.metavaultAddress}")`);
+  if (opts.curatorAddresses.length > 0) {
+    lines.push(`  - Curator activity: get_address_activity(address="${opts.curatorAddresses[0]}")`);
+  }
+  if (opts.positions.length > 0) {
+    const firstPt = opts.positions[0];
+    lines.push(`  - Pool activity: get_pool_activity(chain="${opts.chain}", pool_address="${firstPt.poolAddress || firstPt.ptAddress}")`);
+  }
+  lines.push(`  - Compare yields: scan_opportunities(capital_usd=YOUR_AMOUNT) for market context`);
+
+  return lines.join("\n");
+}
+
+// =============================================================================
 // Pendle Market Formatters
 // =============================================================================
 

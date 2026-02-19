@@ -185,7 +185,7 @@ async function testToolRegistration(client) {
   const tools = await client.listTools();
   const names = tools.map((t) => t.name);
 
-  assert(tools.length === 24, "exactly 24 tools registered", `got ${tools.length}: ${names.join(", ")}`);
+  assert(tools.length === 25, "exactly 25 tools registered", `got ${tools.length}: ${names.join(", ")}`);
 
   const expected = [
     "get_pt_details",
@@ -208,6 +208,7 @@ async function testToolRegistration(client) {
     "get_ve_info",
     "get_metavaults",
     "model_metavault_strategy",
+    "get_curator_dashboard",
     "get_protocol_context",
     "list_pendle_markets",
     "compare_pendle_spectra",
@@ -1677,6 +1678,53 @@ async function testGetAddressActivity(client) {
   }
 }
 
+async function testGetCuratorDashboard(client) {
+  console.log("\n--- get_curator_dashboard ---");
+
+  // Schema checks
+  const tools = await client.listTools();
+  const dashTool = tools.find((t) => t.name === "get_curator_dashboard");
+  assert(dashTool, "get_curator_dashboard registered", "missing");
+  if (dashTool) {
+    const props = dashTool.inputSchema.properties;
+    assert(props.chain, "get_curator_dashboard has chain param", "missing");
+    assert(props.metavault_address, "get_curator_dashboard has metavault_address param", "missing");
+    assert(props.curator_fee_pct, "get_curator_dashboard has curator_fee_pct param", "missing");
+    const required = dashTool.inputSchema.required || [];
+    assert(required.includes("chain"), "get_curator_dashboard: chain is required", `required: ${JSON.stringify(required)}`);
+    assert(required.includes("metavault_address"), "get_curator_dashboard: metavault_address is required", `required: ${JSON.stringify(required)}`);
+    assert(!required.includes("curator_fee_pct"), "get_curator_dashboard: curator_fee_pct is optional", `required: ${JSON.stringify(required)}`);
+  }
+
+  // Live test: fetch all MetaVaults to find a real address, then call dashboard
+  const { text: mvList } = await client.callTool("get_metavaults", {});
+  const mvAddrMatch = mvList.match(/MetaVault:\s*(0x[a-fA-F0-9]{40})/);
+  const mvChainMatch = mvList.match(/Chain:\s*(\w+)/);
+  if (mvAddrMatch && mvChainMatch) {
+    const mvAddr = mvAddrMatch[1];
+    const mvChain = mvChainMatch[1];
+    const { text: dash } = await client.callTool("get_curator_dashboard", {
+      chain: mvChain,
+      metavault_address: mvAddr,
+    });
+    assert(dash.includes("Curator Dashboard"), "has dashboard header", `unexpected: ${dash.slice(0, 100)}`);
+    assert(dash.includes("Vault Health"), "has vault health section", "missing");
+    assert(dash.includes("Positions"), "has positions section", "missing");
+    assert(dash.includes("Fee Revenue"), "has fee revenue section", "missing");
+    assert(dash.includes("Next Steps"), "has next steps", "missing");
+    assert(dash.includes("model_metavault_strategy"), "next steps mention strategy tool", "missing");
+  } else {
+    skip("no MetaVaults found for live dashboard test");
+  }
+
+  // Error case: invalid address
+  const { text: errText, isError } = await client.callTool("get_curator_dashboard", {
+    chain: "base",
+    metavault_address: "0x0000000000000000000000000000000000000000",
+  });
+  assert(errText.includes("not found"), "error for unknown metavault", `unexpected: ${errText.slice(0, 100)}`);
+}
+
 async function testOnChainQuoting(client) {
   console.log("\n--- on-chain Curve get_dy() quoting ---");
 
@@ -1958,9 +2006,10 @@ async function main() {
       // LP APY gauge emissions
       await testLpApyGaugeEmissions(client);
 
-      // MetaVault API + strategy modeler
+      // MetaVault API + strategy modeler + curator dashboard
       await testGetMetavaults(client);
       await testModelMetavaultStrategy(client);
+      await testGetCuratorDashboard(client);
 
       // Smoke test other chains
       await testCrossChainSmoke(client);

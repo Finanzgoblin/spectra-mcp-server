@@ -114,7 +114,8 @@ Goal: "Optimize governance position / veSPECTRA"
   veSPECTRA boost only affects gauge-enabled LP positions, not PT or YT directly.
 
 Goal: "Model a curator / MetaVault strategy"
-  Start with: model_metavault_strategy(...) with your parameters
+  Start with: get_curator_dashboard(chain, metavault_address) for operational overview
+  Then: model_metavault_strategy(...) for leverage modeling
   Compare against: get_looping_strategy for raw PT looping baseline
   The double-loop premium shows when MetaVault leverage beats raw PT looping.
 

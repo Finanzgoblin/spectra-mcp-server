@@ -28,6 +28,7 @@
  *   - get_ve_info              -> Live veSPECTRA data + boost calculator
  *   - get_metavaults             -> List live MetaVaults across chains (curators, TVL, APY, positions)
  *   - model_metavault_strategy  -> MetaVault double-loop strategy modeler for curators (live data or manual)
+ *   - get_curator_dashboard       -> Operational dashboard for MetaVault curators (health, flows, revenue, alerts)
  *   - list_pendle_markets         -> List active Pendle markets (all Pendle chains, including Pendle-only)
  *   - compare_pendle_spectra      -> Side-by-side Pendle vs Spectra yield comparison on overlapping chains
  *   - get_onchain_activity         -> Historical pool activity via eth_getLogs (when API data is incomplete)
