@@ -336,11 +336,15 @@ src/
     pendle.ts       list_pendle_markets, compare_pendle_spectra (cross-protocol yield comparison)
     onchain.ts      get_onchain_activity (historical eth_getLogs, Curve pool + PT vault event decoding, dynamic RPC)
 test.cjs              Integration test suite (388 tests, McpTestClient over stdio)
-test-agent.cjs        Agent reasoning test suite (14 multi-tool workflow tests)
+test-agent.cjs        Agent reasoning test suite (48 assertions, McpTestClient over stdio)
 AGENT-TESTS.md        35-question subjective test suite with grading rubrics (incl. open emergence + coverage tiers)
+EMERGENCE-AUDIT.md    Open Emergence audit — competing branches, observation coverage, anomaly detection gaps
+CODE-REVIEW.md        Full codebase review (bugs, security, code quality, test coverage)
+SECURITY-REVIEW.md    Security-focused review (SSRF, GraphQL injection, dependency vulnerabilities)
 docs/
   recursive-meta-process.md    Open Emergence metaframework specification
   dissolution-conditions.md    Dissolution conditions for every structural decision
+  architecture-review-agentic-accessibility.md    Agentic accessibility review with feature proposals
 ```
 
 Each tool file exports a `register(server)` function. To add a new tool: create `src/tools/newtool.ts`, export `register()`, import and call it in `index.ts`.
@@ -410,7 +414,7 @@ npm run test:agent
 
 ### Agent Reasoning Tests (`test-agent.cjs`)
 
-14 multi-tool workflow tests that verify the "reasoning surface" — can an agent using these tools detect anomalies, cross-reference data, and avoid protocol-mechanic traps? Tests include:
+48 assertions across 14 multi-tool workflow tests that verify the "reasoning surface" — can an agent using these tools detect anomalies, cross-reference data, and avoid protocol-mechanic traps? Tests include:
 
 - **Protocol context completeness** — all topics present, Router batching ambiguities explained, cross-reference guidance included
 - **Anomaly detection** — raw APY vs capital-aware rankings produce different results (intentional divergence)
