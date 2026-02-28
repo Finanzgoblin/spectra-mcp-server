@@ -77,11 +77,13 @@ export async function fetchSpectra(path: string): Promise<unknown> {
     console.error(`Spectra API error: ${res.status} ${res.statusText} for ${url}`);
     throw new Error(`Spectra API error: ${res.status} ${res.statusText}`);
   }
+  // Read body as text first, then parse — avoids stream double-consumption
+  // (res.json() consumes the stream, so res.text() in the catch would always be empty)
+  const body = await res.text();
   try {
-    return await res.json();
+    return JSON.parse(body);
   } catch {
-    const text = await res.text().catch(() => "(unreadable body)");
-    throw new Error(`Spectra API returned invalid JSON for ${url}: ${text.slice(0, 120)}`);
+    throw new Error(`Spectra API returned invalid JSON for ${url}: ${body.slice(0, 120)}`);
   }
 }
 
@@ -496,6 +498,34 @@ export async function fetchVeTotalSupply(): Promise<number> {
 }
 
 // =============================================================================
+// Safe Amount → BigInt Conversion (avoids float overflow)
+// =============================================================================
+
+/**
+ * Convert a human-readable token amount to raw BigInt units (e.g. 1.5 USDC → 1500000n).
+ * Uses string arithmetic to avoid precision loss when amount * 10^decimals > MAX_SAFE_INTEGER.
+ * For example: amountToBigInt(1000000, 18) correctly produces 1000000000000000000000000n
+ * instead of losing precision through float intermediary.
+ */
+export function amountToBigInt(amount: number, decimals: number): bigint {
+  if (amount <= 0 || !Number.isFinite(amount)) return 0n;
+  const s = amount.toString();
+  const dotIndex = s.indexOf(".");
+  if (dotIndex === -1) {
+    // Integer — just multiply by 10^decimals
+    return BigInt(s) * 10n ** BigInt(decimals);
+  }
+  const intPart = s.slice(0, dotIndex);
+  const fracPart = s.slice(dotIndex + 1);
+  if (fracPart.length >= decimals) {
+    // More fractional digits than decimals — truncate
+    return BigInt(intPart + fracPart.slice(0, decimals));
+  }
+  // Fewer fractional digits — pad with zeros
+  return BigInt(intPart + fracPart + "0".repeat(decimals - fracPart.length));
+}
+
+// =============================================================================
 // On-Chain Curve Pool Quoting (get_dy)
 // =============================================================================
 
@@ -670,11 +700,12 @@ export async function fetchPendle(path: string): Promise<unknown> {
     console.error(`Pendle API error: ${res.status} ${res.statusText} for ${url}`);
     throw new Error(`Pendle API error: ${res.status} ${res.statusText}`);
   }
+  // Read body as text first, then parse — avoids stream double-consumption
+  const penBody = await res.text();
   try {
-    return await res.json();
+    return JSON.parse(penBody);
   } catch {
-    const text = await res.text().catch(() => "(unreadable body)");
-    throw new Error(`Pendle API returned invalid JSON for ${url}: ${text.slice(0, 120)}`);
+    throw new Error(`Pendle API returned invalid JSON for ${url}: ${penBody.slice(0, 120)}`);
   }
 }
 
