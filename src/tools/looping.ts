@@ -76,13 +76,13 @@ discover the best looping opportunities across all chains with capital-aware siz
 
         if (!pt) {
           const text = `No PT found at ${pt_address} on ${chain}`;
-          return { content: [{ type: "text" as const, text }] };
+          return { content: [{ type: "text" as const, text }], isError: true };
         }
 
         const pool = pt.pools?.[0];
         if (!pool) {
           const text = `PT has no active pool`;
-          return { content: [{ type: "text" as const, text }] };
+          return { content: [{ type: "text" as const, text }], isError: true };
         }
 
         // Try to auto-detect Morpho market for this PT
@@ -233,13 +233,58 @@ discover the best looping opportunities across all chains with capital-aware siz
           lines.push(`    Entry cost scales with capital — shown for $10K reference. Larger trades face proportionally more impact.`);
         }
 
+        // Failure scenario: optimal_loops <= 1 adds complexity for minimal benefit
+        if (bestLoop <= 1 && bestLoop > 0) {
+          lines.push(``);
+          lines.push(`  ** Minimal looping benefit: optimal is only ${bestLoop} loop(s).`);
+          lines.push(`     At 1 loop, you add Morpho smart contract risk, liquidation exposure, and`);
+          lines.push(`     variable borrow cost for modest leverage. Consider unleveraged PT yield instead. **`);
+        } else if (bestLoop === 0) {
+          lines.push(``);
+          lines.push(`  ** Looping is unprofitable at current rates: borrow cost (${formatPct(effectiveBorrowRate)}) exceeds`);
+          lines.push(`     PT yield benefit from leverage. Unleveraged (0 loops) is optimal. **`);
+        }
+
+        // Break-even period: how long until yield covers entry cost
+        if (hasLiq && bestLoop > 0 && bestNet > 0 && maturityDays > 0) {
+          const { totalImpactPct: bestImpact } = estimateLoopingEntryCost(refCapital, poolLiqUsd, effectiveLtv, bestLoop);
+          if (bestImpact > 0) {
+            // Daily yield (net APY / 365), entry cost as % of capital → days to break even
+            const dailyYieldPct = bestNet / 365;
+            const breakEvenDays = dailyYieldPct > 0 ? Math.ceil(bestImpact / dailyYieldPct) : Infinity;
+            lines.push(``);
+            lines.push(`  Break-Even: ~${breakEvenDays} days to recover entry cost at current rates (for $10K reference)`);
+            if (breakEvenDays > maturityDays * 0.5) {
+              lines.push(`    ** Break-even is >${Math.round(breakEvenDays / maturityDays * 100)}% of time to maturity — tight margin for profitability **`);
+            }
+          }
+        }
+
+        // Borrow rate sensitivity: what happens if rates increase
+        if (bestLoop > 0) {
+          const bestLev = cumulativeLeverageAtLoop(effectiveLtv, bestLoop);
+          lines.push(``);
+          lines.push(`  Borrow Rate Sensitivity (at ${bestLoop} loops / ${bestLev.toFixed(2)}x leverage):`);
+          for (const delta of [1, 2, 3]) {
+            const stressedRate = effectiveBorrowRate + delta;
+            const stressedNet = baseApy * bestLev - stressedRate * (bestLev - 1);
+            const label = stressedNet < 0 ? "** NEGATIVE **" : stressedNet < baseApy ? "worse than unleveraged" : "profitable";
+            lines.push(`    Borrow +${delta}% (${formatPct(stressedRate)}): net APY ${formatPct(stressedNet)} (${label})`);
+          }
+          // Find break-even borrow rate
+          const breakEvenBorrow = bestLev > 1 ? (baseApy * bestLev) / (bestLev - 1) : Infinity;
+          if (Number.isFinite(breakEvenBorrow)) {
+            lines.push(`    Break-even borrow rate: ${formatPct(breakEvenBorrow)} (looping yields 0% net at this rate)`);
+          }
+        }
+
         lines.push(``);
         lines.push(`  Note: "Eff. Margin" = how far PT can drop before liquidation.`);
         lines.push(`  "Entry Cost" = estimated blended price impact across all loop iterations (for $10K).`);
         lines.push(`  At 0 loops (no leverage) there is no liquidation risk.`);
         lines.push(``);
         lines.push(`  Risks: Liquidation if PT depegs, smart contract risk on Morpho + Spectra,`);
-        lines.push(`     borrow rate may increase, PT illiquidity near maturity,`);
+        lines.push(`     borrow rate may increase (see sensitivity above), PT illiquidity near maturity,`);
         lines.push(`     cumulative entry cost increases with capital size and loop count.`);
 
         // Next-step hints

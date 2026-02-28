@@ -115,7 +115,7 @@ pool at a given deposit size.`,
               }
             } else {
               lines.push(``);
-              lines.push(`  Pool not found at ${pt_address} on ${chain}.`);
+              lines.push(`  Pool not found at ${pt_address} on ${chain}. Verify this is a valid PT address.`);
             }
           } else {
             // No specific pool -- show boost at reference TVLs

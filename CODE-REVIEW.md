@@ -16,55 +16,25 @@ That said, the review surfaced **6 likely bugs**, **2 security concerns**, **8 c
 
 ## Bugs (Likely to Produce Incorrect Output)
 
-### 1. Hardcoded 18 decimals for all on-chain token amounts
-**File:** `src/tools/onchain.ts:642`
+### ~~1. Hardcoded 18 decimals for all on-chain token amounts~~ (FIXED 2026-02-28)
+~~**File:** `src/tools/onchain.ts:642`~~
+~~All token amounts are formatted assuming 18 decimals.~~
+- Fixed: Added `token_decimals` parameter (default 18) so agents can pass correct decimals from `get_pt_details`. Dynamic note in output warns when using default 18 decimals.
 
-All token amounts are formatted assuming 18 decimals. USDC (6 decimals), WBTC (8 decimals), and other non-18-decimal tokens will display values off by factors of 10^10 to 10^12.
+### ~~2. Floating-point precision loss in BigInt conversion~~ (FIXED 2026-02-28)
+~~**Files:** `src/tools/quote.ts:41`, `src/tools/simulate.ts:112`~~
+~~`BigInt(Math.round(amount * 10 ** inputDecimals))` overflows for 18-decimal tokens.~~
+- Fixed: Added `amountToBigInt()` in `api.ts` using string arithmetic. Verified: old method was off by ~16.8 trillion wei for 1M tokens at 18 decimals.
 
-```ts
-formatTokenAmount(e.amount0, 18)  // Always 18, regardless of actual token decimals
-```
+### ~~3. Response body double-consumption in fetch error paths~~ (FIXED 2026-02-28)
+~~**File:** `src/api.ts:82-84`, `src/api.ts:673-678`~~
+~~`res.json()` consumed the stream, making `res.text()` in catch always return empty.~~
+- Fixed: Both `fetchSpectra()` and `fetchPendle()` now read body as text first, then `JSON.parse()`.
 
-**Impact:** High — display values are wildly wrong for non-18-decimal tokens.
-**Fix:** Resolve token decimals from pool/PT metadata or accept as parameter.
-
-### 2. Floating-point precision loss in BigInt conversion
-**Files:** `src/tools/quote.ts:41`, `src/tools/simulate.ts:112`
-
-```ts
-const dx = BigInt(Math.round(amount * 10 ** inputDecimals));
-```
-
-When `inputDecimals >= 16`, `10 ** inputDecimals` exceeds `Number.MAX_SAFE_INTEGER`. The multiplication silently loses precision. For 18-decimal tokens (the majority), every trade quote has potential rounding errors.
-
-**Impact:** Medium — quotes may be slightly off for large amounts.
-**Fix:** Use BigInt arithmetic throughout, e.g. split the amount at the decimal point.
-
-### 3. Response body double-consumption in fetch error paths
-**File:** `src/api.ts:82-84`, `src/api.ts:673-678`
-
-```ts
-try {
-    return await res.json();
-} catch {
-    const text = await res.text().catch(() => "(unreadable body)");
-```
-
-After `res.json()` fails, the response body stream is already consumed. `res.text()` will always fail, so the error message always says "(unreadable body)" instead of showing the actual response. Same pattern in `fetchPendle`.
-
-**Impact:** Low — only affects error diagnostics, not correctness.
-**Fix:** Read body as text first, then `JSON.parse()`.
-
-### 4. Pool context fetch uses wrong address variable
-**File:** `src/tools/pool.ts:462`
-
-```ts
-fetchSpectra(`/${network}/pt/${pool_address}`)
-```
-
-Uses the original `pool_address` parameter instead of `effectivePoolAddr`. If the user passed a pool address (not PT), this fetches the wrong data. Same issue at line 518-532 where `pool_address` is used for portfolio matching instead of `effectivePoolAddr`.
-
-**Impact:** Medium — pool context section shows wrong or empty data when pool address != PT address.
+### ~~4. Pool context fetch uses wrong address variable~~ (FIXED 2026-02-28)
+~~**File:** `src/tools/pool.ts:462`~~
+~~Used `pool_address` instead of `effectivePoolAddr` after PT→pool resolution.~~
+- Fixed: Now uses `effectivePoolAddr` for the PT context fetch.
 
 ### 5. Next-step hints pass pool address as PT address
 **File:** `src/tools/pool.ts:168-169`
@@ -118,16 +88,16 @@ The `sanitizeGraphQL` function strips dangerous characters but doesn't handle ba
 ### 2. Duplicated BigInt-to-float conversion
 The same BigInt → float pattern appears in 4+ places: `formatBalance`, `parseWei`, `formatMorphoLltv`, `fetchVeTotalSupply`. Should be a single shared utility.
 
-### 3. Duplicated on-chain quoting logic
-`quote.ts` has `tryOnChainQuote` but `simulate.ts` duplicates the same logic inline (lines 103-124) instead of importing it.
+### ~~3. Duplicated on-chain quoting logic~~ (FIXED 2026-02-28)
+~~`quote.ts` has `tryOnChainQuote` but `simulate.ts` duplicates the same logic inline (lines 103-124) instead of importing it.~~
+- Fixed: `tryOnChainQuote` exported from `quote.ts`, imported in `simulate.ts`. Also inherits the `amountToBigInt` fix.
 
 ### 4. Unbounded address type cache
 **File:** `src/api.ts:820-821` — `_addressTypeCache` has no TTL and no size limit. Every unique address queried is cached permanently.
 
-### 5. Inconsistent `isError` flag usage across tools
-Some tools return `isError: true` on "not found" conditions, others return successful responses with error text. Agents can't reliably detect errors:
-- **Has `isError`:** `morpho.ts:69`, `onchain.ts:404,427`
-- **Missing `isError`:** `pt.ts:59`, `pool.ts:69,314`, `morpho.ts:189`, `quote.ts:119,125,133`, `simulate.ts:87,93,100`
+### ~~5. Inconsistent `isError` flag usage across tools~~ (FIXED 2026-02-28)
+~~Some tools return `isError: true` on "not found" conditions, others return successful responses with error text.~~
+- Fixed: All resource-not-found returns now use `isError: true` consistently across `pt.ts`, `quote.ts`, `simulate.ts`, `morpho.ts`, and `looping.ts`. Empty scan results (valid responses) remain without `isError`.
 
 ### 6. `list_pools` sort description says "descending" but maturity sorts ascending
 **File:** `src/tools/pt.ts:113,159` — Tool description says "Sort results by this metric (descending)" but maturity sort is ascending (nearest first).
@@ -201,9 +171,9 @@ This isn't just a bug report — the codebase has notable strengths worth callin
 
 ## Recommended Priority
 
-| Priority | Items |
-|----------|-------|
-| **P0 — Fix now** | #1 (18-decimal bug), #4 (wrong address variable) |
-| **P1 — Fix soon** | #2 (BigInt precision), #3 (double body consumption), #5 (isError consistency) |
-| **P2 — Improve** | Security concerns, duplicated code, test coverage gaps |
-| **P3 — Nice to have** | Performance optimizations, `as any` cleanup, documentation fixes |
+| Priority | Items | Status |
+|----------|-------|--------|
+| **P0 — Fix now** | #1 (18-decimal bug), #4 (wrong address variable) | ✅ Fixed 2026-02-28 |
+| **P1 — Fix soon** | #2 (BigInt precision), #3 (double body consumption), #5 (isError consistency) | ✅ Fixed 2026-02-28 |
+| **P2 — Improve** | Security concerns, ~~duplicated code~~, test coverage gaps | Partially done (dedup fixed) |
+| **P3 — Nice to have** | Performance optimizations, `as any` cleanup, documentation fixes | Open |
