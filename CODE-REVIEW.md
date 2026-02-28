@@ -135,9 +135,10 @@ Some tools return `isError: true` on "not found" conditions, others return succe
 ### 7. Hardcoded server version
 **File:** `src/index.ts:63` — `version: "1.0.0"` is hardcoded instead of reading from `package.json`.
 
-### 8. Stale CLAUDE.md documentation
-- References `src/tools/trade.ts` which doesn't exist (split into `quote.ts` and `simulate.ts`)
-- References `src/tools/yield.ts` which doesn't exist (`compare_yield` is in `pt.ts`, `scan_opportunities` in `strategy.ts`, `scan_yt_arbitrage` in `yt_arb.ts`)
+### 8. ~~Stale CLAUDE.md documentation~~ (FIXED 2026-02-28)
+- ~~References `src/tools/trade.ts` which doesn't exist (split into `quote.ts` and `simulate.ts`)~~
+- ~~References `src/tools/yield.ts` which doesn't exist (`compare_yield` is in `pt.ts`, `scan_opportunities` in `strategy.ts`, `scan_yt_arbitrage` in `yt_arb.ts`)~~
+- Fixed in emergence audit: CLAUDE.md now maps all 15 tool files correctly, including `context.ts`, `ve.ts`, `strategy.ts`, `yt_arb.ts`, `looping.ts`, `quote.ts`, `simulate.ts`
 
 ---
 
@@ -176,8 +177,9 @@ Some tools return `isError: true` on "not found" conditions, others return succe
 | No mock layer — all integration tests require live network | Medium |
 | `--offline` mode only tests schema registration, zero logic | Medium |
 
-### Test Count Discrepancy
-CLAUDE.md claims "371 integration tests" and "88 agent reasoning assertions" but actual `assert()` counts are ~331 and ~55 respectively. The difference comes from counting `pass()`/`skip()` calls as assertions.
+### ~~Test Count Discrepancy~~ (FIXED 2026-02-28)
+~~CLAUDE.md claims "371 integration tests" and "88 agent reasoning assertions" but actual `assert()` counts are ~331 and ~55 respectively. The difference comes from counting `pass()`/`skip()` calls as assertions.~~
+- CLAUDE.md updated to 388 integration tests and 48 agent reasoning assertions (matching actual counts)
 
 ---
 

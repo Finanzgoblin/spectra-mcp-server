@@ -6,22 +6,27 @@
 - MCP server process must restart after rebuild
 - Worktrees are under `.claude/worktrees/`
 - Source code in `src/`, tools in `src/tools/`, shared helpers in `src/api.ts`, `src/formatters.ts`, `src/config.ts`, `src/types.ts`
-- Tests: `npm test` (371 integration tests), `npm run test:unit` (165 unit tests), `npm run test:agent` (88 agent reasoning assertions)
+- Tests: `npm test` (388 integration tests), `npm run test:unit` (165 unit tests), `npm run test:agent` (48 agent reasoning assertions)
 - Agent test suite in `test-agent.cjs` — multi-tool workflow validation (cross-tool consistency, Router mechanics, anomaly detection)
-- Subjective test suite in `AGENT-TESTS.md` — 25 questions with grading rubrics for LLM evaluation
+- Subjective test suite in `AGENT-TESTS.md` — 35 questions with grading rubrics for LLM evaluation (incl. open emergence + coverage tiers)
 - TypeScript project — check types with `npx tsc --noEmit`
 
 ## Key Tool Files
-- `src/tools/pt.ts` — `list_pools`, `get_pt_details`, `get_best_fixed_yields`
+- `src/tools/pt.ts` — `list_pools`, `get_pt_details`, `get_best_fixed_yields`, `compare_yield`
 - `src/tools/pool.ts` — `get_pool_activity`, `get_pool_volume`, `get_address_activity`
 - `src/tools/portfolio.ts` — `get_portfolio`
 - `src/tools/onchain.ts` — `get_onchain_activity` (direct RPC/eth_getLogs)
-- `src/tools/yield.ts` — `compare_yield`, `scan_opportunities`, `scan_yt_arbitrage`
-- `src/tools/morpho.ts` — `get_morpho_markets`, `get_morpho_rate`, `get_looping_strategy`
-- `src/tools/trade.ts` — `quote_trade`, `simulate_portfolio_after_trade`
+- `src/tools/strategy.ts` — `scan_opportunities` (capital-aware, batch Morpho, negative-APY filtering)
+- `src/tools/yt_arb.ts` — `scan_yt_arbitrage` (YT execution mechanics, flash-mint/flash-redeem)
+- `src/tools/morpho.ts` — `get_morpho_markets`, `get_morpho_rate`
+- `src/tools/looping.ts` — `get_looping_strategy`
+- `src/tools/quote.ts` — `quote_trade` (on-chain Curve get_dy() with math fallback)
+- `src/tools/simulate.ts` — `simulate_portfolio_after_trade`
 - `src/tools/pendle.ts` — `list_pendle_markets`, `compare_pendle_spectra`
-- `src/tools/metavault.ts` — `get_metavaults`, `model_metavault_strategy`
-- `src/tools/protocol.ts` — `get_protocol_stats`, `get_supported_chains`, `get_ve_info`, `get_protocol_context`
+- `src/tools/metavault.ts` — `get_metavaults`, `model_metavault_strategy`, `get_curator_dashboard`
+- `src/tools/protocol.ts` — `get_protocol_stats`, `get_supported_chains`
+- `src/tools/ve.ts` — `get_ve_info` (live veSPECTRA data from Base chain)
+- `src/tools/context.ts` — `get_protocol_context` (Layer 1 protocol mechanics, callable on-demand)
 
 ## Router-Mediated Transactions & eth_getLogs
 Most user interactions go through the **Spectra Router** (flash-mints, flash-redeems, batched mint+LP). The Router is `msg.sender` on underlying contracts, so event `topics[1]` stores the Router address, NOT the user. This is a fundamental EVM constraint, not a bug.
