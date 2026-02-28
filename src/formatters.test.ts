@@ -806,7 +806,7 @@ describe("formatCycleAnalysis", () => {
     assert.ok(joined.includes("Remove Liquidity"));
     assert.ok(joined.includes("Sell PT"));
     assert.ok(joined.includes("8×"), "Should show repetition count");
-    assert.ok(joined.includes("mint→LP→unwind→sell"), "Should include interpretive hint for ADD→REMOVE→SELL");
+    assert.ok(joined.includes("Mint→LP→unwind→sell"), "Should include interpretive hint for ADD→REMOVE→SELL");
     assert.ok(joined.includes("get_portfolio"), "Should cross-reference portfolio");
   });
 
@@ -821,7 +821,7 @@ describe("formatCycleAnalysis", () => {
     };
     const lines = formatCycleAnalysis(cycle, 6000);
     const joined = lines.join("\n");
-    assert.ok(joined.includes("flash-mint") || joined.includes("PT dumping"), "Should hint at flash-mint or PT dumping");
+    assert.ok(joined.includes("Flash-mint") || joined.includes("PT liquidation"), "Should hint at flash-mint or PT liquidation");
   });
 
   it("hints at PT accumulation for BUY_PT-only cycle", () => {
@@ -835,7 +835,7 @@ describe("formatCycleAnalysis", () => {
     };
     const lines = formatCycleAnalysis(cycle, 12000);
     const joined = lines.join("\n");
-    assert.ok(joined.includes("PT accumulation") || joined.includes("flash-redeem"), "Should hint at PT accumulation or YT selling");
+    assert.ok(joined.includes("Fixed-rate accumulation") || joined.includes("Flash-redeem"), "Should hint at fixed-rate accumulation or flash-redeem YT exit");
   });
 
   it("includes uncovered count when present", () => {
@@ -874,7 +874,7 @@ describe("formatFlowAccounting", () => {
     ytPriceUsd: 0.05,
   };
 
-  it("flags yield-directional for YT-only position with PT sells", () => {
+  it("flags YT-only position shape with competing hypotheses for PT sells", () => {
     const lines = formatFlowAccounting({
       ...baseOpts,
       ytBalance: 18000,
@@ -887,7 +887,9 @@ describe("formatFlowAccounting", () => {
     assert.ok(joined.includes("18000.00 YT"), "Should show YT balance");
     assert.ok(joined.includes("Estimated Minimum Mints"), "Should infer mints from YT");
     assert.ok(joined.includes("SELL_PT: 12 txns"), "Should show PT sell count");
-    assert.ok(joined.includes("yield-directional"), "Should flag yield-directional strategy");
+    assert.ok(joined.includes("Position Shape: YT-only"), "Should identify YT-only position shape");
+    assert.ok(joined.includes("Competing Hypotheses"), "Should present competing hypotheses (Open Emergence)");
+    assert.ok(joined.includes("YT accumulation via mint-and-sell"), "Should include YT accumulation hypothesis");
   });
 
   it("flags fixed-rate for PT-only position with PT buys", () => {
@@ -915,8 +917,8 @@ describe("formatFlowAccounting", () => {
       ptSellVolumeUsd: 9000,
     });
     const joined = lines.join("\n");
-    assert.ok(joined.includes("YT/PT ratio: 20.0:1"), "Should show the YT/PT ratio");
-    assert.ok(joined.includes("yield-directional"), "Should flag yield-directional");
+    assert.ok(joined.includes("YT/PT") && joined.includes("20.0:1"), "Should show the YT/PT ratio");
+    assert.ok(joined.includes("Heavily YT-weighted"), "Should flag heavily YT-weighted position");
   });
 
   it("shows full outflow breakdown including ADD_LIQ and REMOVE_LIQ", () => {
