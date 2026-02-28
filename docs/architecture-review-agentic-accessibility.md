@@ -662,8 +662,18 @@ Since this review was written, several changes have been implemented:
   `compare_pendle_spectra`) add a cross-protocol dimension not covered in
   the original review. This creates a new generative friction point: Spectra
   vs Pendle yields on the same underlying asset.
-- **Tool count**: 21 → 24 tools (added `list_pendle_markets`,
-  `compare_pendle_spectra`, `get_onchain_activity`).
+- **Curator Dashboard**: `get_curator_dashboard` added — operational dashboard
+  for MetaVault curators with vault allocation disambiguation.
+- **Tool count**: 21 → 25 tools (added `list_pendle_markets`,
+  `compare_pendle_spectra`, `get_onchain_activity`, `get_curator_dashboard`).
+- **Open Emergence Audit (2026-02-28)**: Full audit of emergence patterns
+  confirmed the competing-branch design (formatCycleAnalysis, formatFlowAccounting)
+  and observation coverage metrics (formatObservationCoverage) are working as designed.
+  Fixed 5 stale unit tests that expected old single-narrative output format.
+  Identified 7 emergence gaps (Router batching not per-event flagged, no incentive
+  sustainability analysis, no liquidity trending, cycle detection lacks temporal
+  context, flow accounting confidence is binary, no cross-pool temporal correlation,
+  no looping failure scenarios). See `EMERGENCE-AUDIT.md`.
 
 Features 1 (Next-Step Hints), 4 (Unified Discovery), 5 (Portfolio Looping
 Enrichment), 6 (Watch-Tower), 7 (APR Vision), and 8 (Tool-Graph Resource)
