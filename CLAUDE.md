@@ -19,9 +19,9 @@
 - `src/tools/strategy.ts` — `scan_opportunities` (capital-aware, batch Morpho, negative-APY filtering)
 - `src/tools/yt_arb.ts` — `scan_yt_arbitrage` (YT execution mechanics, flash-mint/flash-redeem)
 - `src/tools/morpho.ts` — `get_morpho_markets`, `get_morpho_rate`
-- `src/tools/looping.ts` — `get_looping_strategy`
-- `src/tools/quote.ts` — `quote_trade` (on-chain Curve get_dy() with math fallback)
-- `src/tools/simulate.ts` — `simulate_portfolio_after_trade`
+- `src/tools/looping.ts` — `get_looping_strategy` (borrow rate sensitivity, break-even period, failure scenarios)
+- `src/tools/quote.ts` — `quote_trade` (on-chain Curve get_dy() with math fallback), exports `tryOnChainQuote` shared by simulate.ts
+- `src/tools/simulate.ts` — `simulate_portfolio_after_trade` (imports tryOnChainQuote from quote.ts)
 - `src/tools/pendle.ts` — `list_pendle_markets`, `compare_pendle_spectra`
 - `src/tools/metavault.ts` — `get_metavaults`, `model_metavault_strategy`, `get_curator_dashboard`
 - `src/tools/protocol.ts` — `get_protocol_stats`, `get_supported_chains`
@@ -75,7 +75,7 @@ Most user interactions go through the **Spectra Router** (flash-mints, flash-red
 - Morpho looping markets exist on: mainnet, base, arbitrum, katana.
 
 ## API Architecture
-- `src/api.ts` contains `fetchSpectra()` for Spectra API calls, `findMorphoMarketsForPts()` for Morpho market lookups, and `fetchMerkl()`/`parseMerklRewards()` for Merkl reward integration
+- `src/api.ts` contains `fetchSpectra()` for Spectra API calls, `findMorphoMarketsForPts()` for Morpho market lookups, `fetchMerkl()`/`parseMerklRewards()` for Merkl reward integration, and `amountToBigInt()` for safe float→BigInt conversion
 - Spectra API base: `https://app.spectra.finance/api/v1/`
 - Network names in API: `ethereum`, `base`, `arbitrum`, `optimism`, `avalanche`, `katana`, `sonic`, `flare`, `bsc`, `monad`
 - `resolveNetwork()` maps user-facing chain names to API network names (e.g., "mainnet" → "ethereum")

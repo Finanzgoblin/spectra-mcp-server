@@ -68,6 +68,8 @@ Layer 3: Structured Output Hints (computed at runtime in tool output)
   → Strategy Tension: competing PT looping vs YT accumulation on same pool
   → On-chain quote source indicators: "(on-chain Curve get_dy)" vs "(estimated)"
   → Yield composition: IBT APR breakdown (organic base vs external incentives) in scans and quotes
+  → Incentive sustainability: flags when >50% of IBT APR or LP APY comes from incentives,
+    shows "organic only" APY so agents can assess yield durability without incentive assumptions
   → Pool reserves: IBT/PT amounts with ratio for AMM imbalance analysis
   → Points multipliers: external programs (Drops, InfiniFi, Firelight) with amounts
   → "Could be" / "at current rates" language: preserves ambiguity in ranked output
@@ -121,7 +123,7 @@ The observation coverage layer addresses a deeper problem: even perfect interpre
 | `list_pools` | List all active pools on a specific chain, sorted by APY/TVL/maturity. Surfaces pool reserves, IBT APR composition, maturityValue, multipliers, and tags. Supports `compact` mode and `include_expired` flag. |
 | `get_pt_details` | Deep dive on a specific Principal Token -- full data including maturityValue, multipliers (points programs), tags, pool reserves, IBT APR composition, and baseIbt for wrapper tokens. |
 | `compare_yield` | Fixed (PT) vs. variable (IBT) yield comparison with spread mechanics and entry cost analysis. |
-| `get_looping_strategy` | Calculate leveraged yield via PT + Morpho looping with effective liquidation margins. Auto-fetches live Morpho rates when a matching market exists. |
+| `get_looping_strategy` | Calculate leveraged yield via PT + Morpho looping with effective liquidation margins, borrow rate sensitivity (+1/2/3%), break-even period, and failure scenario modeling. Auto-fetches live Morpho rates when a matching market exists. |
 | `get_morpho_markets` | Find Morpho lending markets that accept Spectra PTs as collateral. Filter by chain or symbol. |
 | `get_morpho_rate` | Get live borrow rate and state for a specific Morpho market. |
 | `get_protocol_stats` | SPECTRA tokenomics, emissions schedule, fee distribution, governance info. |
@@ -140,7 +142,7 @@ The observation coverage layer addresses a deeper problem: even perfect interpre
 | `get_curator_dashboard` | Operational dashboard for MetaVault curators. Vault health, position status with vault allocation (when available) vs pool TVL, depositor flows, fee revenue estimates, bridge activity, and actionable alerts. Explicitly disambiguates vault allocation from pool-level TVL to prevent misinterpretation. |
 | `list_pendle_markets` | List active Pendle markets on a given chain or all Pendle chains. Supports Pendle-only chains (Mantle, Berachain, HyperEVM, Corn). Supports `compact` mode. |
 | `compare_pendle_spectra` | Side-by-side Pendle vs Spectra yield comparison on overlapping chains (mainnet, base, arbitrum, optimism, sonic, bsc). Auto-matches by underlying asset. |
-| `get_onchain_activity` | Historical on-chain activity via `eth_getLogs` — recovers data when the API has aged out transactions. Supports dynamic `rpc_url` parameter for any chain. Decodes **Curve pool events** (swaps, LP adds/removes) via `pool_address` AND **Spectra PT vault events** (Mint, Redeem, YieldClaimed) via `pt_address`. Both can be provided simultaneously for merged results. |
+| `get_onchain_activity` | Historical on-chain activity via `eth_getLogs` — recovers data when the API has aged out transactions. Supports dynamic `rpc_url` parameter for any chain, `token_decimals` for correct formatting (USDC=6, WBTC=8). Decodes **Curve pool events** (swaps, LP adds/removes) via `pool_address` AND **Spectra PT vault events** (Mint, Redeem, YieldClaimed) via `pt_address`. Both can be provided simultaneously for merged results. |
 | `get_protocol_context` | Returns protocol mechanics reference (PT/YT identity, Router batching, minting). Callable on-demand instead of always in context. |
 
 ## Supported Chains
@@ -356,8 +358,8 @@ All address parameters are validated (`0x` + 40 hex chars). All API calls have a
 - **API return types**: `fetchSpectra()` and `fetchMorpho()` return `Promise<unknown>` (not `Promise<any>`), forcing explicit type assertions at every call site
 - **Nullish coalescing**: All decimal/balance fallbacks use `??` (not `||`) to correctly handle 0-decimal tokens
 - **Morpho state fields**: Typed as `number | null` to match actual API behavior — prevents silent `NaN` propagation
-- **JSON parsing**: All `res.json()` calls wrapped in try/catch with descriptive error messages
-- **BigInt precision**: veSPECTRA total supply parsed with `10n ** BigInt(18)` to avoid float intermediate overflow
+- **JSON parsing**: Body read as text first, then `JSON.parse()` — avoids stream double-consumption that masked error diagnostics
+- **BigInt precision**: veSPECTRA total supply parsed with `10n ** BigInt(18)` to avoid float intermediate overflow. Trade quoting uses `amountToBigInt()` (string arithmetic) to avoid precision loss when `amount * 10^decimals` exceeds `MAX_SAFE_INTEGER`
 - **Input validation**: Zod schemas enforce `.min()` / `.max()` bounds on all numeric inputs to prevent invalid GraphQL queries
 
 ## Technical Details
