@@ -395,8 +395,15 @@ Use this tool for historical data beyond the API's retention window.`,
         .max(200)
         .default(50)
         .describe("Maximum number of events to return (default 50, max 200)."),
+      token_decimals: z
+        .number()
+        .int()
+        .min(0)
+        .max(36)
+        .default(18)
+        .describe("Token decimals for formatting amounts (default 18). Use get_pt_details to find actual decimals — USDC=6, WBTC=8, most IBTs/PTs=18."),
     },
-    async ({ chain, pool_address, pt_address, rpc_url, from_block, to_block, lookback_hours, address, type_filter, limit }) => {
+    async ({ chain, pool_address, pt_address, rpc_url, from_block, to_block, lookback_hours, address, type_filter, limit, token_decimals }) => {
       try {
         // --- Validate: at least one address required ---
         if (!pool_address && !pt_address) {
@@ -639,24 +646,28 @@ Use this tool for historical data beyond the API's retention window.`,
         for (const e of shown) {
           const block = e.blockNumber.toLocaleString().padEnd(12);
           const actType = formatActivityType(e.type).padEnd(18);
-          const ibt = e.amount0 !== undefined ? formatTokenAmount(e.amount0, 18).padEnd(20) : "—".padEnd(20);
+          const ibt = e.amount0 !== undefined ? formatTokenAmount(e.amount0, token_decimals).padEnd(20) : "—".padEnd(20);
           const from = `${e.from.slice(0, 6)}...${e.from.slice(-4)}`.padEnd(14);
           const hash = `${e.txHash.slice(0, 10)}...`;
 
           if (hasPoolEvents && hasPtVaultEvents) {
-            const pt = e.amount1 !== undefined ? formatTokenAmount(e.amount1, 18).padEnd(20) : "—".padEnd(20);
+            const pt = e.amount1 !== undefined ? formatTokenAmount(e.amount1, token_decimals).padEnd(20) : "—".padEnd(20);
             lines.push(`  ${block} ${actType} ${ibt} ${pt} ${from} ${hash}`);
           } else if (hasPtVaultEvents) {
             lines.push(`  ${block} ${actType} ${ibt} ${from} ${hash}`);
           } else {
-            const pt = e.amount1 !== undefined ? formatTokenAmount(e.amount1, 18).padEnd(20) : "—".padEnd(20);
+            const pt = e.amount1 !== undefined ? formatTokenAmount(e.amount1, token_decimals).padEnd(20) : "—".padEnd(20);
             lines.push(`  ${block} ${actType} ${ibt} ${pt} ${from} ${hash}`);
           }
         }
 
         // Notes
         lines.push(``);
-        lines.push(`  Note: Token amounts assume 18 decimals (standard for most Spectra IBTs/PTs).`);
+        if (token_decimals !== 18) {
+          lines.push(`  Note: Token amounts formatted with ${token_decimals} decimals (as specified).`);
+        } else {
+          lines.push(`  Note: Token amounts assume 18 decimals (default). If amounts look wrong (e.g. USDC shows trillions), pass token_decimals=6.`);
+        }
         lines.push(`  Use get_pt_details to confirm actual decimals and current prices.`);
 
         // Next steps

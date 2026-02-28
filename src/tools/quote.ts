@@ -10,7 +10,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork } from "../config.js";
-import { fetchSpectra, fetchCurveGetDy } from "../api.js";
+import { fetchSpectra, fetchCurveGetDy, amountToBigInt } from "../api.js";
 import type { TradeQuote } from "../types.js";
 import { parsePtResponse, buildQuoteFromPt, formatTradeQuote, formatPct, formatBalance } from "../formatters.js";
 
@@ -18,8 +18,10 @@ import { parsePtResponse, buildQuoteFromPt, formatTradeQuote, formatPct, formatB
  * Try to build a TradeQuote from an on-chain Curve get_dy() call.
  * Returns null if the RPC is unavailable, the call reverts, or data is missing.
  * On success, overrides the math-estimated expectedOut with the exact on-chain value.
+ *
+ * Exported for reuse by simulate_portfolio_after_trade (avoids duplicating quoting logic).
  */
-async function tryOnChainQuote(
+export async function tryOnChainQuote(
   mathQuote: TradeQuote,
   poolAddress: string,
   chain: string,
@@ -37,8 +39,8 @@ async function tryOnChainQuote(
   const inputDecimals = side === "buy" ? ibtDecimals : ptDecimals;
   const outputDecimals = side === "buy" ? ptDecimals : ibtDecimals;
 
-  // Convert human-readable amount to raw token units
-  const dx = BigInt(Math.round(amount * 10 ** inputDecimals));
+  // Convert human-readable amount to raw token units (string arithmetic to avoid float overflow)
+  const dx = amountToBigInt(amount, inputDecimals);
   if (dx <= 0n) return null;
 
   const dyRaw = await fetchCurveGetDy(poolAddress, i, j, dx, chain);
@@ -117,13 +119,13 @@ makes sense relative to variable rates.`,
 
         if (!pt) {
           const text = `No PT found at ${pt_address} on ${chain}`;
-          return { content: [{ type: "text" as const, text }] };
+          return { content: [{ type: "text" as const, text }], isError: true };
         }
 
         const pool = pt.pools?.[0];
         if (!pool) {
           const text = `No active pool for PT ${pt.name}`;
-          return { content: [{ type: "text" as const, text }] };
+          return { content: [{ type: "text" as const, text }], isError: true };
         }
 
         // Step 1: Build the math-based fallback quote
@@ -131,7 +133,7 @@ makes sense relative to variable rates.`,
         if (!mathQuote) {
           const ptName = pt.name || "PT";
           const text = `Cannot quote: PT price data unavailable for ${ptName}. The pool may have no liquidity.`;
-          return { content: [{ type: "text" as const, text }] };
+          return { content: [{ type: "text" as const, text }], isError: true };
         }
 
         // Step 2: Try on-chain quote (best-effort, falls back to math)

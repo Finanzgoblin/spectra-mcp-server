@@ -57,7 +57,7 @@ Use get_pool_activity to see trading patterns on this pool.`,
 
         if (!pt) {
           const text = `No PT found at ${pt_address} on ${chain}`;
-          return { content: [{ type: "text" as const, text }] };
+          return { content: [{ type: "text" as const, text }], isError: true };
         }
 
         const summary = formatPtSummary(pt, chain);
@@ -320,12 +320,12 @@ check your current positions. Use scan_opportunities for multi-chain comparison.
         const pt = parsePtResponse(data);
 
         if (!pt) {
-          return { content: [{ type: "text" as const, text: `No PT found at ${pt_address} on ${chain}` }] };
+          return { content: [{ type: "text" as const, text: `No PT found at ${pt_address} on ${chain}` }], isError: true };
         }
 
         const pool = pt.pools?.[0];
         if (!pool) {
-          return { content: [{ type: "text" as const, text: `No active pool for this PT` }] };
+          return { content: [{ type: "text" as const, text: `No active pool for this PT` }], isError: true };
         }
 
         const fixedApy = pool.impliedApy || 0;

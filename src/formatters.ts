@@ -188,6 +188,14 @@ export function formatPoolSummary(pt: SpectraPt, pool: SpectraPool, chain: strin
     lines.push(`  LP APY (Max Boost): ${formatPct(pool.lpApy.boostedTotal)}`);
   }
 
+  // LP APY sustainability signal: flag when incentives dominate
+  const lpTotal = pool.lpApy?.total || 0;
+  const lpOrganic = (pool.lpApy?.details?.fees || 0) + (pool.lpApy?.details?.pt || 0) + (pool.lpApy?.details?.ibt || 0);
+  const lpIncentives = lpTotal - lpOrganic;
+  if (lpTotal > 0 && lpIncentives > 0 && lpOrganic < lpTotal * 0.5) {
+    lines.push(`  LP APY (organic only, no rewards/gauge): ${formatPct(lpOrganic)}`);
+  }
+
   lines.push(
     `  Underlying: ${pt.underlying?.symbol || "?"} (${pt.underlying?.name || "?"})`,
   );
@@ -208,6 +216,14 @@ export function formatPoolSummary(pt: SpectraPt, pool: SpectraPool, chain: strin
       for (const [token, apy] of Object.entries(ibtDetails.rewards)) {
         lines.push(`    +-- ${token}: ${formatPct(apy)}`);
       }
+    }
+    // Incentive sustainability signal: flag when incentives dominate IBT APR
+    const ibtTotal = pt.ibt?.apr?.total || 0;
+    const ibtBase = ibtDetails.base ?? 0;
+    const ibtIncentives = ibtTotal - ibtBase;
+    if (ibtTotal > 0 && ibtIncentives > 0 && ibtBase < ibtTotal * 0.5) {
+      const incentivePct = (ibtIncentives / ibtTotal * 100).toFixed(0);
+      lines.push(`    ** ${incentivePct}% of IBT APR comes from incentives. Base yield alone: ${formatPct(ibtBase)} **`);
     }
   }
 
@@ -1167,6 +1183,12 @@ export function formatLpApyLines(
     lines.push(`    LP APY (Your ${boostInfo.multiplier.toFixed(2)}x Boost): ${formatPct(lpApyAtBoost)}`);
   }
 
+  // Sustainability signal: flag when incentives dominate LP APY
+  const organic = breakdown.fees + breakdown.pt + breakdown.ibt;
+  if (lpApy > 0 && organic < lpApy * 0.5 && (lpApy - organic) > 0) {
+    lines.push(`    LP APY (organic only, no rewards/gauge): ${formatPct(organic)}`);
+  }
+
   return lines;
 }
 
@@ -1759,6 +1781,12 @@ export function formatScanOpportunity(opp: ScanOpportunity, rank: number, boostI
     }
     if (ibtParts.length > 0) {
       lines.push(`    IBT APR: ${formatPct(opp.variableApr)} (${ibtParts.join(" + ")})`);
+    }
+    // Incentive sustainability signal
+    const scanIbtBase = scanIbtDet.base ?? 0;
+    if (opp.variableApr > 0 && scanIbtBase < opp.variableApr * 0.5) {
+      const scanIncentivePct = ((opp.variableApr - scanIbtBase) / opp.variableApr * 100).toFixed(0);
+      lines.push(`    ** ${scanIncentivePct}% of IBT APR is incentive-driven. Base alone: ${formatPct(scanIbtBase)} **`);
     }
   }
 
