@@ -459,7 +459,7 @@ has interacted with in a single call.`,
           let addressType: "contract" | "eoa" | "unknown" = "unknown";
 
           const [poolResult, portfolioResult, addrTypeResult] = await Promise.allSettled([
-            fetchSpectra(`/${network}/pt/${pool_address}`).catch(() => null),
+            fetchSpectra(`/${network}/pt/${effectivePoolAddr}`).catch(() => null),
             fetchSpectra(`/${network}/portfolio/${address}`).catch(() => null),
             fetchAddressType(address!, network),
           ]);

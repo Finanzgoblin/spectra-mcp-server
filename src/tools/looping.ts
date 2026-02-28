@@ -76,13 +76,13 @@ discover the best looping opportunities across all chains with capital-aware siz
 
         if (!pt) {
           const text = `No PT found at ${pt_address} on ${chain}`;
-          return { content: [{ type: "text" as const, text }] };
+          return { content: [{ type: "text" as const, text }], isError: true };
         }
 
         const pool = pt.pools?.[0];
         if (!pool) {
           const text = `PT has no active pool`;
-          return { content: [{ type: "text" as const, text }] };
+          return { content: [{ type: "text" as const, text }], isError: true };
         }
 
         // Try to auto-detect Morpho market for this PT

@@ -186,7 +186,7 @@ Use get_looping_strategy with these rates to calculate leveraged yield projectio
         const morphoChainId = MORPHO_CHAIN_IDS[network];
         if (!morphoChainId) {
           const text = `Morpho is not tracked for ${chain}. Supported: ${Object.keys(MORPHO_CHAIN_IDS).join(", ")}.`;
-          return { content: [{ type: "text" as const, text }] };
+          return { content: [{ type: "text" as const, text }], isError: true };
         }
 
         const query = `{
@@ -200,7 +200,7 @@ Use get_looping_strategy with these rates to calculate leveraged yield projectio
 
         if (!market) {
           const text = `No Morpho market found for key ${market_key} on chain ${chain} (chainId ${morphoChainId}). Verify the key and chain match.`;
-          return { content: [{ type: "text" as const, text }] };
+          return { content: [{ type: "text" as const, text }], isError: true };
         }
 
         const summary = formatMorphoMarketSummary(market);

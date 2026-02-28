@@ -74,6 +74,11 @@ Use get_ve_info for live veSPECTRA data and boost calculations.`,
           `    App: https://app.spectra.finance`,
           `    Docs: https://docs.spectra.finance`,
           `    Governance: https://gov.spectra.finance`,
+          ``,
+          `--- Next Steps ---`,
+          `• Live veSPECTRA data: get_ve_info() for current total supply, lock stats, and boost calculation`,
+          `• Yield discovery: get_best_fixed_yields() or scan_opportunities(capital_usd=YOUR_AMOUNT) for cross-chain opportunities`,
+          `• Tokenomics deep-dive: compare_yield(chain=CHAIN, pt_address=PT, ve_spectra_balance=YOUR_BAL) to see boost impact on LP APY`,
         ];
 
         const text = lines.join("\n");
@@ -107,9 +112,11 @@ on mainnet, base, arbitrum, and katana. veSPECTRA governance lives on Base.`,
         ``,
         `  Tip: "ethereum" is also accepted as an alias for "mainnet".`,
         ``,
-        `Tip: Use get_best_fixed_yields to scan all chains at once (raw APY ranking),`,
-        `or scan_opportunities for capital-aware analysis with price impact and looping.`,
-        `Use list_pools with a specific chain to see available pools.`,
+        `--- Next Steps ---`,
+        `• Scan all chains: get_best_fixed_yields() for raw APY ranking across all chains`,
+        `• Capital-aware scan: scan_opportunities(capital_usd=YOUR_AMOUNT) for price impact + looping analysis`,
+        `• Chain-specific pools: list_pools(chain=CHAIN_NAME) to see available pools on a specific chain`,
+        `• Protocol stats: get_protocol_stats() for tokenomics and emissions data`,
       ];
 
       const text = lines.join("\n");
