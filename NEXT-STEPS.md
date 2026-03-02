@@ -1,4 +1,4 @@
-# Next Steps: Cross-Protocol Curator Tooling (Phases 2-3)
+# Next Steps: Cross-Protocol Curator Tooling (Phase 3)
 
 ## What Was Completed (Phase 1)
 
@@ -8,24 +8,17 @@ Phase 1 shipped the cross-protocol scanner and maturity matching infrastructure:
 - **Maturity-aware matching** — `normalizeUnderlyingSymbol()` and `matchByAssetAndMaturity()` in `src/formatters.ts`. Handles wstETH↔stETH, USDC.e↔USDC, WETH↔ETH variants. Match quality: exact (≤7d), close (≤30d), loose (≤90d).
 - **Upgraded `compare_pendle_spectra`** — Now uses maturity-aware matching with configurable `maturity_tolerance_days` parameter. Shows match quality and maturity gap per pair.
 - **Protocol context** — `workflow_routing` in `src/tools/context.ts` updated with cross-protocol curator workflows and four-tool discovery taxonomy.
-- **Tests** — 15 new unit tests (normalizeUnderlyingSymbol + matchByAssetAndMaturity), 7 new integration tests for the scanner. All 180 unit and 395 integration tests pass.
+- **Tests** — 15 new unit tests (normalizeUnderlyingSymbol + matchByAssetAndMaturity), 7 new integration tests for the scanner.
 
-## Phase 2: Blended MetaVault Modeling + Dashboard Protocol Tags
+## What Was Completed (Phase 2)
 
-**Goal**: Let curators model MetaVaults that allocate across both Spectra and Pendle.
+Phase 2 shipped blended MetaVault modeling, dashboard protocol tags, and cross-protocol discovery pointers:
 
-### 2A. Upgrade `model_metavault_strategy` (in `src/tools/metavault.ts`)
-Add two backward-compatible parameters:
-- `pendle_allocation_pct` (0-100, default 0) — percentage of vault capital in Pendle LP
-- `pendle_lp_apy` (required when allocation > 0) — Pendle LP APY for blended calculation
-
-When `pendle_allocation_pct > 0`: compute blended base APY = `spectraApy * (1 - alloc/100) + pendleLpApy * (alloc/100)`, use as `grossVaultApy` in looping table. Add "Allocation Model" section to output. Add warnings about manual Pendle rollover and operational complexity. When 0: identical behavior to today.
-
-### 2B. Upgrade `get_curator_dashboard` (in `src/tools/metavault.ts`)
-Prepare for Pendle positions in MetaVault API data. Add protocol detection heuristic on positions (when Spectra API starts returning Pendle data). Tag positions `[Spectra]`/`[Pendle]`/`[Unknown]`. Flag Pendle positions approaching maturity as needing manual rollover. Graceful degradation: if API doesn't return Pendle positions yet, output is unchanged.
-
-### 2C. Cross-protocol pointer in `scan_opportunities` (in `src/tools/strategy.ts`)
-Add a light footer after MetaVault alternatives: "Pendle markets may also offer competitive yields. Use `scan_curator_opportunities(capital_usd=X)` for unified ranking." Teaches agents the cross-protocol tool exists without mixing Pendle into the Spectra-focused scanner.
+- **Blended allocation in `model_metavault_strategy`** — Two new params: `pendle_allocation_pct` (0-100, default 0) and `pendle_lp_apy`. When allocation > 0, computes blended base APY and shows an "Allocation Model" section with Spectra/Pendle split and manual rollover warnings. Zero allocation = identical to pre-Phase-2 behavior.
+- **Protocol tags in `get_curator_dashboard`** — Positions tagged `[Spectra]`/`[Pendle]`/`[Unknown]` with heuristic detection (lpt data = Spectra, symbol-based fallback for Pendle). Pendle positions approaching maturity (≤30d) generate `[PENDLE ROLLOVER]` action items. Graceful: all current API positions are Spectra, so tags are ready when Pendle data arrives.
+- **Cross-protocol pointer in `scan_opportunities`** — Next Steps section now includes `scan_curator_opportunities` pointer, teaching agents the cross-protocol tool exists.
+- **Cross-protocol pointers in `model_metavault_strategy` and `get_curator_dashboard`** — Both tools' Next Steps sections now reference `scan_curator_opportunities`.
+- **Tests** — 6 new unit tests (formatMetavaultStrategy blended + formatCuratorDashboard protocol tags), 14 new integration tests. All 186 unit and 405 integration tests pass.
 
 ## Phase 3: Pendle Morpho Looping (Defer Until Confirmed Demand)
 
@@ -33,10 +26,6 @@ Add a light footer after MetaVault alternatives: "Pendle markets may also offer 
 - `src/api.ts` — Add `findMorphoMarketsForPendlePts()`
 - `src/tools/curator_scan.ts` — Include Pendle PTs in Morpho batch lookups
 - `src/tools/looping.ts` — Add optional `protocol` parameter to `get_looping_strategy`; when `protocol="pendle"`, fetch PT data from Pendle API (math is identical, only data source changes)
-
-## Full Plan Reference
-
-The complete specification with file-by-file changes, type definitions, and test plans is in `.claude/plans/rippling-stargazing-cookie.md`.
 
 ## Verification Checklist
 

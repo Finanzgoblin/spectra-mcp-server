@@ -168,7 +168,11 @@ Dual Morpho Market Strategy:
   loopers, and the curator earns fees on all external deposits flowing through the vault.
 
 Curator economics: The curator EARNS the performance fee on external deposits — this is
-revenue for managing the vault (rolling positions, compounding YT, maintaining allocations).`,
+revenue for managing the vault (rolling positions, compounding YT, maintaining allocations).
+
+Blended allocation: Supports modeling MetaVaults that allocate across both Spectra and
+Pendle LP positions via pendle_allocation_pct and pendle_lp_apy parameters. Computes
+blended base APY and warns about manual Pendle rollover requirements.`,
     {
       chain: CHAIN_ENUM
         .optional()
@@ -225,6 +229,16 @@ revenue for managing the vault (rolling positions, compounding YT, maintaining a
         .number()
         .optional()
         .describe("If provided, show side-by-side comparison with raw PT looping at this APY (%)"),
+      pendle_allocation_pct: z
+        .number()
+        .min(0)
+        .max(100)
+        .default(0)
+        .describe("Percentage of vault capital allocated to Pendle LP positions (0-100, default 0). When >0, computes blended APY across Spectra and Pendle. Requires pendle_lp_apy."),
+      pendle_lp_apy: z
+        .number()
+        .optional()
+        .describe("Pendle LP APY (%) for the Pendle allocation. Required when pendle_allocation_pct > 0."),
     },
     async ({
       chain,
@@ -239,6 +253,8 @@ revenue for managing the vault (rolling positions, compounding YT, maintaining a
       external_deposits_usd,
       days_to_maturity,
       compare_pt_apy,
+      pendle_allocation_pct,
+      pendle_lp_apy,
     }) => {
       try {
         let resolvedBaseApy = base_apy;
@@ -328,8 +344,20 @@ revenue for managing the vault (rolling positions, compounding YT, maintaining a
           return { content: [{ type: "text" as const, text }], isError: true };
         }
 
+        // Validate Pendle allocation
+        if (pendle_allocation_pct > 0 && pendle_lp_apy === undefined) {
+          const text = `Error: pendle_lp_apy is required when pendle_allocation_pct > 0. Provide the Pendle LP APY (%) for the blended allocation model. Use list_pendle_markets to find Pendle LP APYs.`;
+          return { content: [{ type: "text" as const, text }], isError: true };
+        }
+
+        // Blended base APY (Spectra + Pendle allocation)
+        const spectraBaseApy = resolvedBaseApy;
+        const blendedBaseApy = pendle_allocation_pct > 0
+          ? (resolvedBaseApy * (100 - pendle_allocation_pct) / 100) + (pendle_lp_apy! * pendle_allocation_pct / 100)
+          : resolvedBaseApy;
+
         // Vault economics
-        const grossVaultApy = resolvedBaseApy + yt_compounding_apy;
+        const grossVaultApy = blendedBaseApy + yt_compounding_apy;
         const netVaultApy = grossVaultApy * (1 - curator_fee_pct / 100);
 
         // MetaVault looping table
@@ -368,7 +396,7 @@ revenue for managing the vault (rolling positions, compounding YT, maintaining a
         }
 
         const text = formatMetavaultStrategy({
-          baseApy: resolvedBaseApy,
+          baseApy: blendedBaseApy,
           ytCompoundingApy: yt_compounding_apy,
           curatorFeePct: curator_fee_pct,
           netVaultApy,
@@ -385,6 +413,9 @@ revenue for managing the vault (rolling positions, compounding YT, maintaining a
           comparePtRows,
           comparePtBestLoop: comparePtBest?.loop,
           comparePtBestNetApy: comparePtBest?.netApy,
+          pendleAllocationPct: pendle_allocation_pct > 0 ? pendle_allocation_pct : undefined,
+          pendleLpApy: pendle_allocation_pct > 0 ? pendle_lp_apy : undefined,
+          spectraBaseApy: pendle_allocation_pct > 0 ? spectraBaseApy : undefined,
         });
 
         // Next-step hints
@@ -395,6 +426,7 @@ revenue for managing the vault (rolling positions, compounding YT, maintaining a
           `• Find pools matching your target APY: scan_opportunities(capital_usd=${capital_usd || "YOUR_AMOUNT"}) for live pool data`,
           `• Check raw PT looping baseline: get_looping_strategy(chain=CHAIN, pt_address=PT_ADDRESS) for comparison`,
           `• Find Morpho markets: get_morpho_markets() to see which PTs have lending markets for Market A`,
+          `• Cross-protocol scan: scan_curator_opportunities(capital_usd=${capital_usd || "YOUR_AMOUNT"}) for unified Spectra + Pendle ranking`,
         ].join("\n");
 
         return { content: [{ type: "text" as const, text: liveDataNote + text + nextLines }] };
@@ -424,10 +456,11 @@ Returns:
     and APY are variable, so this is a snapshot projection, not a guarantee)
   - Bridge activity: cross-chain CCTP transfer summary
   - Action items: auto-generated alerts for expiring positions, outflow trends,
-    pending bridges, high incentive dependency, and missing positions
+    pending bridges, high incentive dependency, Pendle rollover warnings, and missing positions
 
 Pool allocations show each position as a % of total vault TVL (e.g., "37.1% | $236K"),
-sorted by size. Idle liquidity (undeployed capital) is shown separately.
+sorted by size, with protocol tags ([Spectra]/[Pendle]/[Unknown]) on each position.
+Idle liquidity (undeployed capital) is shown separately.
 When the API doesn't provide LP balance data for a position, it shows "?%".
 
 Cross-chain positions: MetaVault positions may live on a different chain than the
@@ -491,6 +524,16 @@ Use get_address_activity on the curator's EOA for cross-pool curator activity.`,
             vaultAllocationUsd = lpBalance * pool.lpt.price.usd;
           }
 
+          // Protocol detection heuristic:
+          // - Positions with lpt data come from Curve StableSwap pools → Spectra
+          // - If API starts returning Pendle positions, they won't have lpt data
+          // - Symbol-based fallback for future Pendle integration
+          const protocol: "Spectra" | "Pendle" | "Unknown" = pool?.lpt
+            ? "Spectra"
+            : pos.symbol?.toLowerCase().includes("pendle")
+              ? "Pendle"
+              : "Spectra"; // default: all current API positions are Spectra
+
           return {
             symbol: pos.symbol,
             ptAddress: pos.address,
@@ -503,6 +546,7 @@ Use get_address_activity on the curator's EOA for cross-pool curator activity.`,
             ptApy: pool?.ptApy || 0,
             lpApyTotal: pool?.lpApy?.total || 0,
             lpApyBoostedTotal: pool?.lpApy?.boostedTotal || null,
+            protocol,
           };
         });
 
@@ -621,6 +665,13 @@ Use get_address_activity on the curator's EOA for cross-pool curator activity.`,
           const incentiveShare = (liveApyTotal - apyBase) / liveApyTotal;
           if (incentiveShare > 0.7) {
             actionItems.push(`[INCENTIVE] ${(incentiveShare * 100).toFixed(0)}% of APY comes from incentive programs. Base yield is only ${formatPct(apyBase)}.`);
+          }
+        }
+
+        // Pendle manual rollover warnings
+        for (const pos of positions) {
+          if (pos.protocol === "Pendle" && !pos.expired && pos.daysToMaturity <= 30) {
+            actionItems.push(`[PENDLE ROLLOVER] ${pos.symbol} matures in ${pos.daysToMaturity}d — requires manual rollover (MetaVault auto-roll does not cover Pendle positions)`);
           }
         }
 

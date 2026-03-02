@@ -1370,6 +1370,11 @@ async function testScanOpportunities(client) {
   } else {
     pass("ve_spectra_balance: no results, but accepted parameter without error");
   }
+
+  // Phase 2: cross-protocol pointer in Next Steps
+  if (text.includes("Next Steps")) {
+    assert(text.includes("scan_curator_opportunities"), "scan_opportunities next steps mention cross-protocol scanner", "missing");
+  }
 }
 
 async function testScanYtArbitrage(client) {
@@ -1651,6 +1656,51 @@ async function testModelMetavaultStrategy(client) {
 
   // Next steps should mention get_metavaults
   assert(basic.includes("get_metavaults"), "next steps mention get_metavaults", "missing");
+
+  // Next steps should mention cross-protocol scanner
+  assert(basic.includes("scan_curator_opportunities"), "next steps mention scan_curator_opportunities", "missing");
+
+  // ── Phase 2: Blended allocation (Spectra + Pendle) ──
+
+  // Blended allocation with pendle_allocation_pct
+  const { text: blended } = await client.callTool("model_metavault_strategy", {
+    base_apy: 12,
+    pendle_allocation_pct: 30,
+    pendle_lp_apy: 8,
+  });
+  assert(blended.includes("Allocation Model"), "blended has Allocation Model section", "missing");
+  assert(blended.includes("Spectra LP"), "blended shows Spectra LP line", "missing");
+  assert(blended.includes("Pendle LP"), "blended shows Pendle LP line", "missing");
+  assert(blended.includes("70% allocation"), "blended shows Spectra allocation pct", "missing");
+  assert(blended.includes("30% allocation"), "blended shows Pendle allocation pct", "missing");
+  assert(blended.includes("Blended Base APY"), "blended shows blended base APY", "missing");
+  assert(blended.includes("manual rollover"), "blended warns about Pendle manual rollover", "missing");
+  // Math: blended = 12 * 0.7 + 8 * 0.3 = 8.4 + 2.4 = 10.8%
+  assert(blended.includes("10.80%"), "blended base APY is 10.8%", `got: ${blended.match(/Blended Base APY:.*/)?.[0]}`);
+
+  // Validation: pendle_allocation_pct > 0 without pendle_lp_apy
+  const { text: noLpApy, raw: noLpApyRaw } = await client.callTool("model_metavault_strategy", {
+    base_apy: 12,
+    pendle_allocation_pct: 30,
+  });
+  assert(
+    noLpApy.includes("pendle_lp_apy is required") || (noLpApyRaw && noLpApyRaw.isError),
+    "error when pendle_allocation_pct > 0 but no pendle_lp_apy",
+    `unexpected: ${noLpApy.slice(0, 100)}`
+  );
+
+  // Zero allocation (default): no Allocation Model section
+  assert(!minimal.includes("Allocation Model"), "no Allocation Model section when pendle_allocation_pct=0", "should be absent");
+
+  // Schema: new params exist
+  if (mvModelTool) {
+    const props = mvModelTool.inputSchema.properties;
+    assert(props.pendle_allocation_pct, "model_metavault_strategy has pendle_allocation_pct param", "missing");
+    assert(props.pendle_lp_apy, "model_metavault_strategy has pendle_lp_apy param", "missing");
+    const required = mvModelTool.inputSchema.required || [];
+    assert(!required.includes("pendle_allocation_pct"), "pendle_allocation_pct is optional", `required: ${JSON.stringify(required)}`);
+    assert(!required.includes("pendle_lp_apy"), "pendle_lp_apy is optional", `required: ${JSON.stringify(required)}`);
+  }
 }
 
 async function testGetAddressActivity(client) {
@@ -1766,14 +1816,17 @@ async function testGetCuratorDashboard(client) {
     });
     assert(dash.includes("Curator Dashboard"), "has dashboard header", `unexpected: ${dash.slice(0, 100)}`);
     assert(dash.includes("Vault Health"), "has vault health section", "missing");
-    assert(dash.includes("Positions"), "has positions section", "missing");
+    assert(dash.includes("Positions") || dash.includes("Pool Allocations"), "has positions section", "missing");
     assert(dash.includes("Fee Revenue"), "has fee revenue section", "missing");
     assert(dash.includes("Next Steps"), "has next steps", "missing");
     assert(dash.includes("model_metavault_strategy"), "next steps mention strategy tool", "missing");
-    // Vault allocation: at least some positions should show "Vault $X of $Y pool" when lpt.balance is available
-    const hasVaultAlloc = dash.includes("Vault $") && dash.includes("of $") && dash.includes("pool");
-    const hasPoolTvl = dash.includes("Pool TVL $");
-    assert(hasVaultAlloc || hasPoolTvl, "positions show vault allocation or pool TVL", "neither found");
+    // Phase 2: protocol tags — all current positions should be [Spectra]
+    assert(dash.includes("[Spectra]") || dash.includes("No active pool"), "positions have [Spectra] protocol tag or no positions", "missing protocol tag");
+    // Phase 2: cross-protocol pointer in dashboard next steps
+    assert(dash.includes("scan_curator_opportunities"), "dashboard next steps mention cross-protocol scanner", "missing");
+    // Vault allocation: positions should show percentage + USD allocation, or "No active pool"
+    const hasAllocation = dash.includes("% |") && dash.includes("$");
+    assert(hasAllocation || dash.includes("No active pool"), "positions show allocation % + USD or no positions", "neither found");
   } else {
     skip("no MetaVaults found for live dashboard test");
   }
