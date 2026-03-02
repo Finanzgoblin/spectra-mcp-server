@@ -2393,6 +2393,10 @@ export function formatMetavaultStrategy(opts: {
   comparePtRows?: MetavaultLoopRow[];
   comparePtBestLoop?: number;
   comparePtBestNetApy?: number;
+  // Blended Spectra + Pendle allocation
+  pendleAllocationPct?: number;
+  pendleLpApy?: number;
+  spectraBaseApy?: number;
 }): string {
   const lines: string[] = [];
 
@@ -2411,6 +2415,20 @@ export function formatMetavaultStrategy(opts: {
   lines.push(`  Morpho LTV:          ${formatPct(opts.morphoLtv * 100)}`);
   lines.push(`  Borrow Rate:         ${formatPct(opts.borrowRate)}`);
   lines.push(`  Pool Cycle:          ${opts.daysToMaturity} days`);
+
+  // ── Allocation Model (Spectra + Pendle blend) ──────────────
+  if (opts.pendleAllocationPct && opts.pendleAllocationPct > 0 && opts.pendleLpApy !== undefined && opts.spectraBaseApy !== undefined) {
+    const spectraPct = 100 - opts.pendleAllocationPct;
+    lines.push(``);
+    lines.push(`--- Allocation Model ---`);
+    lines.push(`  Spectra LP:        ${spectraPct}% allocation | ${formatPct(opts.spectraBaseApy)} base APY`);
+    lines.push(`  Pendle LP:         ${opts.pendleAllocationPct}% allocation | ${formatPct(opts.pendleLpApy)} base APY`);
+    lines.push(`  Blended Base APY:  ${formatPct(opts.baseApy)}`);
+    lines.push(``);
+    lines.push(`  Note: Pendle positions require manual rollover at maturity.`);
+    lines.push(`  Spectra MetaVault auto-rolls Spectra positions only.`);
+    lines.push(`  Operational complexity increases with cross-protocol allocation.`);
+  }
 
   // ── Curator Economics ──────────────────────────────────────
   if (opts.curator) {
@@ -2542,6 +2560,7 @@ export interface CuratorDashboardOpts {
     ptApy: number;
     lpApyTotal: number;
     lpApyBoostedTotal: number | null;
+    protocol: "Spectra" | "Pendle" | "Unknown";
   }>;
 
   // Epoch flow analysis
@@ -2636,7 +2655,8 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
       const urgencyFlag = !pos.expired && pos.daysToMaturity <= 14 ? " !!!" : !pos.expired && pos.daysToMaturity <= 30 ? " !!" : "";
       const vaultPct = opts.tvlUsd > 0 ? (pos.vaultAllocationUsd! / opts.tvlUsd * 100).toFixed(1) : "?";
       const allocationStr = `${vaultPct}% | ${formatUsd(pos.vaultAllocationUsd!)}`;
-      lines.push(`  ${pos.symbol} | ${matLabel}${urgencyFlag} | ${allocationStr} | PT APY ${formatPct(pos.ptApy)} | LP APY ${formatPct(pos.lpApyTotal)}${pos.lpApyBoostedTotal && pos.lpApyBoostedTotal > pos.lpApyTotal ? ` (boost: ${formatPct(pos.lpApyBoostedTotal)})` : ""}`);
+      const protocolTag = `[${pos.protocol}]`;
+      lines.push(`  ${protocolTag} ${pos.symbol} | ${matLabel}${urgencyFlag} | ${allocationStr} | PT APY ${formatPct(pos.ptApy)} | LP APY ${formatPct(pos.lpApyTotal)}${pos.lpApyBoostedTotal && pos.lpApyBoostedTotal > pos.lpApyTotal ? ` (boost: ${formatPct(pos.lpApyBoostedTotal)})` : ""}`);
       lines.push(`    PT: ${pos.ptAddress}${pos.poolAddress ? ` | Pool: ${pos.poolAddress}` : ""}`);
     }
     // Idle liquidity: vault TVL minus sum of known position allocations
@@ -2728,6 +2748,7 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
     lines.push(`  - Pool activity: get_pool_activity(chain="${opts.chain}", pool_address="${firstPt.poolAddress || firstPt.ptAddress}")`);
   }
   lines.push(`  - Compare yields: scan_opportunities(capital_usd=YOUR_AMOUNT) for market context`);
+  lines.push(`  - Cross-protocol scan: scan_curator_opportunities(capital_usd=YOUR_AMOUNT) for unified Spectra + Pendle ranking`);
 
   return lines.join("\n");
 }

@@ -440,6 +440,9 @@ Use model_metavault_strategy to model MetaVault looping economics.`,
           }
         }
 
+        // Cross-protocol pointer — Pendle markets may offer competitive yields
+        nextStepLines.push(`• Cross-protocol: scan_curator_opportunities(capital_usd=${capital_usd}) for unified Spectra + Pendle ranking`);
+
         text += nextStepLines.join("\n");
 
         return { content: [{ type: "text" as const, text }] };
