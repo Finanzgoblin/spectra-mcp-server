@@ -26,6 +26,7 @@ import {
   pendleDaysToMaturity,
   parsePtResponse,
   daysToMaturity,
+  matchByAssetAndMaturity,
 } from "../formatters.js";
 
 // Pendle chain enum includes all Pendle-supported chains (not just Spectra overlap)
@@ -57,6 +58,7 @@ Chains with Spectra overlap: ${PENDLE_CHAIN_KEYS.filter((k) => SUPPORTED_CHAINS[
 Pendle-only chains (Spectra not deployed): ${PENDLE_CHAIN_KEYS.filter((k) => !SUPPORTED_CHAINS[k]).join(", ")}
 
 Use compare_pendle_spectra to do a head-to-head comparison on a specific underlying.
+Use scan_curator_opportunities for unified cross-protocol ranking with capital-aware sizing.
 Use scan_opportunities for Spectra-native opportunity ranking.`,
     {
       chain: PENDLE_CHAIN_ENUM.optional().describe(
@@ -170,7 +172,7 @@ Use scan_opportunities for Spectra-native opportunity ranking.`,
   server.tool(
     "compare_pendle_spectra",
     `Compare Pendle and Spectra yield opportunities side-by-side on the same chain.
-Auto-matches markets by underlying asset to produce a head-to-head comparison.
+Auto-matches markets by underlying asset AND maturity proximity for head-to-head comparison.
 
 Essential for MetaVault curators who can allocate to either protocol. Shows:
 - Implied APY (fixed rate) comparison
@@ -178,11 +180,13 @@ Essential for MetaVault curators who can allocate to either protocol. Shows:
 - Pool liquidity and TVL comparison
 - Variable rate comparison
 - Per-market winner analysis
+- Maturity match quality (exact ≤7d, close ≤30d, loose ≤90d gap)
 
 Only works on chains where both Spectra and Pendle are deployed:
 ${PENDLE_CHAIN_KEYS.filter((k) => SUPPORTED_CHAINS[k]).map((k) => PENDLE_CHAIN_NAMES[k]).join(", ")}
 
 Use list_pendle_markets for Pendle-only chain data.
+Use scan_curator_opportunities for unified cross-protocol ranking with capital-aware sizing.
 Use scan_opportunities for Spectra-native capital-aware ranking.`,
     {
       chain: z.enum(
@@ -193,9 +197,12 @@ Use scan_opportunities for Spectra-native capital-aware ranking.`,
       ),
       min_tvl_usd: z.number().default(10000).describe("Minimum TVL in USD"),
       min_liquidity_usd: z.number().default(5000).describe("Minimum pool liquidity in USD"),
+      maturity_tolerance_days: z.number().min(0).max(365).default(90).describe(
+        "Maximum maturity gap (days) to consider a match. Matches within 7d are 'exact', within 30d are 'close', within this tolerance are 'loose'. Default 90."
+      ),
       compact: z.boolean().default(false).describe("Compact output mode"),
     },
-    async ({ chain, asset_filter, min_tvl_usd, min_liquidity_usd, compact }) => {
+    async ({ chain, asset_filter, min_tvl_usd, min_liquidity_usd, maturity_tolerance_days, compact }) => {
       try {
         const network = resolveNetwork(chain);
         const assetUpper = asset_filter?.toUpperCase();
@@ -243,73 +250,50 @@ Use scan_opportunities for Spectra-native capital-aware ranking.`,
         lines.push(`  Spectra pools: ${activeSpectra.length} | Pendle markets: ${activePendle.length}`);
         lines.push(``);
 
-        // Try to match by underlying asset for head-to-head comparisons
-        const matched: Array<{
-          spectra: { pt: SpectraPt; pool: SpectraPool };
-          pendle: PendleMarket;
-          matchScore: number;
-        }> = [];
+        // Match by underlying asset + maturity proximity
+        const crossMatches = matchByAssetAndMaturity(
+          activeSpectra.map(sp => ({ pt: sp.pt, pool: sp.pool, chain })),
+          activePendle.map(pm => ({ market: pm, chain })),
+          maturity_tolerance_days,
+        );
 
-        for (const sp of activeSpectra) {
-          const spectraSymbol = (sp.pt.underlying?.symbol || "").toUpperCase();
-          const spectraName = (sp.pt.name || "").toUpperCase();
+        // Separate matched pairs from unmatched
+        const pairedMatches = crossMatches.filter(m => m.spectra && m.pendle && m.matchQuality !== "unmatched");
+        const unmatchedSpectraMatches = crossMatches.filter(m => m.spectra && !m.pendle);
+        const unmatchedPendleMatches = crossMatches.filter(m => !m.spectra && m.pendle);
 
-          for (const pm of activePendle) {
-            const pendleName = pm.name.toUpperCase();
-            // Match if underlying symbols overlap meaningfully
-            if (
-              (spectraSymbol && pendleName.includes(spectraSymbol)) ||
-              (spectraSymbol && spectraSymbol.includes("USD") && pendleName.includes("USD")) ||
-              (spectraSymbol && spectraSymbol.includes("ETH") && pendleName.includes("ETH")) ||
-              (spectraSymbol && spectraSymbol.includes("BTC") && pendleName.includes("BTC"))
-            ) {
-              matched.push({ spectra: sp, pendle: pm, matchScore: 1 });
-            }
-          }
-        }
-
-        // Deduplicate: keep best match per Spectra pool
-        const seenSpectra = new Set<string>();
-        const seenPendle = new Set<string>();
-        const uniqueMatches = matched.filter(({ spectra, pendle }) => {
-          const sKey = spectra.pool.address || spectra.pt.address;
-          const pKey = pendle.address;
-          if (seenSpectra.has(sKey) || seenPendle.has(pKey)) return false;
-          seenSpectra.add(sKey);
-          seenPendle.add(pKey);
-          return true;
-        });
-
-        if (uniqueMatches.length > 0) {
-          lines.push(`--- Matched Comparisons (${uniqueMatches.length}) ---`);
+        if (pairedMatches.length > 0) {
+          lines.push(`--- Matched Comparisons (${pairedMatches.length}) ---`);
           lines.push(``);
-          for (const { spectra, pendle } of uniqueMatches) {
+          for (const match of pairedMatches) {
+            const spectra = match.spectra!;
+            const pendle = match.pendle!;
             if (compact) {
               const si = spectra.pool.impliedApy || 0;
-              const pi = pendle.details.impliedApy * 100;
+              const pi = pendle.market.details.impliedApy * 100;
               const sl = spectra.pool.lpApy?.total || 0;
-              const pl = pendle.details.aggregatedApy * 100;
+              const pl = pendle.market.details.aggregatedApy * 100;
               const winner = si > pi ? "Spectra" : pi > si ? "Pendle" : "Tied";
-              lines.push(`  ${spectra.pt.underlying?.symbol || spectra.pt.name} | Spectra: Impl ${formatPct(si)} LP ${formatPct(sl)} | Pendle: Impl ${formatPct(pi)} LP ${formatPct(pl)} | Fixed rate winner: ${winner}`);
+              lines.push(`  ${spectra.pt.underlying?.symbol || spectra.pt.name} | Spectra: Impl ${formatPct(si)} LP ${formatPct(sl)} | Pendle: Impl ${formatPct(pi)} LP ${formatPct(pl)} | Winner: ${winner} | Match: ${match.matchQuality} (${match.maturityGapDays}d gap)`);
             } else {
               lines.push(formatPendleSpectraComparison({
                 spectraPt: spectra.pt,
                 spectraPool: spectra.pool,
-                pendleMarket: pendle,
+                pendleMarket: pendle.market,
                 chain,
               }));
+              lines.push(`  Maturity Match: ${match.matchQuality} (${match.maturityGapDays} day gap)`);
               lines.push(``);
             }
           }
         }
 
-        // Show unmatched pools
-        const unmatchedSpectra = activeSpectra.filter(
-          (sp) => !seenSpectra.has(sp.pool.address || sp.pt.address)
-        );
-        const unmatchedPendle = activePendle.filter(
-          (pm) => !seenPendle.has(pm.address)
-        );
+        // Collect unmatched pools for display below
+        const unmatchedSpectra = unmatchedSpectraMatches
+          .map(m => m.spectra!)
+          .map(s => ({ pt: s.pt, pool: s.pool }));
+        const unmatchedPendle = unmatchedPendleMatches
+          .map(m => m.pendle!.market);
 
         if (unmatchedSpectra.length > 0) {
           lines.push(`--- Spectra-Only Pools (${unmatchedSpectra.length}, no Pendle equivalent) ---`);
@@ -343,6 +327,7 @@ Use scan_opportunities for Spectra-native capital-aware ranking.`,
         }
 
         lines.push(`--- Next Steps ---`);
+        lines.push(`  • Cross-protocol scan: scan_curator_opportunities(capital_usd=AMOUNT) for unified ranking with capital-aware sizing`);
         lines.push(`  • Drill into a Spectra pool: get_pt_details(chain="${chain}", pt_address="PT_ADDRESS")`);
         lines.push(`  • List all Pendle markets: list_pendle_markets(chain="${chain}") for full Pendle data`);
         lines.push(`  • Check MetaVault positions: get_metavaults() to see current curator allocations`);

@@ -185,7 +185,7 @@ async function testToolRegistration(client) {
   const tools = await client.listTools();
   const names = tools.map((t) => t.name);
 
-  assert(tools.length === 25, "exactly 25 tools registered", `got ${tools.length}: ${names.join(", ")}`);
+  assert(tools.length === 26, "exactly 26 tools registered", `got ${tools.length}: ${names.join(", ")}`);
 
   const expected = [
     "get_pt_details",
@@ -212,6 +212,7 @@ async function testToolRegistration(client) {
     "get_protocol_context",
     "list_pendle_markets",
     "compare_pendle_spectra",
+    "scan_curator_opportunities",
     "get_onchain_activity",
   ];
 
@@ -859,6 +860,62 @@ async function testLpApyGaugeEmissions(client) {
   } else {
     skip("mainnet: no active pools for LP gauge test");
   }
+}
+
+async function testCuratorScan(client) {
+  console.log("\n--- scan_curator_opportunities ---");
+
+  // Basic scan with small capital
+  const { text } = await client.callTool("scan_curator_opportunities", {
+    capital_usd: 50000,
+    top_n: 5,
+    compact: true,
+  });
+
+  // Should return results from both protocols
+  const hasResults = text.includes("Curator Opportunity Scan") || text.includes("No opportunities");
+  assert(hasResults, "scan_curator_opportunities: returns valid output", `unexpected: ${text.slice(0, 120)}`);
+
+  // If we got results, check protocol tags are present
+  if (text.includes("Curator Opportunity Scan")) {
+    const hasSpectraOrPendle = text.includes("[S]") || text.includes("[P]");
+    assert(hasSpectraOrPendle, "scan_curator_opportunities: has protocol tags", "missing [S] or [P] tags");
+
+    const hasLegend = text.includes("Protocol Legend");
+    assert(hasLegend, "scan_curator_opportunities: has protocol legend", "missing legend");
+
+    const hasNextSteps = text.includes("Next Steps");
+    assert(hasNextSteps, "scan_curator_opportunities: has next steps", "missing");
+  }
+
+  // With asset filter
+  const { text: filtered } = await client.callTool("scan_curator_opportunities", {
+    capital_usd: 50000,
+    asset_filter: "USDC",
+    top_n: 3,
+    compact: true,
+  });
+  const filterOk = filtered.includes("Curator Opportunity Scan") || filtered.includes("No opportunities");
+  assert(filterOk, "scan_curator_opportunities: asset filter works", `unexpected: ${filtered.slice(0, 120)}`);
+
+  // compare_pendle_spectra now shows maturity match quality
+  const { text: compared } = await client.callTool("compare_pendle_spectra", {
+    chain: "mainnet",
+    min_tvl_usd: 0,
+    min_liquidity_usd: 0,
+  });
+  const comparedOk = compared.includes("Spectra vs Pendle") || compared.includes("No active");
+  assert(comparedOk, "compare_pendle_spectra: responds with maturity matching", `unexpected: ${compared.slice(0, 120)}`);
+  if (compared.includes("Matched Comparisons")) {
+    const hasMatchQuality = compared.includes("exact") || compared.includes("close") || compared.includes("loose");
+    assert(hasMatchQuality, "compare_pendle_spectra: shows match quality", "missing match quality labels");
+  }
+
+  // Protocol context has cross-protocol curator workflow
+  const { text: ctx } = await client.callTool("get_protocol_context", {
+    topic: "workflow_routing",
+  });
+  assert(ctx.includes("scan_curator_opportunities"), "protocol context references scan_curator_opportunities", "missing in workflow_routing");
 }
 
 async function testCrossChainSmoke(client) {
@@ -2014,6 +2071,9 @@ async function main() {
       await testGetMetavaults(client);
       await testModelMetavaultStrategy(client);
       await testGetCuratorDashboard(client);
+
+      // Cross-protocol curator scanner
+      await testCuratorScan(client);
 
       // Smoke test other chains
       await testCrossChainSmoke(client);

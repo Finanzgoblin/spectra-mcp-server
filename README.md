@@ -2,7 +2,7 @@
 
 Makes [Spectra Finance](https://spectra.finance) discoverable and usable by AI agents via the [Model Context Protocol](https://modelcontextprotocol.io).
 
-25 tools · 10 chains · read-only · on-chain Curve quoting · historical eth_getLogs · zero web3 library dependencies
+26 tools · 10 chains · read-only · on-chain Curve quoting · historical eth_getLogs · cross-protocol Pendle comparison · zero web3 library dependencies
 
 ## What This Does
 
@@ -24,7 +24,8 @@ Any AI agent (Claude, GPT, open-source) that supports MCP can now:
 - **Monitor** MetaVault operational health — curator dashboard with vault allocation per position, depositor flows, fee revenue, bridge activity, and actionable alerts
 - **Query** Morpho lending markets for PT collateral opportunities
 - **Query** protocol stats, tokenomics, and governance data
-- **Compare** Spectra vs Pendle yield opportunities side-by-side on overlapping chains
+- **Compare** Spectra vs Pendle yield opportunities side-by-side with maturity-aware matching on overlapping chains
+- **Scan** both Spectra and Pendle for the best curator opportunities with capital-aware sizing and cross-protocol match tagging
 - **Browse** Pendle markets across all Pendle-supported chains (including Pendle-only chains)
 - **Recover** historical on-chain pool activity via `eth_getLogs` when API data has aged out — with dynamic RPC URL support for any chain
 - **Learn** protocol mechanics on-demand via `get_protocol_context` (PT/YT identity, Router batching, minting)
@@ -141,7 +142,8 @@ The observation coverage layer addresses a deeper problem: even perfect interpre
 | `model_metavault_strategy` | MetaVault "double loop" strategy modeler for curators. Live mode (chain + metavault_address) auto-fetches APY from API; manual mode accepts base_apy directly. Models curator economics (fee revenue, TVL creation, effective ROI). |
 | `get_curator_dashboard` | Operational dashboard for MetaVault curators. Vault health, position status with vault allocation (when available) vs pool TVL, depositor flows, fee revenue estimates, bridge activity, and actionable alerts. Explicitly disambiguates vault allocation from pool-level TVL to prevent misinterpretation. |
 | `list_pendle_markets` | List active Pendle markets on a given chain or all Pendle chains. Supports Pendle-only chains (Mantle, Berachain, HyperEVM, Corn). Supports `compact` mode. |
-| `compare_pendle_spectra` | Side-by-side Pendle vs Spectra yield comparison on overlapping chains (mainnet, base, arbitrum, optimism, sonic, bsc). Auto-matches by underlying asset. |
+| `compare_pendle_spectra` | Side-by-side Pendle vs Spectra yield comparison on overlapping chains (mainnet, base, arbitrum, optimism, sonic, bsc). Maturity-aware matching with configurable tolerance (exact ≤7d, close ≤30d, loose ≤90d). |
+| `scan_curator_opportunities` | Cross-protocol (Spectra + Pendle) capital-aware scanner for MetaVault curators. Price impact at your size, effective APY, Morpho looping (Spectra), cross-protocol match tagging. Supports `compact` mode. |
 | `get_onchain_activity` | Historical on-chain activity via `eth_getLogs` — recovers data when the API has aged out transactions. Supports dynamic `rpc_url` parameter for any chain, `token_decimals` for correct formatting (USDC=6, WBTC=8). Decodes **Curve pool events** (swaps, LP adds/removes) via `pool_address` AND **Spectra PT vault events** (Mint, Redeem, YieldClaimed) via `pt_address`. Both can be provided simultaneously for merged results. |
 | `get_protocol_context` | Returns protocol mechanics reference (PT/YT identity, Router batching, minting). Callable on-demand instead of always in context. |
 
@@ -262,6 +264,7 @@ Once connected, you can ask Claude things like:
 - "Compare MetaVault looping vs raw PT looping at 12% base APY"
 - "I'm curating a vault with $100K own capital and $1M external deposits -- what's my effective ROI?"
 - "Compare Spectra vs Pendle yields on Base -- which protocol offers better rates for USDC?"
+- "I'm curating a MetaVault with $500K -- scan both Spectra and Pendle for the best opportunities"
 - "Show me all active Pendle markets on Arbitrum sorted by TVL"
 - "This address traded on Katana weeks ago but get_pool_activity shows nothing -- pull on-chain logs for the last 7 days"
 - "Fetch historical activity for this pool using my RPC URL: https://rpc.katana.network"
@@ -309,6 +312,7 @@ src/
   formatters.ts     Formatting, BigInt LLTV parsing, closed-form leverage math,
                       price impact, fractional-day maturity, boost computation,
                       slim envelope helpers, token amount formatting (BigInt → human-readable),
+                      cross-protocol maturity matching (normalizeUnderlyingSymbol, matchByAssetAndMaturity),
                       Layer 3 output hints (Position Shape, LP APY breakdown,
                       volume signals, Morpho market hints, portfolio signals,
                       competing interpretation branches, statistical confidence boundaries,
@@ -335,7 +339,8 @@ src/
     ve.ts           get_ve_info
     metavault.ts    get_metavaults, model_metavault_strategy (live API + computational modeling),
                       get_curator_dashboard (vault allocation disambiguation, cross-chain position awareness)
-    pendle.ts       list_pendle_markets, compare_pendle_spectra (cross-protocol yield comparison)
+    pendle.ts       list_pendle_markets, compare_pendle_spectra (maturity-aware cross-protocol yield comparison)
+    curator_scan.ts scan_curator_opportunities (cross-protocol capital-aware scanner for MetaVault curators)
     onchain.ts      get_onchain_activity (historical eth_getLogs, Curve pool + PT vault event decoding, dynamic RPC)
 test.cjs              Integration test suite (388 tests, McpTestClient over stdio)
 test-agent.cjs        Agent reasoning test suite (48 assertions, McpTestClient over stdio)
@@ -393,13 +398,13 @@ All address parameters are validated (`0x` + 40 hex chars). All API calls have a
 From a source checkout:
 
 ```bash
-# Full integration suite (388 tests, requires network)
+# Full integration suite (395 tests, requires network)
 npm test
 
 # Schema/registration only (98 tests, no network)
 npm run test:offline
 
-# Unit tests (165 tests, no network)
+# Unit tests (180 tests, no network)
 npm run test:unit
 
 # Agent reasoning tests (88 assertions, requires network)
@@ -408,11 +413,11 @@ npm run test:agent
 
 ### Unit Tests (`api.test.ts`, `formatters.test.ts`, `config.test.ts`)
 
-165 tests covering pure-function logic: GraphQL sanitization, Morpho field constants, Merkl reward parsing (pool address extraction from reason keys, wei-to-human conversion, matched/unmatched categorization), Merkl reward formatting, balance formatting, and configuration validation. No network required.
+180 tests covering pure-function logic: GraphQL sanitization, Morpho field constants, Merkl reward parsing (pool address extraction from reason keys, wei-to-human conversion, matched/unmatched categorization), Merkl reward formatting, balance formatting, cross-protocol maturity matching (normalizeUnderlyingSymbol, matchByAssetAndMaturity), and configuration validation. No network required.
 
 ### Integration Tests (`test.cjs`)
 
-388 tests covering tool registration, schema validation, API responses, on-chain Curve `get_dy()` quoting, cross-pool address scanning, address isolation mode, and malformed-address negative tests. Dynamically discovers pool and PT addresses from the live API, so tests won't go stale when pools mature.
+395 tests covering tool registration, schema validation, API responses, on-chain Curve `get_dy()` quoting, cross-pool address scanning, address isolation mode, cross-protocol curator scanning, and malformed-address negative tests. Dynamically discovers pool and PT addresses from the live API, so tests won't go stale when pools mature.
 
 ### Agent Reasoning Tests (`test-agent.cjs`)
 
@@ -458,17 +463,20 @@ This server wraps these endpoints:
 | `POST {chain RPC}` (eth_call: `eth_getCode`) | `get_pool_activity` (contract vs EOA detection in address mode) |
 | `POST {chain RPC}` (eth_getLogs) | `get_onchain_activity` (historical Curve pool events + Spectra PT vault events — supports dynamic `rpc_url` override) |
 | `GET api-v2.pendle.finance/core/v2/{chainId}/markets/active` | `list_pendle_markets` (Pendle market discovery) |
-| `GET api-v2.pendle.finance/core/v2/{chainId}/markets/active` | `compare_pendle_spectra` (cross-protocol comparison — fetches both Pendle and Spectra data) |
+| `GET api-v2.pendle.finance/core/v2/{chainId}/markets/active` | `compare_pendle_spectra` (maturity-aware cross-protocol comparison) |
+| `GET api-v2.pendle.finance/core/v2/{chainId}/markets/active` | `scan_curator_opportunities` (cross-protocol capital-aware scanning — Spectra + Pendle) |
 
 Note: `{chain}` uses the slug `mainnet` for Ethereum (the alias `ethereum` is accepted by the server and mapped automatically).
 
-## Pendle Cross-Protocol Comparison
+## Pendle Cross-Protocol Integration
 
-Two tools enable cross-protocol yield comparison between Spectra and Pendle:
+Three tools enable cross-protocol yield discovery and comparison between Spectra and Pendle:
 
 **`list_pendle_markets`** — Lists active Pendle markets on a given chain or scans all Pendle-supported chains. Pendle-supported chains include both overlapping chains (mainnet, base, arbitrum, optimism, sonic, bsc) and Pendle-only chains (Mantle, Berachain, HyperEVM, Corn).
 
-**`compare_pendle_spectra`** — Side-by-side comparison on overlapping chains. Auto-matches markets by underlying asset to produce head-to-head implied APY, LP APY, TVL, and liquidity comparisons. Essential for MetaVault curators who can allocate to either protocol.
+**`compare_pendle_spectra`** — Side-by-side comparison on overlapping chains with **maturity-aware matching**. Normalizes underlying symbols (wstETH↔stETH, USDC.e↔USDC) and matches by nearest maturity within configurable tolerance (exact ≤7d, close ≤30d, loose ≤90d). Shows match quality and maturity gap per pair.
+
+**`scan_curator_opportunities`** — Cross-protocol capital-aware scanner for MetaVault curators. Scans both Spectra and Pendle in parallel, computes price impact at your capital size, effective APY after entry cost, Morpho looping availability (Spectra PTs), and tags cross-protocol matches. This tool intentionally produces different rankings than `scan_opportunities` (Spectra-only) — different scope, same design philosophy.
 
 ## On-Chain Historical Activity
 
