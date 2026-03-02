@@ -29,6 +29,8 @@ import {
   formatUnmatchedMerklRewards,
   normalizeUnderlyingSymbol,
   matchByAssetAndMaturity,
+  formatMetavaultStrategy,
+  formatCuratorDashboard,
 } from "./formatters.js";
 import type { SpectraPt, SpectraPool, PendleMarket } from "./types.js";
 
@@ -1234,5 +1236,155 @@ describe("matchByAssetAndMaturity", () => {
     assert.equal(paired.length, 1);
     assert.equal(paired[0].maturityGapDays, 5, "Should match closest maturity");
     assert.equal(paired[0].pendle!.market.address, "0xclose");
+  });
+});
+
+// =============================================================================
+// formatMetavaultStrategy — blended allocation
+// =============================================================================
+
+describe("formatMetavaultStrategy — blended allocation", () => {
+  const baseOpts = {
+    baseApy: 12,
+    ytCompoundingApy: 0,
+    curatorFeePct: 10,
+    netVaultApy: 10.8,
+    grossVaultApy: 12,
+    morphoLtv: 0.86,
+    borrowRate: 5,
+    daysToMaturity: 90,
+    rows: [
+      { loop: 0, leverage: 1, grossApy: 10.8, netApy: 10.8, effectiveMargin: 100 },
+      { loop: 1, leverage: 1.86, grossApy: 20.09, netApy: 15.79, effectiveMargin: 37.6 },
+    ],
+    bestLoop: 1,
+    bestNetApy: 15.79,
+    bestLeverage: 1.86,
+  };
+
+  it("shows Allocation Model section when pendleAllocationPct > 0", () => {
+    const result = formatMetavaultStrategy({
+      ...baseOpts,
+      baseApy: 10.8, // blended: 12 * 0.7 + 8 * 0.3
+      pendleAllocationPct: 30,
+      pendleLpApy: 8,
+      spectraBaseApy: 12,
+    });
+    assert.ok(result.includes("Allocation Model"), "should contain Allocation Model section");
+    assert.ok(result.includes("Spectra LP"), "should show Spectra LP line");
+    assert.ok(result.includes("Pendle LP"), "should show Pendle LP line");
+    assert.ok(result.includes("70% allocation"), "should show Spectra allocation");
+    assert.ok(result.includes("30% allocation"), "should show Pendle allocation");
+    assert.ok(result.includes("Blended Base APY"), "should show blended APY label");
+    assert.ok(result.includes("manual rollover"), "should warn about Pendle manual rollover");
+  });
+
+  it("omits Allocation Model when pendleAllocationPct is 0 or undefined", () => {
+    const result = formatMetavaultStrategy(baseOpts);
+    assert.ok(!result.includes("Allocation Model"), "should not contain Allocation Model");
+    assert.ok(!result.includes("Pendle LP"), "should not mention Pendle LP");
+  });
+
+  it("still shows all other sections when blended", () => {
+    const result = formatMetavaultStrategy({
+      ...baseOpts,
+      baseApy: 10.8,
+      pendleAllocationPct: 30,
+      pendleLpApy: 8,
+      spectraBaseApy: 12,
+    });
+    assert.ok(result.includes("Vault Economics"), "should have Vault Economics");
+    assert.ok(result.includes("Looping Table"), "should have Looping Table");
+    assert.ok(result.includes("Rollover Advantage"), "should have Rollover Advantage");
+    assert.ok(result.includes("Risks"), "should have Risks");
+  });
+});
+
+// =============================================================================
+// formatCuratorDashboard — protocol tags
+// =============================================================================
+
+describe("formatCuratorDashboard — protocol tags", () => {
+  const baseDashOpts = {
+    chain: "base",
+    metavaultAddress: "0x1234567890abcdef1234567890abcdef12345678",
+    curatorName: "TestCurator",
+    curatorAddresses: ["0xaaaa000000000000000000000000000000000001"],
+    vaultName: "Test Vault",
+    vaultSymbol: "TV",
+    underlyingSymbol: "USDC",
+    underlyingDecimals: 6,
+    underlyingPriceUsd: 1,
+    tvlUsd: 500000,
+    tvlUnderlying: 500000,
+    liveApyTotal: 10,
+    liveApyBoostedTotal: null,
+    liveApyBase: 8,
+    apyDetails: undefined,
+    sharePriceUsd: 1.05,
+    sharePriceUnderlying: 1.05,
+    epochFlows: [],
+    lifetimeNetFlowUsd: 0,
+    lifetimeYieldUsd: 0,
+    firstRate: 1,
+    lastRate: 1.05,
+    epochCount: 0,
+    bridgeTxCount: 0,
+    bridgePendingUsd: 0,
+    bridgeDirections: [] as { direction: string; count: number; totalUsd: number }[],
+    actionItems: [],
+    curatorFeePct: 10,
+    estimatedAnnualFeeRevenueUsd: 5000,
+  };
+
+  it("shows [Spectra] protocol tag on positions", () => {
+    const result = formatCuratorDashboard({
+      ...baseDashOpts,
+      positions: [{
+        symbol: "PT-sUSDC",
+        ptAddress: "0xpt01",
+        poolAddress: "0xpool01",
+        maturityTimestamp: Math.floor(Date.now() / 1000) + 86400 * 60,
+        daysToMaturity: 60,
+        expired: false,
+        tvlUsd: 250000,
+        vaultAllocationUsd: 250000,
+        ptApy: 8,
+        lpApyTotal: 6,
+        lpApyBoostedTotal: null,
+        protocol: "Spectra",
+      }],
+    });
+    assert.ok(result.includes("[Spectra]"), "should show [Spectra] tag");
+    assert.ok(result.includes("PT-sUSDC"), "should show position symbol");
+  });
+
+  it("shows [Pendle] protocol tag on Pendle positions", () => {
+    const result = formatCuratorDashboard({
+      ...baseDashOpts,
+      positions: [{
+        symbol: "PT-pUSDC",
+        ptAddress: "0xpt02",
+        poolAddress: "0xpool02",
+        maturityTimestamp: Math.floor(Date.now() / 1000) + 86400 * 20,
+        daysToMaturity: 20,
+        expired: false,
+        tvlUsd: 100000,
+        vaultAllocationUsd: 100000,
+        ptApy: 7,
+        lpApyTotal: 5,
+        lpApyBoostedTotal: null,
+        protocol: "Pendle",
+      }],
+    });
+    assert.ok(result.includes("[Pendle]"), "should show [Pendle] tag");
+  });
+
+  it("includes cross-protocol scanner in next steps", () => {
+    const result = formatCuratorDashboard({
+      ...baseDashOpts,
+      positions: [],
+    });
+    assert.ok(result.includes("scan_curator_opportunities"), "should mention cross-protocol scanner");
   });
 });
