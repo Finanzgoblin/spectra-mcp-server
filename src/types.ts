@@ -461,6 +461,61 @@ export interface PendleMarket {
 }
 
 // =============================================================================
+// Cross-Protocol Interfaces
+// =============================================================================
+
+/** A matched pair (or unmatched single) across Spectra and Pendle, aligned by underlying + maturity. */
+export interface CrossProtocolMatch {
+  spectra: { pt: SpectraPt; pool: SpectraPool; chain: string } | null;
+  pendle: { market: PendleMarket; chain: string } | null;
+  underlying: string;          // normalized symbol (e.g. "USDC", "ETH")
+  maturityGapDays: number;     // absolute days between maturities (0 if one side is null)
+  matchQuality: "exact" | "close" | "loose" | "unmatched";
+}
+
+/** Unified opportunity from either Spectra or Pendle, for cross-protocol ranking. */
+export interface CuratorOpportunity {
+  protocol: "spectra" | "pendle";
+  chain: string;
+  name: string;
+  underlying: string;
+  maturityTimestamp: number;
+  daysToMaturity: number;
+  impliedApy: number;          // raw fixed rate (%)
+  lpApy: number;               // LP yield (%) — relevant for MetaVault allocation
+  variableApr: number;         // underlying variable rate (%)
+  tvlUsd: number;
+  poolLiquidityUsd: number;
+  entryImpactPct: number;
+  effectiveApy: number;        // implied APY minus annualized entry cost
+  capacityUsd: number;         // max capital before impact exceeds threshold
+  sortApy: number;             // ranking key (looping net APY if available, else effective APY)
+
+  // Protocol-specific identifiers
+  ptAddress?: string;          // Spectra PT address
+  poolAddress?: string;        // Spectra Curve pool address
+  pendleMarketAddress?: string; // Pendle market address
+  pendlePtAddress?: string;    // Pendle PT address
+
+  // Spectra-specific enrichment
+  looping?: ScanOpportunity["looping"];
+  lpApyBreakdown?: ScanOpportunity["lpApyBreakdown"];
+
+  // Cross-protocol match info (populated when a counterpart exists on the other protocol)
+  matchedWith?: {
+    protocol: "spectra" | "pendle";
+    chain: string;
+    name: string;
+    impliedApy: number;
+    lpApy: number;
+    maturityGapDays: number;
+    matchQuality: "exact" | "close" | "loose";
+  };
+
+  warnings: string[];
+}
+
+// =============================================================================
 // Internal Interfaces
 // =============================================================================
 
