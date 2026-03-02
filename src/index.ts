@@ -31,6 +31,7 @@
  *   - get_curator_dashboard       -> Operational dashboard for MetaVault curators (health, flows, revenue, alerts)
  *   - list_pendle_markets         -> List active Pendle markets (all Pendle chains, including Pendle-only)
  *   - compare_pendle_spectra      -> Side-by-side Pendle vs Spectra yield comparison on overlapping chains
+ *   - scan_curator_opportunities  -> Cross-protocol (Spectra + Pendle) capital-aware scanner for MetaVault curators
  *   - get_onchain_activity         -> Historical pool activity via eth_getLogs (when API data is incomplete)
  */
 
@@ -53,6 +54,7 @@ import { register as registerVe } from "./tools/ve.js";
 import { register as registerMetavault } from "./tools/metavault.js";
 import { register as registerContext } from "./tools/context.js";
 import { register as registerPendle } from "./tools/pendle.js";
+import { register as registerCuratorScan } from "./tools/curator_scan.js";
 import { register as registerOnchain } from "./tools/onchain.js";
 
 // =============================================================================
@@ -79,6 +81,7 @@ registerVe(server);
 registerMetavault(server);
 registerContext(server);
 registerPendle(server);
+registerCuratorScan(server);
 registerOnchain(server);
 
 // =============================================================================

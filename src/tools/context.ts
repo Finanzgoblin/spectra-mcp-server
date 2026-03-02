@@ -119,20 +119,29 @@ Goal: "Model a curator / MetaVault strategy"
   Compare against: get_looping_strategy for raw PT looping baseline
   The double-loop premium shows when MetaVault leverage beats raw PT looping.
 
-Goal: "Compare Spectra vs Pendle opportunities"
-  Start with: list_pendle_markets(chain=CHAIN) to see Pendle's yield landscape
-  Then: compare_pendle_spectra(chain=CHAIN) for head-to-head on overlapping chains
-  Then: list_pools(chain=CHAIN) for Spectra data on the same chain
-  MetaVault curators can allocate to BOTH protocols. Pendle PTs can be integrated into
-  MetaVaults alongside Spectra PTs. The comparison tools help identify which protocol
-  offers better rates for each underlying + maturity.
+Goal: "Find the best yield across Spectra AND Pendle for a MetaVault"
+  Start with: scan_curator_opportunities(capital_usd=YOUR_AMOUNT)
+  This scans BOTH protocols with capital-aware metrics and maturity-aware matching.
+  Then: compare_pendle_spectra(chain=CHAIN, asset_filter="ASSET") for detailed head-to-head
+  Then: get_curator_dashboard(chain, metavault_address) to check current allocations
+  Then: model_metavault_strategy(chain, metavault_address) to model blended allocation
+  Key difference from scan_opportunities: scan_opportunities is Spectra-only.
+  scan_curator_opportunities includes Pendle markets. The two tools CAN disagree on
+  "best" because they cover different opportunity sets. Both are valid.
+
+Goal: "Compare Spectra vs Pendle on a specific chain"
+  Start with: compare_pendle_spectra(chain=CHAIN) for maturity-aware head-to-head
+  Then: list_pendle_markets(chain=CHAIN) for full Pendle data
+  Then: list_pools(chain=CHAIN) for Spectra data
+  Matching is by underlying asset + maturity proximity (exact ≤7d, close ≤30d, loose ≤90d).
   Pendle-only chains (${Object.keys(PENDLE_CHAIN_IDS).filter((k) => !SUPPORTED_CHAINS[k]).map((k) => PENDLE_CHAIN_NAMES[k]).join(", ")}) represent Spectra expansion opportunities.
 
-Three discovery tools and when to use each:
+Four discovery tools and when to use each:
   get_best_fixed_yields — headline rates across all chains (no capital adjustment)
-  scan_opportunities — capital-aware effective APY with Morpho looping analysis
+  scan_opportunities — capital-aware effective APY with Morpho looping (Spectra-only)
+  scan_curator_opportunities — cross-protocol (Spectra + Pendle) capital-aware scanner
   scan_yt_arbitrage — YT spread opportunities (rate conviction bets)
-  These three intentionally produce different rankings. The disagreement is a feature.`,
+  These four intentionally produce different rankings. The disagreement is a feature.`,
 };
 
 const ALL_TOPIC_NAMES = Object.keys(TOPICS);

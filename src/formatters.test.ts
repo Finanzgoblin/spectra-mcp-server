@@ -27,7 +27,10 @@ import {
   formatFlowAccounting,
   formatMerklRewards,
   formatUnmatchedMerklRewards,
+  normalizeUnderlyingSymbol,
+  matchByAssetAndMaturity,
 } from "./formatters.js";
+import type { SpectraPt, SpectraPool, PendleMarket } from "./types.js";
 
 // =============================================================================
 // Primitive Formatters
@@ -1028,5 +1031,208 @@ describe("formatUnmatchedMerklRewards", () => {
 
   it("returns empty string when no chains have rewards", () => {
     assert.equal(formatUnmatchedMerklRewards([{ chain: "mainnet", rewards: [] }]), "");
+  });
+});
+
+// =============================================================================
+// normalizeUnderlyingSymbol
+// =============================================================================
+
+describe("normalizeUnderlyingSymbol", () => {
+  it("normalizes wrapped ETH variants", () => {
+    assert.equal(normalizeUnderlyingSymbol("WETH"), "ETH");
+    assert.equal(normalizeUnderlyingSymbol("weth"), "ETH");
+    assert.equal(normalizeUnderlyingSymbol("WETH.E"), "ETH");
+    assert.equal(normalizeUnderlyingSymbol("wethe"), "ETH");
+  });
+
+  it("normalizes wrapped BTC variants", () => {
+    assert.equal(normalizeUnderlyingSymbol("WBTC"), "BTC");
+    assert.equal(normalizeUnderlyingSymbol("WBTC.E"), "BTC");
+  });
+
+  it("normalizes bridged stablecoin variants", () => {
+    assert.equal(normalizeUnderlyingSymbol("USDC.e"), "USDC");
+    assert.equal(normalizeUnderlyingSymbol("USDCe"), "USDC");
+    assert.equal(normalizeUnderlyingSymbol("USDC.b"), "USDC");
+    assert.equal(normalizeUnderlyingSymbol("USDT.e"), "USDT");
+  });
+
+  it("normalizes liquid staking equivalences", () => {
+    assert.equal(normalizeUnderlyingSymbol("wstETH"), "STETH");
+  });
+
+  it("normalizes DAI/USDS rebrand", () => {
+    assert.equal(normalizeUnderlyingSymbol("sDAI"), "USDS");
+    assert.equal(normalizeUnderlyingSymbol("sUSDS"), "USDS");
+  });
+
+  it("passes through unknown symbols unchanged (uppercased)", () => {
+    assert.equal(normalizeUnderlyingSymbol("GHO"), "GHO");
+    assert.equal(normalizeUnderlyingSymbol("AAVE"), "AAVE");
+    assert.equal(normalizeUnderlyingSymbol("sFRAX"), "SFRAX");
+  });
+
+  it("handles whitespace and casing", () => {
+    assert.equal(normalizeUnderlyingSymbol("  weth  "), "ETH");
+    assert.equal(normalizeUnderlyingSymbol("Wbtc"), "BTC");
+  });
+});
+
+// =============================================================================
+// matchByAssetAndMaturity
+// =============================================================================
+
+describe("matchByAssetAndMaturity", () => {
+  // Helper to create minimal test data
+  function makePt(address: string, symbol: string, maturityUnix: number): SpectraPt {
+    return {
+      name: `PT-${symbol}`,
+      address,
+      maturity: maturityUnix,
+      underlying: { symbol, address: "0x0", decimals: 18 },
+    } as SpectraPt;
+  }
+
+  function makePool(address: string): SpectraPool {
+    return { address } as SpectraPool;
+  }
+
+  function makePendleMarket(address: string, name: string, expiryIso: string): PendleMarket {
+    return {
+      name,
+      address,
+      expiry: expiryIso,
+      pt: "0xpt",
+      yt: "0xyt",
+      sy: "0xsy",
+      underlyingAsset: "0xunderlying",
+      details: {
+        liquidity: 100000,
+        totalTvl: 500000,
+        tradingVolume: 10000,
+        underlyingApy: 0.05,
+        swapFeeApy: 0.01,
+        pendleApy: 0.02,
+        impliedApy: 0.08,
+        feeRate: 0.003,
+        aggregatedApy: 0.03,
+        maxBoostedApy: 0.05,
+        totalPt: 1000,
+        totalSy: 2000,
+        totalSupply: 1500,
+        totalActiveSupply: 1400,
+      },
+      chainId: 1,
+    };
+  }
+
+  const june2026 = Math.floor(new Date("2026-06-25T00:00:00Z").getTime() / 1000);
+  const june2026Iso = "2026-06-25T00:00:00.000Z";
+
+  it("matches exact maturity (≤7d gap)", () => {
+    const spectra = [{ pt: makePt("0xa", "USDC", june2026), pool: makePool("0xpool"), chain: "mainnet" }];
+    // 3 days later
+    const pendleExpiry = new Date((june2026 + 3 * 86400) * 1000).toISOString();
+    const pendle = [{ market: makePendleMarket("0xb", "PT USDC 28JUN2026", pendleExpiry), chain: "mainnet" }];
+
+    const matches = matchByAssetAndMaturity(spectra, pendle, 90);
+    const paired = matches.filter(m => m.matchQuality !== "unmatched");
+
+    assert.equal(paired.length, 1);
+    assert.equal(paired[0].matchQuality, "exact");
+    assert.equal(paired[0].maturityGapDays, 3);
+  });
+
+  it("matches close maturity (≤30d gap)", () => {
+    const spectra = [{ pt: makePt("0xa", "USDC", june2026), pool: makePool("0xpool"), chain: "mainnet" }];
+    // 20 days later
+    const pendleExpiry = new Date((june2026 + 20 * 86400) * 1000).toISOString();
+    const pendle = [{ market: makePendleMarket("0xb", "PT USDC 15JUL2026", pendleExpiry), chain: "mainnet" }];
+
+    const matches = matchByAssetAndMaturity(spectra, pendle, 90);
+    const paired = matches.filter(m => m.matchQuality !== "unmatched");
+
+    assert.equal(paired.length, 1);
+    assert.equal(paired[0].matchQuality, "close");
+  });
+
+  it("matches loose maturity (≤90d gap)", () => {
+    const spectra = [{ pt: makePt("0xa", "USDC", june2026), pool: makePool("0xpool"), chain: "mainnet" }];
+    // 60 days later
+    const pendleExpiry = new Date((june2026 + 60 * 86400) * 1000).toISOString();
+    const pendle = [{ market: makePendleMarket("0xb", "PT USDC 24AUG2026", pendleExpiry), chain: "mainnet" }];
+
+    const matches = matchByAssetAndMaturity(spectra, pendle, 90);
+    const paired = matches.filter(m => m.matchQuality !== "unmatched");
+
+    assert.equal(paired.length, 1);
+    assert.equal(paired[0].matchQuality, "loose");
+  });
+
+  it("does not match beyond tolerance", () => {
+    const spectra = [{ pt: makePt("0xa", "USDC", june2026), pool: makePool("0xpool"), chain: "mainnet" }];
+    // 120 days later — beyond 90d tolerance
+    const pendleExpiry = new Date((june2026 + 120 * 86400) * 1000).toISOString();
+    const pendle = [{ market: makePendleMarket("0xb", "PT USDC 23OCT2026", pendleExpiry), chain: "mainnet" }];
+
+    const matches = matchByAssetAndMaturity(spectra, pendle, 90);
+    const paired = matches.filter(m => m.matchQuality !== "unmatched");
+
+    assert.equal(paired.length, 0, "Should not match beyond 90d tolerance");
+    // Both should be unmatched
+    const unmatched = matches.filter(m => m.matchQuality === "unmatched");
+    assert.equal(unmatched.length, 2);
+  });
+
+  it("returns unmatched items for different assets", () => {
+    const spectra = [{ pt: makePt("0xa", "USDC", june2026), pool: makePool("0xpool"), chain: "mainnet" }];
+    const pendle = [{ market: makePendleMarket("0xb", "PT stETH 25JUN2026", june2026Iso), chain: "mainnet" }];
+
+    const matches = matchByAssetAndMaturity(spectra, pendle, 90);
+    const paired = matches.filter(m => m.matchQuality !== "unmatched");
+    const unmatched = matches.filter(m => m.matchQuality === "unmatched");
+
+    assert.equal(paired.length, 0);
+    assert.equal(unmatched.length, 2);
+  });
+
+  it("handles empty inputs", () => {
+    assert.deepEqual(matchByAssetAndMaturity([], [], 90), []);
+    const spectra = [{ pt: makePt("0xa", "USDC", june2026), pool: makePool("0xpool"), chain: "mainnet" }];
+    const matches = matchByAssetAndMaturity(spectra, [], 90);
+    assert.equal(matches.length, 1);
+    assert.equal(matches[0].matchQuality, "unmatched");
+    assert.ok(matches[0].spectra);
+    assert.equal(matches[0].pendle, null);
+  });
+
+  it("matches wstETH to stETH via normalization", () => {
+    const spectra = [{ pt: makePt("0xa", "wstETH", june2026), pool: makePool("0xpool"), chain: "mainnet" }];
+    const pendle = [{ market: makePendleMarket("0xb", "PT stETH 25JUN2026", june2026Iso), chain: "mainnet" }];
+
+    const matches = matchByAssetAndMaturity(spectra, pendle, 90);
+    const paired = matches.filter(m => m.matchQuality !== "unmatched");
+
+    assert.equal(paired.length, 1, "wstETH should match stETH via normalization");
+    assert.equal(paired[0].matchQuality, "exact");
+  });
+
+  it("prefers closest maturity when multiple options exist", () => {
+    const spectra = [{ pt: makePt("0xa", "USDC", june2026), pool: makePool("0xpool"), chain: "mainnet" }];
+    // Two Pendle markets: one 5d away, one 40d away
+    const close = new Date((june2026 + 5 * 86400) * 1000).toISOString();
+    const far = new Date((june2026 + 40 * 86400) * 1000).toISOString();
+    const pendle = [
+      { market: makePendleMarket("0xfar", "PT USDC AUG2026", far), chain: "mainnet" },
+      { market: makePendleMarket("0xclose", "PT USDC JUN2026", close), chain: "mainnet" },
+    ];
+
+    const matches = matchByAssetAndMaturity(spectra, pendle, 90);
+    const paired = matches.filter(m => m.matchQuality !== "unmatched");
+
+    assert.equal(paired.length, 1);
+    assert.equal(paired[0].maturityGapDays, 5, "Should match closest maturity");
+    assert.equal(paired[0].pendle!.market.address, "0xclose");
   });
 });
