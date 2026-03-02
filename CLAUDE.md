@@ -6,7 +6,7 @@
 - MCP server process must restart after rebuild
 - Worktrees are under `.claude/worktrees/`
 - Source code in `src/`, tools in `src/tools/`, shared helpers in `src/api.ts`, `src/formatters.ts`, `src/config.ts`, `src/types.ts`
-- Tests: `npm test` (388 integration tests), `npm run test:unit` (165 unit tests), `npm run test:agent` (48 agent reasoning assertions)
+- Tests: `npm test` (395 integration tests), `npm run test:unit` (180 unit tests), `npm run test:agent` (48 agent reasoning assertions)
 - Agent test suite in `test-agent.cjs` — multi-tool workflow validation (cross-tool consistency, Router mechanics, anomaly detection)
 - Subjective test suite in `AGENT-TESTS.md` — 35 questions with grading rubrics for LLM evaluation (incl. open emergence + coverage tiers)
 - TypeScript project — check types with `npx tsc --noEmit`
@@ -22,7 +22,8 @@
 - `src/tools/looping.ts` — `get_looping_strategy` (borrow rate sensitivity, break-even period, failure scenarios)
 - `src/tools/quote.ts` — `quote_trade` (on-chain Curve get_dy() with math fallback), exports `tryOnChainQuote` shared by simulate.ts
 - `src/tools/simulate.ts` — `simulate_portfolio_after_trade` (imports tryOnChainQuote from quote.ts)
-- `src/tools/pendle.ts` — `list_pendle_markets`, `compare_pendle_spectra`
+- `src/tools/pendle.ts` — `list_pendle_markets`, `compare_pendle_spectra` (maturity-aware matching)
+- `src/tools/curator_scan.ts` — `scan_curator_opportunities` (cross-protocol Spectra + Pendle capital-aware scanner)
 - `src/tools/metavault.ts` — `get_metavaults`, `model_metavault_strategy`, `get_curator_dashboard`
 - `src/tools/protocol.ts` — `get_protocol_stats`, `get_supported_chains`
 - `src/tools/ve.ts` — `get_ve_info` (live veSPECTRA data from Base chain)

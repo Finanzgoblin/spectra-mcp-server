@@ -2,7 +2,7 @@
  * Data formatting helpers — USD, percentages, dates, balances, pool/position/Morpho summaries.
  */
 
-import type { SpectraPt, SpectraPool, SpectraMetavault, SpectraMetavaultPosition, MorphoMarket, PendleMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavaultBridgeTx, MerklTokenReward } from "./types.js";
+import type { SpectraPt, SpectraPool, SpectraMetavault, SpectraMetavaultPosition, MorphoMarket, PendleMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavaultBridgeTx, MerklTokenReward, CrossProtocolMatch, CuratorOpportunity } from "./types.js";
 import { SUPPORTED_CHAINS } from "./config.js";
 
 // =============================================================================
@@ -2868,6 +2868,285 @@ export function formatPendleSpectraComparison(opts: {
   lines.push(``);
   lines.push(`  Spectra PT: ${spectraPt.address}`);
   lines.push(`  Pendle Market: ${pendleMarket.address}`);
+
+  return lines.join("\n");
+}
+
+// =============================================================================
+// Cross-Protocol Maturity Matching
+// =============================================================================
+
+/**
+ * Normalize underlying asset symbols for cross-protocol matching.
+ * Conservative: only normalizes known equivalences. Unknown symbols pass through unchanged.
+ */
+export function normalizeUnderlyingSymbol(symbol: string): string {
+  const upper = symbol.toUpperCase().trim();
+  // Wrapped → unwrapped equivalences
+  if (upper === "WETH" || upper === "WETHE" || upper === "WETH.E") return "ETH";
+  if (upper === "WBTC" || upper === "WBTC.E") return "BTC";
+  // Bridged stablecoin variants
+  if (upper === "USDC.E" || upper === "USDCE" || upper === "USDC.B") return "USDC";
+  if (upper === "USDT.E" || upper === "USDTE") return "USDT";
+  // Liquid staking equivalences
+  if (upper === "WSTETH") return "STETH";
+  // DAI → USDS rebrand
+  if (upper === "SDAI" || upper === "SUSDS") return "USDS";
+  return upper;
+}
+
+/**
+ * Match Spectra pools with Pendle markets by normalized underlying + maturity proximity.
+ * Returns matched pairs (with match quality) plus unmatched items from each side.
+ *
+ * Match quality thresholds:
+ *   - "exact":  ≤7 day maturity gap
+ *   - "close":  ≤30 day maturity gap
+ *   - "loose":  ≤tolerance day maturity gap
+ *   - "unmatched": no counterpart found
+ */
+export function matchByAssetAndMaturity(
+  spectraPools: Array<{ pt: SpectraPt; pool: SpectraPool; chain: string }>,
+  pendleMarkets: Array<{ market: PendleMarket; chain: string }>,
+  toleranceDays: number = 90,
+): CrossProtocolMatch[] {
+  // Group by normalized underlying
+  const spectraByAsset = new Map<string, Array<{ pt: SpectraPt; pool: SpectraPool; chain: string; maturityTs: number }>>();
+  for (const sp of spectraPools) {
+    const sym = normalizeUnderlyingSymbol(sp.pt.underlying?.symbol || sp.pt.name || "");
+    if (!sym) continue;
+    if (!spectraByAsset.has(sym)) spectraByAsset.set(sym, []);
+    spectraByAsset.get(sym)!.push({ ...sp, maturityTs: sp.pt.maturity });
+  }
+
+  const pendleByAsset = new Map<string, Array<{ market: PendleMarket; chain: string; maturityTs: number }>>();
+  for (const pm of pendleMarkets) {
+    // Extract underlying from Pendle market name: try common patterns
+    const nameParts = pm.market.name.split(/\s+/);
+    // Pendle names typically include the underlying (e.g., "PT stETH 26JUN2025", "PT USDC 26JUN2025")
+    // Try each name part for symbol matching
+    let bestSym = "";
+    for (const part of nameParts) {
+      const cleaned = part.replace(/^PT[-_]?/i, "").replace(/[-_]/g, "");
+      if (cleaned.length >= 2 && cleaned.length <= 12 && !/^\d+[A-Z]{3}\d{4}$/.test(cleaned)) {
+        const norm = normalizeUnderlyingSymbol(cleaned);
+        if (norm.length >= 2) { bestSym = norm; break; }
+      }
+    }
+    // Fallback: try the whole name for broad asset class matching
+    if (!bestSym) {
+      const nameUpper = pm.market.name.toUpperCase();
+      if (nameUpper.includes("USD")) bestSym = "USD_CLASS";
+      else if (nameUpper.includes("ETH")) bestSym = "ETH_CLASS";
+      else if (nameUpper.includes("BTC")) bestSym = "BTC_CLASS";
+    }
+    if (!bestSym) continue;
+
+    if (!pendleByAsset.has(bestSym)) pendleByAsset.set(bestSym, []);
+    const expiryMs = new Date(pm.market.expiry).getTime();
+    pendleByAsset.get(bestSym)!.push({ ...pm, maturityTs: Math.floor(expiryMs / 1000) });
+  }
+
+  const results: CrossProtocolMatch[] = [];
+  const matchedSpectraKeys = new Set<string>();
+  const matchedPendleKeys = new Set<string>();
+
+  // For each asset group, find nearest-maturity matches
+  for (const [sym, spectraItems] of spectraByAsset) {
+    // Find Pendle items with same normalized symbol or matching asset class
+    let pendleItems = pendleByAsset.get(sym);
+    if (!pendleItems) {
+      // Try asset class fallback
+      if (sym === "USDC" || sym === "USDT" || sym === "USDS" || sym === "DAI" || sym === "GHO") {
+        pendleItems = pendleByAsset.get("USD_CLASS");
+      } else if (sym === "ETH" || sym === "STETH") {
+        pendleItems = pendleByAsset.get("ETH_CLASS");
+      } else if (sym === "BTC") {
+        pendleItems = pendleByAsset.get("BTC_CLASS");
+      }
+    }
+    if (!pendleItems) continue;
+
+    for (const sp of spectraItems) {
+      const spKey = `${sp.chain}:${sp.pt.address}`;
+      if (matchedSpectraKeys.has(spKey)) continue;
+
+      // Find closest unmatched Pendle market by maturity
+      let bestMatch: typeof pendleItems[0] | null = null;
+      let bestGap = Infinity;
+
+      for (const pm of pendleItems) {
+        const pmKey = `${pm.chain}:${pm.market.address}`;
+        if (matchedPendleKeys.has(pmKey)) continue;
+        const gapDays = Math.abs(sp.maturityTs - pm.maturityTs) / 86400;
+        if (gapDays < bestGap && gapDays <= toleranceDays) {
+          bestGap = gapDays;
+          bestMatch = pm;
+        }
+      }
+
+      if (bestMatch) {
+        const pmKey = `${bestMatch.chain}:${bestMatch.market.address}`;
+        matchedSpectraKeys.add(spKey);
+        matchedPendleKeys.add(pmKey);
+
+        const quality: CrossProtocolMatch["matchQuality"] =
+          bestGap <= 7 ? "exact" : bestGap <= 30 ? "close" : "loose";
+
+        results.push({
+          spectra: { pt: sp.pt, pool: sp.pool, chain: sp.chain },
+          pendle: { market: bestMatch.market, chain: bestMatch.chain },
+          underlying: sym,
+          maturityGapDays: Math.round(bestGap),
+          matchQuality: quality,
+        });
+      }
+    }
+  }
+
+  // Add unmatched Spectra pools
+  for (const sp of spectraPools) {
+    const spKey = `${sp.chain}:${sp.pt.address}`;
+    if (matchedSpectraKeys.has(spKey)) continue;
+    results.push({
+      spectra: { pt: sp.pt, pool: sp.pool, chain: sp.chain },
+      pendle: null,
+      underlying: normalizeUnderlyingSymbol(sp.pt.underlying?.symbol || "?"),
+      maturityGapDays: 0,
+      matchQuality: "unmatched",
+    });
+  }
+
+  // Add unmatched Pendle markets
+  for (const pm of pendleMarkets) {
+    const pmKey = `${pm.chain}:${pm.market.address}`;
+    if (matchedPendleKeys.has(pmKey)) continue;
+    results.push({
+      spectra: null,
+      pendle: { market: pm.market, chain: pm.chain },
+      underlying: pm.market.name,
+      maturityGapDays: 0,
+      matchQuality: "unmatched",
+    });
+  }
+
+  return results;
+}
+
+// =============================================================================
+// Curator Opportunity Formatters
+// =============================================================================
+
+/** One-liner for compact curator scan output. */
+export function formatCuratorOpportunityCompact(opp: CuratorOpportunity, rank: number): string {
+  const proto = opp.protocol === "spectra" ? "[S]" : "[P]";
+  const loopTag = opp.looping ? ` → Loop ${formatPct(opp.looping.optimalNetApy)}` : "";
+  const matchTag = opp.matchedWith
+    ? ` ↔ ${opp.matchedWith.protocol === "spectra" ? "[S]" : "[P]"} ${formatPct(opp.matchedWith.impliedApy)} (${opp.matchedWith.matchQuality}, ${opp.matchedWith.maturityGapDays}d gap)`
+    : "";
+  const warnTag = opp.warnings.length > 0 ? ` ⚠${opp.warnings.length}` : "";
+  return `  #${rank} ${proto} ${opp.name} | ${opp.chain} | Impl ${formatPct(opp.impliedApy)} | Eff ${formatPct(opp.effectiveApy)}${loopTag} | LP ${formatPct(opp.lpApy)} | TVL ${formatUsd(opp.tvlUsd)} | ${opp.daysToMaturity}d${matchTag}${warnTag}`;
+}
+
+/** Full detail for a single curator opportunity. */
+export function formatCuratorOpportunity(opp: CuratorOpportunity, rank: number): string {
+  const proto = opp.protocol === "spectra" ? "Spectra" : "Pendle";
+  const lines: string[] = [];
+  lines.push(`  #${rank} [${proto}] ${opp.name}`);
+  lines.push(`    Chain: ${opp.chain} | Maturity: ${new Date(opp.maturityTimestamp * 1000).toISOString().slice(0, 10)} (${opp.daysToMaturity}d)`);
+  lines.push(`    Implied APY: ${formatPct(opp.impliedApy)} | Effective APY: ${formatPct(opp.effectiveApy)} | Variable APR: ${formatPct(opp.variableApr)}`);
+  lines.push(`    LP APY: ${formatPct(opp.lpApy)} | TVL: ${formatUsd(opp.tvlUsd)} | Pool Liquidity: ${formatUsd(opp.poolLiquidityUsd)}`);
+  lines.push(`    Entry Impact: ${formatPct(opp.entryImpactPct)} | Capacity: ${formatUsd(opp.capacityUsd)}`);
+
+  // Spectra-specific: looping
+  if (opp.looping) {
+    lines.push(`    Morpho Looping: ${opp.looping.optimalLoops} loops @ ${formatPct(opp.looping.optimalNetApy)} net APY (${opp.looping.optimalLeverage.toFixed(2)}x leverage, borrow ${formatPct(opp.looping.borrowRatePct)})`);
+  }
+
+  // Spectra-specific: LP breakdown
+  if (opp.lpApyBreakdown) {
+    const bd = opp.lpApyBreakdown;
+    const parts: string[] = [];
+    if (bd.fees) parts.push(`fees ${formatPct(bd.fees)}`);
+    if (bd.pt) parts.push(`PT ${formatPct(bd.pt)}`);
+    if (bd.ibt) parts.push(`IBT ${formatPct(bd.ibt)}`);
+    for (const [k, v] of Object.entries(bd.rewards)) parts.push(`${k} ${formatPct(v)}`);
+    if (parts.length > 0) lines.push(`    LP Breakdown: ${parts.join(" + ")}`);
+  }
+
+  // Cross-protocol match
+  if (opp.matchedWith) {
+    const mProto = opp.matchedWith.protocol === "spectra" ? "Spectra" : "Pendle";
+    lines.push(`    ↔ Matched with [${mProto}] ${opp.matchedWith.name}: Impl ${formatPct(opp.matchedWith.impliedApy)} | LP ${formatPct(opp.matchedWith.lpApy)} | ${opp.matchedWith.matchQuality} match (${opp.matchedWith.maturityGapDays}d gap)`);
+  }
+
+  // Addresses
+  if (opp.ptAddress) lines.push(`    PT: ${opp.ptAddress}`);
+  if (opp.poolAddress) lines.push(`    Pool: ${opp.poolAddress}`);
+  if (opp.pendleMarketAddress) lines.push(`    Pendle Market: ${opp.pendleMarketAddress}`);
+
+  // Warnings
+  if (opp.warnings.length > 0) {
+    lines.push(`    ⚠ ${opp.warnings.join(" | ")}`);
+  }
+
+  return lines.join("\n");
+}
+
+/** Full output for scan_curator_opportunities results. */
+export function formatCuratorScanResults(
+  opps: CuratorOpportunity[],
+  capitalUsd: number,
+  maxImpactPct: number,
+  assetFilter: string | undefined,
+  failedChains: string[],
+  compact: boolean,
+): string {
+  const lines: string[] = [];
+  lines.push(`== Curator Opportunity Scan: ${formatUsd(capitalUsd)} capital ==`);
+  lines.push(`  Scope: Spectra + Pendle (cross-protocol)`);
+  if (assetFilter) lines.push(`  Asset: ${assetFilter}`);
+
+  const spectraCount = opps.filter(o => o.protocol === "spectra").length;
+  const pendleCount = opps.filter(o => o.protocol === "pendle").length;
+  lines.push(`  Results: ${opps.length} (${spectraCount} Spectra, ${pendleCount} Pendle) | Max Impact: ${formatPct(maxImpactPct)}`);
+  if (failedChains.length > 0) lines.push(`  Failed chains: ${failedChains.join(", ")}`);
+  lines.push(``);
+
+  if (compact) {
+    for (let i = 0; i < opps.length; i++) {
+      lines.push(formatCuratorOpportunityCompact(opps[i], i + 1));
+    }
+  } else {
+    for (let i = 0; i < opps.length; i++) {
+      lines.push(formatCuratorOpportunity(opps[i], i + 1));
+      if (i < opps.length - 1) lines.push(``);
+    }
+  }
+
+  // Next steps
+  lines.push(``);
+  lines.push(`--- Next Steps ---`);
+  const topSpectra = opps.find(o => o.protocol === "spectra");
+  const topPendle = opps.find(o => o.protocol === "pendle");
+  if (topSpectra) {
+    lines.push(`  • Drill into top Spectra: get_looping_strategy(chain="${topSpectra.chain}", pt_address="${topSpectra.ptAddress}")`);
+    lines.push(`  • Quote entry: quote_trade(chain="${topSpectra.chain}", pt_address="${topSpectra.ptAddress}", amount=${capitalUsd}, side="buy")`);
+  }
+  if (topPendle) {
+    lines.push(`  • Pendle detail: list_pendle_markets(chain="${topPendle.chain}", asset_filter="${topPendle.underlying}")`);
+  }
+  if (topSpectra && topPendle) {
+    lines.push(`  • Head-to-head: compare_pendle_spectra(chain="${topSpectra.chain}", asset_filter="${topSpectra.underlying}")`);
+  }
+  lines.push(`  • MetaVault modeling: model_metavault_strategy(chain=CHAIN, metavault_address=ADDR) for blended allocation`);
+  lines.push(`  • Curator dashboard: get_curator_dashboard(chain=CHAIN, metavault_address=ADDR) for operational overview`);
+
+  lines.push(``);
+  lines.push(`--- Protocol Legend ---`);
+  lines.push(`  [S] = Spectra (Curve AMM, SPECTRA gauge, Morpho looping available)`);
+  lines.push(`  [P] = Pendle (Pendle AMM, PENDLE incentives, no Morpho looping yet)`);
+  lines.push(`  ↔ = Cross-protocol match on same underlying + similar maturity`);
 
   return lines.join("\n");
 }
