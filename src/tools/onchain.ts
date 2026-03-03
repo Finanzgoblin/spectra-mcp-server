@@ -8,7 +8,7 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork, CHAIN_BLOCK_TIMES, resolveRpcUrl } from "../config.js";
+import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork, CHAIN_BLOCK_TIMES, resolveRpcUrlsWithFallbacks } from "../config.js";
 import { fetchBlockNumber, fetchBlockTimestamp, fetchLogs } from "../api.js";
 import { formatDate, formatTokenAmount, formatActivityType } from "../formatters.js";
 
@@ -420,9 +420,9 @@ Use this tool for historical data beyond the API's retention window.`,
         }
 
         const network = resolveNetwork(chain);
-        const rpcUrl = resolveRpcUrl(chain, rpc_url);
+        const rpcCandidates = resolveRpcUrlsWithFallbacks(chain, rpc_url);
 
-        if (!rpcUrl) {
+        if (rpcCandidates.length === 0) {
           return {
             content: [{
               type: "text" as const,
@@ -433,14 +433,25 @@ Use this tool for historical data beyond the API's retention window.`,
           };
         }
 
-        // --- Get current block ---
-        const currentBlock = await fetchBlockNumber(rpcUrl);
-        if (currentBlock === null) {
+        // --- Get current block (try primary + fallbacks) ---
+        let rpcUrl: string | null = null;
+        let currentBlock: number | null = null;
+        for (const candidate of rpcCandidates) {
+          currentBlock = await fetchBlockNumber(candidate);
+          if (currentBlock !== null) {
+            rpcUrl = candidate;
+            break;
+          }
+        }
+        if (currentBlock === null || rpcUrl === null) {
+          const tried = rpcCandidates.length > 1
+            ? `Tried ${rpcCandidates.length} RPCs (primary + ${rpcCandidates.length - 1} fallback(s)).`
+            : `Tried 1 RPC.`;
           return {
             content: [{
               type: "text" as const,
-              text: `Failed to fetch current block number from RPC (${rpc_url ? "provided URL" : "default for " + chain}). ` +
-                `The RPC may be down or rate-limited. Try a different rpc_url, or provide explicit from_block/to_block.`,
+              text: `Failed to fetch current block number from RPC for ${chain}. ${tried} ` +
+                `All RPCs may be down or rate-limited. Try a different rpc_url, or provide explicit from_block/to_block.`,
             }],
             isError: true,
           };
