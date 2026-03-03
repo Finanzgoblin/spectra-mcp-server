@@ -180,6 +180,7 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
           }
           const lpData = extractLpApyBreakdown(pool, boostInfo?.boostFraction ?? 0);
 
+          const bestIsLp = lpData.lpApy > effectiveApy;
           opportunities.push({
             protocol: "spectra",
             chain,
@@ -195,7 +196,8 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
             entryImpactPct: impactPct,
             effectiveApy,
             capacityUsd,
-            sortApy: effectiveApy, // updated in Phase 3 if looping profitable
+            sortApy: Math.max(effectiveApy, lpData.lpApy), // best strategy wins
+            bestStrategy: bestIsLp ? "lp" : "pt_spot",     // updated in Phase 3 if looping beats both
             ptAddress: pt.address,
             poolAddress: pool.address || "",
             looping: null,
@@ -231,6 +233,7 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
           if (impactPct > 2) warnings.push(`High entry impact (${formatPct(impactPct)})`);
           if (effectiveApy < 0) warnings.push("Negative effective APY");
 
+          const bestIsLp = lpApy > effectiveApy;
           opportunities.push({
             protocol: "pendle",
             chain,
@@ -246,7 +249,8 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
             entryImpactPct: impactPct,
             effectiveApy,
             capacityUsd,
-            sortApy: effectiveApy,
+            sortApy: Math.max(effectiveApy, lpApy), // best strategy wins
+            bestStrategy: bestIsLp ? "lp" : "pt_spot",
             pendleMarketAddress: market.address,
             pendlePtAddress: market.pt,
             warnings,
@@ -330,7 +334,11 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
                     cumulativeEntryImpactPct: cumImpactPct,
                     morphoLiquidityUsd: market.state?.liquidityAssetsUsd || 0,
                   };
-                  opp.sortApy = effectiveNetApy;
+                  // Looping only becomes best strategy if it beats both LP and PT spot
+                  if (effectiveNetApy > opp.sortApy) {
+                    opp.sortApy = effectiveNetApy;
+                    opp.bestStrategy = "pt_loop";
+                  }
                 }
               }
             }
