@@ -3061,19 +3061,25 @@ export function matchByAssetAndMaturity(
 /** One-liner for compact curator scan output. */
 export function formatCuratorOpportunityCompact(opp: CuratorOpportunity, rank: number): string {
   const proto = opp.protocol === "spectra" ? "[S]" : "[P]";
-  const loopTag = opp.looping ? ` → Loop ${formatPct(opp.looping.optimalNetApy)}` : "";
+  const bestLabel = opp.bestStrategy === "lp" ? `LP ${formatPct(opp.lpApy)}`
+    : opp.bestStrategy === "pt_loop" && opp.looping ? `Loop ${formatPct(opp.looping.optimalEffectiveNetApy)}`
+    : `PT ${formatPct(opp.effectiveApy)}`;
+  const loopTag = opp.looping ? ` | Loop ${formatPct(opp.looping.optimalNetApy)}` : "";
   const matchTag = opp.matchedWith
     ? ` ↔ ${opp.matchedWith.protocol === "spectra" ? "[S]" : "[P]"} ${formatPct(opp.matchedWith.impliedApy)} (${opp.matchedWith.matchQuality}, ${opp.matchedWith.maturityGapDays}d gap)`
     : "";
   const warnTag = opp.warnings.length > 0 ? ` ⚠${opp.warnings.length}` : "";
-  return `  #${rank} ${proto} ${opp.name} | ${opp.chain} | Impl ${formatPct(opp.impliedApy)} | Eff ${formatPct(opp.effectiveApy)}${loopTag} | LP ${formatPct(opp.lpApy)} | TVL ${formatUsd(opp.tvlUsd)} | ${opp.daysToMaturity}d${matchTag}${warnTag}`;
+  return `  #${rank} ${proto} ${opp.name} | ${opp.chain} | Best: ${bestLabel} | Impl ${formatPct(opp.impliedApy)} | Eff ${formatPct(opp.effectiveApy)}${loopTag} | LP ${formatPct(opp.lpApy)} | TVL ${formatUsd(opp.tvlUsd)} | ${opp.daysToMaturity}d${matchTag}${warnTag}`;
 }
 
 /** Full detail for a single curator opportunity. */
 export function formatCuratorOpportunity(opp: CuratorOpportunity, rank: number): string {
   const proto = opp.protocol === "spectra" ? "Spectra" : "Pendle";
   const lines: string[] = [];
-  lines.push(`  #${rank} [${proto}] ${opp.name}`);
+  const bestLabel = opp.bestStrategy === "lp" ? `LP ${formatPct(opp.lpApy)}`
+    : opp.bestStrategy === "pt_loop" && opp.looping ? `Loop ${formatPct(opp.looping.optimalEffectiveNetApy)}`
+    : `PT Spot ${formatPct(opp.effectiveApy)}`;
+  lines.push(`  #${rank} [${proto}] ${opp.name} — Best: ${bestLabel}`);
   lines.push(`    Chain: ${opp.chain} | Maturity: ${new Date(opp.maturityTimestamp * 1000).toISOString().slice(0, 10)} (${opp.daysToMaturity}d)`);
   lines.push(`    Implied APY: ${formatPct(opp.impliedApy)} | Effective APY: ${formatPct(opp.effectiveApy)} | Variable APR: ${formatPct(opp.variableApr)}`);
   lines.push(`    LP APY: ${formatPct(opp.lpApy)} | TVL: ${formatUsd(opp.tvlUsd)} | Pool Liquidity: ${formatUsd(opp.poolLiquidityUsd)}`);

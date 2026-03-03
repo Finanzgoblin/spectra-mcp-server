@@ -489,7 +489,8 @@ export interface CuratorOpportunity {
   entryImpactPct: number;
   effectiveApy: number;        // implied APY minus annualized entry cost
   capacityUsd: number;         // max capital before impact exceeds threshold
-  sortApy: number;             // ranking key (looping net APY if available, else effective APY)
+  sortApy: number;             // ranking key — max(effectiveApy, lpApy, loopingNetApy)
+  bestStrategy: "lp" | "pt_spot" | "pt_loop"; // which strategy drives sortApy
 
   // Protocol-specific identifiers
   ptAddress?: string;          // Spectra PT address
