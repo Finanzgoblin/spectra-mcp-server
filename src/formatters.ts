@@ -3169,5 +3169,14 @@ export function formatCuratorScanResults(
   lines.push(`  [P] = Pendle (Pendle AMM, PENDLE incentives, no Morpho looping yet)`);
   lines.push(`  ↔ = Cross-protocol match on same underlying + similar maturity`);
 
+  if (pendleCount > 0) {
+    lines.push(``);
+    lines.push(`--- Pendle Impact Note ---`);
+    lines.push(`  Pendle price impact is estimated using Curve constant-product math as a conservative`);
+    lines.push(`  upper bound. Pendle uses a different AMM (weighted time-decay pricing) which is`);
+    lines.push(`  typically more capital-efficient — actual Pendle impact will likely be lower.`);
+    lines.push(`  Treat Pendle effective APY and capacity estimates as approximate.`);
+  }
+
   return lines.join("\n");
 }
