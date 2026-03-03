@@ -82,9 +82,12 @@ Use scan_opportunities for Spectra-native opportunity ranking.`,
 
         if (chain) {
           // Single chain
-          const markets = await fetchPendleMarkets(chain);
+          const result = await fetchPendleMarkets(chain);
+          if (!result.ok) {
+            failedChains.push(chain);
+          }
           const now = Date.now();
-          allMarkets = markets
+          allMarkets = result.markets
             .filter((m) => {
               if (new Date(m.expiry).getTime() <= now) return false;
               if ((m.details.totalTvl || 0) < min_tvl_usd) return false;
@@ -208,7 +211,7 @@ Use scan_opportunities for Spectra-native capital-aware ranking.`,
         const assetUpper = asset_filter?.toUpperCase();
 
         // Fetch both in parallel
-        const [pendleMarkets, spectraRaw] = await Promise.all([
+        const [pendleResult, spectraRaw] = await Promise.all([
           fetchPendleMarkets(chain),
           fetchSpectra(`/${network}/pools`) as Promise<any>,
         ]);
@@ -218,7 +221,7 @@ Use scan_opportunities for Spectra-native capital-aware ranking.`,
         const now = Date.now();
 
         // Filter Pendle markets
-        const activePendle = pendleMarkets.filter((m) => {
+        const activePendle = pendleResult.markets.filter((m) => {
           if (new Date(m.expiry).getTime() <= now) return false;
           if ((m.details.totalTvl || 0) < min_tvl_usd) return false;
           if ((m.details.liquidity || 0) < min_liquidity_usd) return false;
@@ -248,6 +251,9 @@ Use scan_opportunities for Spectra-native capital-aware ranking.`,
         lines.push(`== Spectra vs Pendle: ${PENDLE_CHAIN_NAMES[chain] || chain} ==`);
         if (asset_filter) lines.push(`  Asset filter: ${asset_filter}`);
         lines.push(`  Spectra pools: ${activeSpectra.length} | Pendle markets: ${activePendle.length}`);
+        if (!pendleResult.ok) {
+          lines.push(`  ⚠ Pendle API failed for ${chain}: ${pendleResult.error || "unknown error"}. Pendle data may be incomplete.`);
+        }
         lines.push(``);
 
         // Match by underlying asset + maturity proximity

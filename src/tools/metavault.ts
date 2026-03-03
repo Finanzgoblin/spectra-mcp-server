@@ -41,7 +41,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavault } from "../types.js";
 import { CHAIN_ENUM, EVM_ADDRESS } from "../config.js";
-import { fetchMetavaults, scanAllMetavaults } from "../api.js";
+import { fetchMetavaults, scanAllMetavaults, fetchChainPoolAddresses } from "../api.js";
 import {
   formatPct,
   formatUsd,
@@ -503,6 +503,15 @@ Use get_address_activity on the curator's EOA for cross-pool curator activity.`,
         const divisor = Math.pow(10, underlyingDecimals);
         const liveApyTotal = mv.liveApy?.total || 0;
 
+        // ── Fetch known Spectra pool addresses for protocol detection ──
+        // Best-effort: if fetch fails, fall back to heuristic-based detection.
+        let spectraPoolAddresses: Set<string> = new Set();
+        try {
+          spectraPoolAddresses = await fetchChainPoolAddresses(chain);
+        } catch {
+          // Best-effort — fall back to heuristic
+        }
+
         // ── Build positions with vault allocation ──────────────
         // The API provides LP balance in two places:
         //   1. pool.lpt.balance — standard location
@@ -524,15 +533,22 @@ Use get_address_activity on the curator's EOA for cross-pool curator activity.`,
             vaultAllocationUsd = lpBalance * pool.lpt.price.usd;
           }
 
-          // Protocol detection heuristic:
-          // - Positions with lpt data come from Curve StableSwap pools → Spectra
-          // - If API starts returning Pendle positions, they won't have lpt data
-          // - Symbol-based fallback for future Pendle integration
-          const protocol: "Spectra" | "Pendle" | "Unknown" = pool?.lpt
-            ? "Spectra"
-            : pos.symbol?.toLowerCase().includes("pendle")
-              ? "Pendle"
-              : "Spectra"; // default: all current API positions are Spectra
+          // Protocol detection: multi-signal approach
+          // 1. Pool address matches known Spectra pools → Spectra (most reliable)
+          // 2. Has lpt data (Curve StableSwap LP token) → Spectra
+          // 3. Symbol or name contains "pendle" → Pendle
+          // 4. Default to "Unknown" if no signal matches (conservative)
+          let protocol: "Spectra" | "Pendle" | "Unknown" = "Unknown";
+          const poolAddr = pool?.address?.toLowerCase();
+          if (poolAddr && spectraPoolAddresses.has(poolAddr)) {
+            protocol = "Spectra";
+          } else if (pool?.lpt) {
+            protocol = "Spectra";
+          } else if (
+            pos.symbol?.toLowerCase().includes("pendle")
+          ) {
+            protocol = "Pendle";
+          }
 
           return {
             symbol: pos.symbol,
