@@ -4,7 +4,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { resolveNetwork, CHAIN_ENUM, EVM_ADDRESS, SUPPORTED_CHAINS, API_NETWORKS, MORPHO_CHAIN_IDS } from "./config.js";
+import { resolveNetwork, resolveRpcUrlsWithFallbacks, CHAIN_ENUM, EVM_ADDRESS, SUPPORTED_CHAINS, API_NETWORKS, MORPHO_CHAIN_IDS, CHAIN_RPC_URLS, CHAIN_RPC_FALLBACKS } from "./config.js";
 
 // =============================================================================
 // resolveNetwork
@@ -144,5 +144,45 @@ describe("SUPPORTED_CHAINS", () => {
 
   it("mainnet and ethereum alias have the same chain ID", () => {
     assert.equal(SUPPORTED_CHAINS["mainnet"].id, SUPPORTED_CHAINS["ethereum"].id);
+  });
+});
+
+// =============================================================================
+// resolveRpcUrlsWithFallbacks
+// =============================================================================
+
+describe("resolveRpcUrlsWithFallbacks", () => {
+  it("returns primary + fallbacks for mainnet", () => {
+    const urls = resolveRpcUrlsWithFallbacks("mainnet");
+    assert.ok(urls.length >= 2, `expected at least 2 URLs for mainnet, got ${urls.length}`);
+    assert.equal(urls[0], CHAIN_RPC_URLS["mainnet"]);
+    // Fallbacks should be in the list
+    const fallbacks = CHAIN_RPC_FALLBACKS["mainnet"] || [];
+    for (const fb of fallbacks) {
+      assert.ok(urls.includes(fb), `missing fallback ${fb}`);
+    }
+  });
+
+  it("returns only override when provided", () => {
+    const urls = resolveRpcUrlsWithFallbacks("mainnet", "https://custom-rpc.example.com");
+    assert.equal(urls.length, 1);
+    assert.equal(urls[0], "https://custom-rpc.example.com");
+  });
+
+  it("returns empty array for chains without RPCs", () => {
+    const urls = resolveRpcUrlsWithFallbacks("katana");
+    assert.equal(urls.length, 0);
+  });
+
+  it("returns only primary for chains without fallbacks", () => {
+    const urls = resolveRpcUrlsWithFallbacks("sonic");
+    assert.equal(urls.length, 1);
+    assert.equal(urls[0], CHAIN_RPC_URLS["sonic"]);
+  });
+
+  it("handles ethereum alias correctly", () => {
+    const urls = resolveRpcUrlsWithFallbacks("ethereum");
+    const mainnetUrls = resolveRpcUrlsWithFallbacks("mainnet");
+    assert.deepEqual(urls, mainnetUrls);
   });
 });

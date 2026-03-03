@@ -656,6 +656,28 @@ export async function fetchMetavaults(chain: string): Promise<SpectraMetavault[]
 }
 
 /**
+ * Fetch all known Spectra pool addresses for a chain (for protocol detection).
+ * Returns a Set<string> of lowercased pool addresses.
+ * Best-effort — returns empty set on error.
+ */
+export async function fetchChainPoolAddresses(chain: string): Promise<Set<string>> {
+  const addresses = new Set<string>();
+  try {
+    const pts = await fetchChainPools(resolveNetwork(chain));
+    for (const pt of pts) {
+      if (pt.pools) {
+        for (const pool of pt.pools) {
+          if (pool.address) addresses.add(pool.address.toLowerCase());
+        }
+      }
+    }
+  } catch {
+    // Best-effort
+  }
+  return addresses;
+}
+
+/**
  * Scan all chains for MetaVaults in parallel.
  * Returns all MetaVaults with their chain slug attached, plus failed chains.
  */
@@ -713,7 +735,7 @@ export async function fetchPendle(path: string): Promise<unknown> {
 
 const PENDLE_CACHE_TTL_MS = 30_000;
 const _pendleCache = new Map<string, { markets: PendleMarket[]; expiresAt: number }>();
-const _pendleInflight = new Map<string, Promise<PendleMarket[]>>();
+const _pendleInflight = new Map<string, Promise<PendleMarketResult>>();
 
 /**
  * Strip Pendle's chain-prefixed address format (e.g. "8453-0xabc..." → "0xabc...").
@@ -756,19 +778,30 @@ function validatePendleMarkets(raw: any[]): PendleMarket[] {
 }
 
 /**
+ * Result of fetching Pendle markets for a chain.
+ * `ok: false` means the API call failed — distinct from `ok: true, markets: []` (chain has no markets).
+ */
+export interface PendleMarketResult {
+  ok: boolean;
+  markets: PendleMarket[];
+  error?: string;
+}
+
+/**
  * Fetch all active Pendle markets for a given Spectra chain slug.
- * Returns [] if the chain is not supported by Pendle.
+ * Returns { ok: true, markets: [] } if the chain is not supported by Pendle.
+ * Returns { ok: false, markets: [], error } on API failure.
  * Cached for 30s with inflight deduplication.
  */
-export async function fetchPendleMarkets(chain: string): Promise<PendleMarket[]> {
+export async function fetchPendleMarkets(chain: string): Promise<PendleMarketResult> {
   const network = resolveNetwork(chain);
   const pendleChainId = PENDLE_CHAIN_IDS[network];
-  if (!pendleChainId) return []; // Chain not supported by Pendle
+  if (!pendleChainId) return { ok: true, markets: [] }; // Chain not supported by Pendle
 
   const cacheKey = String(pendleChainId);
   const now = Date.now();
   const cached = _pendleCache.get(cacheKey);
-  if (cached && now < cached.expiresAt) return cached.markets;
+  if (cached && now < cached.expiresAt) return { ok: true, markets: cached.markets };
 
   const inflight = _pendleInflight.get(cacheKey);
   if (inflight) return inflight;
@@ -777,10 +810,14 @@ export async function fetchPendleMarkets(chain: string): Promise<PendleMarket[]>
     try {
       const raw = await fetchPendle(`/v1/markets/all?isActive=true&chainId=${pendleChainId}`) as any;
       const arr: any[] = raw?.markets || raw || [];
-      if (!Array.isArray(arr)) return [];
+      if (!Array.isArray(arr)) return { ok: true, markets: [] as PendleMarket[] };
       const markets = validatePendleMarkets(arr);
       _pendleCache.set(cacheKey, { markets, expiresAt: Date.now() + PENDLE_CACHE_TTL_MS });
-      return markets;
+      return { ok: true, markets };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[pendle] Failed to fetch markets for ${chain}: ${msg}`);
+      return { ok: false, markets: [] as PendleMarket[], error: msg };
     } finally {
       _pendleInflight.delete(cacheKey);
     }
@@ -809,11 +846,14 @@ export async function scanAllPendleMarkets(opts: {
 
   const results = await Promise.allSettled(
     pendleChains.map(async (chain) => {
-      const markets = await fetchPendleMarkets(chain);
+      const result = await fetchPendleMarkets(chain);
+      if (!result.ok) {
+        return { chain, failed: true as const, markets: [] as Array<{ market: PendleMarket; chain: string }> };
+      }
       const now = Date.now();
       const filtered: Array<{ market: PendleMarket; chain: string }> = [];
 
-      for (const m of markets) {
+      for (const m of result.markets) {
         // Skip expired
         const expiryMs = new Date(m.expiry).getTime();
         if (expiryMs <= now) continue;
@@ -826,14 +866,18 @@ export async function scanAllPendleMarkets(opts: {
 
         filtered.push({ market: m, chain });
       }
-      return filtered;
+      return { chain, failed: false as const, markets: filtered };
     })
   );
 
   const allMarkets: Array<{ market: PendleMarket; chain: string }> = [];
   results.forEach((result, i) => {
     if (result.status === "fulfilled") {
-      allMarkets.push(...result.value);
+      if (result.value.failed) {
+        failedChains.push(result.value.chain);
+      } else {
+        allMarkets.push(...result.value.markets);
+      }
     } else {
       failedChains.push(pendleChains[i]);
     }

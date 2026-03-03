@@ -862,6 +862,104 @@ async function testLpApyGaugeEmissions(client) {
   }
 }
 
+async function testListPendleMarkets(client) {
+  console.log("\n--- list_pendle_markets ---");
+
+  // Single chain
+  const { text } = await client.callTool("list_pendle_markets", {
+    chain: "mainnet",
+    top_n: 5,
+    compact: true,
+  });
+  const hasResults = text.includes("Pendle Markets") || text.includes("No active");
+  assert(hasResults, "list_pendle_markets: returns valid output", `unexpected: ${text.slice(0, 120)}`);
+
+  // Should show chain coverage info
+  if (text.includes("Pendle Markets")) {
+    assert(text.includes("Chain Coverage"), "list_pendle_markets: shows chain coverage", "missing");
+    assert(text.includes("Next Steps"), "list_pendle_markets: has next steps", "missing");
+  }
+
+  // All chains scan
+  const { text: allChains } = await client.callTool("list_pendle_markets", {
+    top_n: 3,
+    compact: true,
+  });
+  const allOk = allChains.includes("Pendle Markets") || allChains.includes("No active");
+  assert(allOk, "list_pendle_markets: all-chain scan works", `unexpected: ${allChains.slice(0, 120)}`);
+
+  // Asset filter
+  const { text: filtered } = await client.callTool("list_pendle_markets", {
+    chain: "mainnet",
+    asset_filter: "USD",
+    top_n: 3,
+    compact: true,
+  });
+  const filterOk = filtered.includes("Pendle Markets") || filtered.includes("No active");
+  assert(filterOk, "list_pendle_markets: asset filter works", `unexpected: ${filtered.slice(0, 120)}`);
+
+  // Pendle-only chain (mantle has Pendle but not Spectra)
+  const { text: mantleText } = await client.callTool("list_pendle_markets", {
+    chain: "mantle",
+    top_n: 3,
+    compact: true,
+    min_tvl_usd: 0,
+    min_liquidity_usd: 0,
+  });
+  const mantleOk = mantleText.includes("Pendle Markets") || mantleText.includes("No active");
+  assert(mantleOk, "list_pendle_markets: pendle-only chain (mantle) works", `unexpected: ${mantleText.slice(0, 120)}`);
+}
+
+async function testComparePendleSpectra(client) {
+  console.log("\n--- compare_pendle_spectra ---");
+
+  // Mainnet comparison
+  const { text } = await client.callTool("compare_pendle_spectra", {
+    chain: "mainnet",
+    min_tvl_usd: 0,
+    min_liquidity_usd: 0,
+  });
+  const hasOutput = text.includes("Spectra vs Pendle") || text.includes("Error");
+  assert(hasOutput, "compare_pendle_spectra: returns valid output", `unexpected: ${text.slice(0, 120)}`);
+
+  if (text.includes("Spectra vs Pendle")) {
+    // Should show pool counts
+    assert(text.includes("Spectra pools:"), "compare_pendle_spectra: shows Spectra pool count", "missing");
+    assert(text.includes("Pendle markets:"), "compare_pendle_spectra: shows Pendle market count", "missing");
+
+    // Should have at least one section (matched, spectra-only, or pendle-only)
+    const hasSection = text.includes("Matched Comparisons") ||
+      text.includes("Spectra-Only") ||
+      text.includes("Pendle-Only");
+    assert(hasSection, "compare_pendle_spectra: has at least one comparison section", "missing all sections");
+
+    // Next steps
+    assert(text.includes("Next Steps"), "compare_pendle_spectra: has next steps", "missing");
+  }
+
+  // With asset filter
+  const { text: filtered } = await client.callTool("compare_pendle_spectra", {
+    chain: "base",
+    asset_filter: "ETH",
+    min_tvl_usd: 0,
+    min_liquidity_usd: 0,
+  });
+  const filterOk = filtered.includes("Spectra vs Pendle");
+  assert(filterOk, "compare_pendle_spectra: asset filter on base works", `unexpected: ${filtered.slice(0, 120)}`);
+  if (filtered.includes("Asset filter")) {
+    assert(filtered.includes("ETH"), "compare_pendle_spectra: shows asset filter value", "missing");
+  }
+
+  // Compact mode
+  const { text: compact } = await client.callTool("compare_pendle_spectra", {
+    chain: "mainnet",
+    compact: true,
+    min_tvl_usd: 0,
+    min_liquidity_usd: 0,
+  });
+  assert(compact.includes("Spectra vs Pendle"), "compare_pendle_spectra: compact mode works", `unexpected: ${compact.slice(0, 120)}`);
+}
+
 async function testCuratorScan(client) {
   console.log("\n--- scan_curator_opportunities ---");
 
@@ -2124,6 +2222,10 @@ async function main() {
       await testGetMetavaults(client);
       await testModelMetavaultStrategy(client);
       await testGetCuratorDashboard(client);
+
+      // Pendle tools (standalone)
+      await testListPendleMarkets(client);
+      await testComparePendleSpectra(client);
 
       // Cross-protocol curator scanner
       await testCuratorScan(client);

@@ -201,6 +201,21 @@ export const CHAIN_RPC_URLS: Partial<Record<string, string>> = {
   // katana and monad: no well-known public RPCs; these chains will return "unknown"
 };
 
+// Fallback RPCs — tried when the primary RPC fails. Order matters (first fallback tried first).
+export const CHAIN_RPC_FALLBACKS: Partial<Record<string, string[]>> = {
+  mainnet: [
+    "https://rpc.ankr.com/eth",
+    "https://ethereum-rpc.publicnode.com",
+    "https://1rpc.io/eth",
+  ],
+  base: [
+    "https://base-rpc.publicnode.com",
+  ],
+  arbitrum: [
+    "https://arbitrum-one-rpc.publicnode.com",
+  ],
+};
+
 // =============================================================================
 // Average Gas Cost Estimates (USD per transaction)
 // =============================================================================
@@ -258,4 +273,19 @@ export function resolveRpcUrl(chain: string, overrideRpcUrl?: string): string | 
   if (overrideRpcUrl) return overrideRpcUrl;
   const network = resolveNetwork(chain);
   return CHAIN_RPC_URLS[network] ?? null;
+}
+
+/**
+ * Get all RPC URLs for a chain — primary + fallbacks — in priority order.
+ * If an override is provided, returns only that (no fallbacks).
+ */
+export function resolveRpcUrlsWithFallbacks(chain: string, overrideRpcUrl?: string): string[] {
+  if (overrideRpcUrl) return [overrideRpcUrl];
+  const network = resolveNetwork(chain);
+  const urls: string[] = [];
+  const primary = CHAIN_RPC_URLS[network];
+  if (primary) urls.push(primary);
+  const fallbacks = CHAIN_RPC_FALLBACKS[network];
+  if (fallbacks) urls.push(...fallbacks);
+  return urls;
 }
