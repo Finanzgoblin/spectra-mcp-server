@@ -158,7 +158,6 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
 
           const impactFrac = estimatePriceImpact(capital_usd, poolLiqUsd);
           const impactPct = impactFrac * 100;
-          if (impactFrac > maxImpactFrac) continue;
 
           const annualizedEntryCost = days > 0
             ? impactFrac * (365 / days) * 100
@@ -166,19 +165,23 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
           const effectiveApy = impliedApy - annualizedEntryCost;
           const capacityUsd = maxImpactFrac * 2 * poolLiqUsd;
 
+          // LP APY with optional veSPECTRA boost (computed before impact filter)
+          let boostInfo: BoostInfo | undefined;
+          if (ve_spectra_balance !== undefined && ve_spectra_balance > 0 && veTotalSupply !== null) {
+            boostInfo = computeSpectraBoost(ve_spectra_balance, veTotalSupply, tvlUsd, capital_usd);
+          }
+          const lpData = extractLpApyBreakdown(pool, boostInfo?.boostFraction ?? 0);
+
+          // Impact filter: skip only if BOTH PT and LP strategies are unviable
+          // PT swap impact doesn't apply to LP adds, so LP-dominant pools should survive
+          if (impactFrac > maxImpactFrac && lpData.lpApy <= 0) continue;
+
           const warnings: string[] = [];
           if (days < 14) warnings.push("Very short maturity (<14d)");
           else if (days < 30) warnings.push("Short maturity (<30d)");
           if (poolLiqUsd < 50000) warnings.push("Low liquidity (<$50K)");
           if (impactPct > 2) warnings.push(`High entry impact (${formatPct(impactPct)})`);
           if (effectiveApy < 0) warnings.push("Negative effective APY");
-
-          // LP APY with optional veSPECTRA boost
-          let boostInfo: BoostInfo | undefined;
-          if (ve_spectra_balance !== undefined && ve_spectra_balance > 0 && veTotalSupply !== null) {
-            boostInfo = computeSpectraBoost(ve_spectra_balance, veTotalSupply, tvlUsd, capital_usd);
-          }
-          const lpData = extractLpApyBreakdown(pool, boostInfo?.boostFraction ?? 0);
 
           const bestIsLp = lpData.lpApy > effectiveApy;
           opportunities.push({
@@ -218,7 +221,8 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
 
           const impactFrac = estimatePriceImpact(capital_usd, poolLiqUsd);
           const impactPct = impactFrac * 100;
-          if (impactFrac > maxImpactFrac) continue;
+          // Impact filter: skip only if BOTH PT and LP strategies are unviable
+          if (impactFrac > maxImpactFrac && lpApy <= 0) continue;
 
           const annualizedEntryCost = days > 0
             ? impactFrac * (365 / days) * 100
@@ -258,22 +262,24 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
         }
 
         // ================================================================
-        // PHASE 3: Morpho looping for Spectra PTs
+        // PHASE 3: Morpho looping for ALL PTs (Spectra + Pendle)
         // ================================================================
 
         if (include_looping) {
-          const spectraOpps = opportunities.filter(o => o.protocol === "spectra" && o.ptAddress);
+          // Group ALL PT addresses by Morpho-capable chain
+          const ptsByChain: Record<string, { addr: string; idx: number }[]> = {};
+          for (let i = 0; i < opportunities.length; i++) {
+            const opp = opportunities[i];
+            const ptAddr = opp.ptAddress || opp.pendlePtAddress;
+            if (!ptAddr) continue;
 
-          if (spectraOpps.length > 0) {
-            // Group PT addresses by Morpho-capable chain
-            const ptsByChain: Record<string, { addr: string; idx: number }[]> = {};
-            for (const opp of spectraOpps) {
-              const globalIdx = opportunities.indexOf(opp);
-              const network = resolveNetwork(opp.chain);
-              if (!MORPHO_CHAIN_IDS[network]) continue;
-              if (!ptsByChain[network]) ptsByChain[network] = [];
-              ptsByChain[network].push({ addr: opp.ptAddress!, idx: globalIdx });
-            }
+            const network = resolveNetwork(opp.chain);
+            if (!MORPHO_CHAIN_IDS[network]) continue;
+            if (!ptsByChain[network]) ptsByChain[network] = [];
+            ptsByChain[network].push({ addr: ptAddr, idx: i });
+          }
+
+          if (Object.keys(ptsByChain).length > 0) {
 
             // Parallel batch lookup
             const morphoChains = Object.keys(ptsByChain);
