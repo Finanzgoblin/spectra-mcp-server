@@ -18,7 +18,11 @@ const TOPICS: Record<string, string> = {
 - PT + YT = 1 underlying at maturity. YT price = 1 - PT price (in underlying terms).
 - PT trades at a discount; the discount IS the fixed yield. At maturity, PT redeems 1:1.
 - YT gives leveraged variable yield exposure. YT leverage = 1 / YT price in underlying.
-- PT trades on Curve StableSwap-NG pools (IBT/PT pairs). YT does NOT trade on the pool directly.`,
+- PT trades on Curve StableSwap-NG pools (IBT/PT pairs). YT does NOT trade on the pool directly.
+- Maturity Value context: Tools often show maturityValue < 1.0 (e.g., 0.852). This is the IBT
+  rate (how much underlying 1 IBT is worth). It is NOT a loss — you bought PT at a discount
+  to this value. The spread (maturityValue - ptPrice) is your yield.
+  Example: PT price 0.82, maturity value 0.852 → 3.2 underlying profit per 100 PT.`,
 
   "router_batching": `Router Batching (critical for interpreting pool activity)
 - The Spectra Router's execute() batches multiple operations into one atomic tx.
@@ -75,7 +79,63 @@ ${API_NETWORKS.map((k) => `- ${SUPPORTED_CHAINS[k].name} (use "${k}" in queries,
 - Morpho PT markets exist on: mainnet, base, arbitrum, katana.
 - veSPECTRA governance lives on Base.`,
 
+  "deposit_path": `How to Enter Spectra Positions (Deposit Paths)
+- To buy PT (lock in fixed rate): Send underlying (e.g., USDC) to the Spectra Router.
+  The Router atomically: wraps to IBT (ERC-4626 vault share) → swaps IBT for PT on Curve pool.
+  You receive PT. At maturity, PT redeems for 1 IBT → unwrap → underlying + accrued yield.
+- To mint PT+YT (get both tokens): Send underlying → Router wraps to IBT → Spectra mint → PT+YT.
+  This does NOT go through the pool. No price impact. You get equal amounts of PT and YT.
+- To get YT only (leveraged variable yield): Flash-mint strategy via the Router.
+  Router: flash-borrow IBT → mint PT+YT → sell PT on Curve pool → you keep YT, repay flash.
+  Appears as SELL_PT in pool activity. Entry cost = PT selling slippage.
+- To LP (earn trading fees + SPECTRA gauge): Add IBT + PT to the Curve pool.
+  Often combined with mint: deposit → mint PT+YT → add IBT+PT to pool → keep YT.
+  Appears as AMM_ADD_LIQUIDITY. The minted YT goes to your wallet (invisible in pool data).
+- To loop PT (leveraged fixed yield via Morpho): Buy PT → deposit as Morpho collateral →
+  borrow underlying → buy more PT → repeat. Requires a Morpho market for this PT.
+  Use get_looping_strategy() to model leverage levels and break-even borrow rates.
+- Prerequisites: You need the underlying asset (USDC, ETH, etc.) on the right chain.
+  Everything else is handled atomically by the Spectra Router. No manual multi-step process.`,
+
+  "glossary": `Glossary — Key Terms for Newcomers
+- IBT (Interest-Bearing Token): An ERC-4626 vault share that accrues yield over time.
+  Examples: yvUSDC (Yearn vault), aUSDC (Aave), stETH (Lido). The "sw-" prefix (e.g.,
+  sw-yvUSDC) means Spectra-wrapped — Spectra creates its own ERC-4626 wrapper around the
+  yield source.
+- PT (Principal Token): Your claim on the principal. Trades at a discount to underlying.
+  The discount IS the fixed yield. At maturity, 1 PT redeems for 1 IBT.
+- YT (Yield Token): Your claim on the variable yield. Gives leveraged yield exposure.
+  YT price = 1 - PT price (in underlying terms). Does NOT trade on the Curve pool directly.
+- Implied APY: The fixed rate you lock in by buying PT at its current discount.
+  Formula: annualized discount = (1 - ptPrice) * (365 / daysToMaturity).
+- Effective APY: Implied APY minus annualized entry cost (price impact from the AMM trade).
+  IMPORTANT: Scanner estimates use a conservative constant-product model. Real Curve
+  StableSwap-NG pools are more capital-efficient — actual effective APY is typically
+  30-60% higher than shown. Use quote_trade() for exact on-chain quotes before acting.
+- LLTV (Liquidation Loan-to-Value): Morpho's liquidation threshold. NOT the safe operating
+  level — loop at 90-95% of LLTV for a safety buffer.
+- Gauge: A SPECTRA emission distributor. veSPECTRA voters direct SPECTRA rewards to specific
+  pools. LP APY includes gauge emissions on top of trading fees.
+- Maturity Value: How much underlying 1 PT redeems for at maturity. Often shown as < 1.0
+  (e.g., 0.85). This is NOT a loss — it's the IBT conversion rate. You paid the discounted
+  PT price, so your profit is (maturityValue - ptPrice). If you bought at 0.82 and redeem
+  at 0.85, you earned the spread.
+- veSPECTRA: Vote-escrowed SPECTRA token. Locked on Base chain. Boosts LP gauge rewards
+  up to 2.5x and directs emissions to specific pools.
+- Flash-mint: Atomic operation via the Router: borrow IBT → mint PT+YT → sell PT on pool →
+  keep YT. Used to buy YT without the pool trading it directly.
+- Flash-redeem: Atomic operation via the Router: borrow IBT → buy PT on pool → burn PT+YT →
+  repay → profit. Used to sell YT without the pool trading it directly.`,
+
   "workflow_routing": `Workflow Routing — How tools compose for common goals
+
+If you're new to Spectra or unsure which tool to start with:
+  Use scan_curator_opportunities(capital_usd=YOUR_AMOUNT) — broadest view.
+  It scans BOTH Spectra and Pendle across all chains with capital-aware metrics.
+  scan_opportunities is Spectra-only and may return far fewer results at smaller capital sizes.
+  IMPORTANT: Effective APY in scan results is a conservative lower bound (constant-product
+  impact model). Real Curve StableSwap-NG pools are more capital-efficient — actual effective
+  APY is typically 30-60% higher. Always verify top picks with quote_trade() before acting.
 
 Goal: "Find the best yield for my capital"
   Start with: scan_opportunities(capital_usd=YOUR_AMOUNT)
@@ -152,7 +212,7 @@ export function register(server: McpServer): void {
     `Get essential Spectra protocol mechanics needed for correct reasoning.
 Returns concise explanations of how PT/YT work, how Router batching affects
 pool activity interpretation, how to read wallet strategies from holdings,
-how looping works, and how tools compose into workflows.
+how looping works, how to enter positions, and how tools compose into workflows.
 
 Covers mechanics that are easy to misinterpret without context — for example,
 SELL_PT in pool activity could be a flash-mint to acquire YT, not a PT sale.
@@ -160,6 +220,9 @@ SELL_PT in pool activity could be a flash-mint to acquire YT, not a PT sale.
 Use topic "workflow_routing" to learn which tools to call for a given goal
 (yield optimization, wallet analysis, YT arbitrage, etc.) and how they feed
 into each other. Recommended starting point for agents new to the tool set.
+
+Use topic "deposit_path" for step-by-step entry mechanics (how to buy PT, mint YT, LP, loop).
+Use topic "glossary" for key term definitions (IBT, sw-prefix, LLTV, gauge, maturity value).
 
 Available topics: ${ALL_TOPIC_NAMES.join(", ")}
 Omit the topic parameter to get all topics at once.`,
