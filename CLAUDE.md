@@ -6,9 +6,9 @@
 - MCP server process must restart after rebuild
 - Worktrees are under `.claude/worktrees/`
 - Source code in `src/`, tools in `src/tools/`, shared helpers in `src/api.ts`, `src/formatters.ts`, `src/config.ts`, `src/types.ts`
-- Tests: `npm test` (405 integration tests), `npm run test:unit` (186 unit tests), `npm run test:agent` (48 agent reasoning assertions)
+- Tests: `npm test` (405 integration tests), `npm run test:unit` (191 unit tests), `npm run test:agent` (82 agent reasoning assertions)
 - Agent test suite in `test-agent.cjs` — multi-tool workflow validation (cross-tool consistency, Router mechanics, anomaly detection)
-- Subjective test suite in `AGENT-TESTS.md` — 35 questions with grading rubrics for LLM evaluation (incl. open emergence + coverage tiers)
+- Subjective test suite in `AGENT-TESTS.md` — 38 questions with grading rubrics for LLM evaluation (incl. open emergence, coverage, newcomer comprehension tiers)
 - TypeScript project — check types with `npx tsc --noEmit`
 
 ## Key Tool Files
@@ -27,7 +27,7 @@
 - `src/tools/metavault.ts` — `get_metavaults`, `model_metavault_strategy`, `get_curator_dashboard`
 - `src/tools/protocol.ts` — `get_protocol_stats`, `get_supported_chains`
 - `src/tools/ve.ts` — `get_ve_info` (live veSPECTRA data from Base chain)
-- `src/tools/context.ts` — `get_protocol_context` (Layer 1 protocol mechanics, callable on-demand)
+- `src/tools/context.ts` — `get_protocol_context` (Layer 1 protocol mechanics, deposit paths, glossary, callable on-demand)
 
 ## Router-Mediated Transactions & eth_getLogs
 Most user interactions go through the **Spectra Router** (flash-mints, flash-redeems, batched mint+LP). The Router is `msg.sender` on underlying contracts, so event `topics[1]` stores the Router address, NOT the user. This is a fundamental EVM constraint, not a bug.

@@ -28,7 +28,7 @@ Any AI agent (Claude, GPT, open-source) that supports MCP can now:
 - **Scan** both Spectra and Pendle for the best curator opportunities with capital-aware sizing and cross-protocol match tagging
 - **Browse** Pendle markets across all Pendle-supported chains (including Pendle-only chains)
 - **Recover** historical on-chain pool activity via `eth_getLogs` when API data has aged out — with dynamic RPC URL support for any chain
-- **Learn** protocol mechanics on-demand via `get_protocol_context` (PT/YT identity, Router batching, minting)
+- **Learn** protocol mechanics on-demand via `get_protocol_context` (PT/YT identity, Router batching, deposit paths, glossary, workflow routing)
 
 The agent doesn't need to understand PT/YT mechanics -- it just calls `scan_opportunities` with its capital size and gets ranked, actionable data. If it needs to understand *why* something works that way, it calls `get_protocol_context`.
 
@@ -145,7 +145,7 @@ The observation coverage layer addresses a deeper problem: even perfect interpre
 | `compare_pendle_spectra` | Side-by-side Pendle vs Spectra yield comparison on overlapping chains (mainnet, base, arbitrum, optimism, sonic, bsc). Maturity-aware matching with configurable tolerance (exact ≤7d, close ≤30d, loose ≤90d). |
 | `scan_curator_opportunities` | Cross-protocol (Spectra + Pendle) capital-aware scanner for MetaVault curators. Price impact at your size, effective APY, Morpho looping (Spectra), cross-protocol match tagging. Supports `compact` mode. |
 | `get_onchain_activity` | Historical on-chain activity via `eth_getLogs` — recovers data when the API has aged out transactions. Supports dynamic `rpc_url` parameter for any chain, `token_decimals` for correct formatting (USDC=6, WBTC=8). Decodes **Curve pool events** (swaps, LP adds/removes) via `pool_address` AND **Spectra PT vault events** (Mint, Redeem, YieldClaimed) via `pt_address`. Both can be provided simultaneously for merged results. |
-| `get_protocol_context` | Returns protocol mechanics reference (PT/YT identity, Router batching, minting). Callable on-demand instead of always in context. |
+| `get_protocol_context` | Returns protocol mechanics reference (PT/YT identity, Router batching, deposit paths, glossary, workflow routing). 8 topics callable on-demand. |
 
 ## Supported Chains
 
@@ -321,7 +321,7 @@ src/
                       data source coverage, activity diversity, boundary markers),
                       Merkl reward display (per-position matched rewards, unmatched/exited rewards)
   tools/            Layer 2: each tool description teaches domain-specific mechanics
-    context.ts      get_protocol_context (Layer 1 protocol mechanics, callable on-demand)
+    context.ts      get_protocol_context (Layer 1 protocol mechanics, deposit paths, glossary, callable on-demand)
     pt.ts           get_pt_details, list_pools, get_best_fixed_yields, compare_yield
     looping.ts      get_looping_strategy
     portfolio.ts    get_portfolio (balance ratio strategy signals, portfolio-level hints, cross-ref nudges,
@@ -342,9 +342,9 @@ src/
     pendle.ts       list_pendle_markets, compare_pendle_spectra (maturity-aware cross-protocol yield comparison)
     curator_scan.ts scan_curator_opportunities (cross-protocol capital-aware scanner for MetaVault curators)
     onchain.ts      get_onchain_activity (historical eth_getLogs, Curve pool + PT vault event decoding, dynamic RPC)
-test.cjs              Integration test suite (388 tests, McpTestClient over stdio)
-test-agent.cjs        Agent reasoning test suite (48 assertions, McpTestClient over stdio)
-AGENT-TESTS.md        35-question subjective test suite with grading rubrics (incl. open emergence + coverage tiers)
+test.cjs              Integration test suite (405 tests, McpTestClient over stdio)
+test-agent.cjs        Agent reasoning test suite (82 assertions, McpTestClient over stdio)
+AGENT-TESTS.md        38-question subjective test suite with grading rubrics (incl. open emergence, coverage, newcomer comprehension tiers)
 EMERGENCE-AUDIT.md    Open Emergence audit — competing branches, observation coverage, anomaly detection gaps
 CODE-REVIEW.md        Full codebase review (bugs, security, code quality, test coverage)
 SECURITY-REVIEW.md    Security-focused review (SSRF, GraphQL injection, dependency vulnerabilities)
@@ -398,30 +398,30 @@ All address parameters are validated (`0x` + 40 hex chars). All API calls have a
 From a source checkout:
 
 ```bash
-# Full integration suite (395 tests, requires network)
+# Full integration suite (405 tests, requires network)
 npm test
 
 # Schema/registration only (98 tests, no network)
 npm run test:offline
 
-# Unit tests (180 tests, no network)
+# Unit tests (191 tests, no network)
 npm run test:unit
 
-# Agent reasoning tests (88 assertions, requires network)
+# Agent reasoning tests (82 assertions, requires network)
 npm run test:agent
 ```
 
 ### Unit Tests (`api.test.ts`, `formatters.test.ts`, `config.test.ts`)
 
-180 tests covering pure-function logic: GraphQL sanitization, Morpho field constants, Merkl reward parsing (pool address extraction from reason keys, wei-to-human conversion, matched/unmatched categorization), Merkl reward formatting, balance formatting, cross-protocol maturity matching (normalizeUnderlyingSymbol, matchByAssetAndMaturity), and configuration validation. No network required.
+191 tests covering pure-function logic: GraphQL sanitization, Morpho field constants, Merkl reward parsing (pool address extraction from reason keys, wei-to-human conversion, matched/unmatched categorization), Merkl reward formatting, balance formatting, cross-protocol maturity matching (normalizeUnderlyingSymbol, matchByAssetAndMaturity), and configuration validation. No network required.
 
 ### Integration Tests (`test.cjs`)
 
-395 tests covering tool registration, schema validation, API responses, on-chain Curve `get_dy()` quoting, cross-pool address scanning, address isolation mode, cross-protocol curator scanning, and malformed-address negative tests. Dynamically discovers pool and PT addresses from the live API, so tests won't go stale when pools mature.
+405 tests covering tool registration, schema validation, API responses, on-chain Curve `get_dy()` quoting, cross-pool address scanning, address isolation mode, cross-protocol curator scanning, and malformed-address negative tests. Dynamically discovers pool and PT addresses from the live API, so tests won't go stale when pools mature.
 
 ### Agent Reasoning Tests (`test-agent.cjs`)
 
-48 assertions across 14 multi-tool workflow tests that verify the "reasoning surface" — can an agent using these tools detect anomalies, cross-reference data, and avoid protocol-mechanic traps? Tests include:
+82 assertions across multi-tool workflow tests that verify the "reasoning surface" — can an agent using these tools detect anomalies, cross-reference data, and avoid protocol-mechanic traps? Tests include:
 
 - **Protocol context completeness** — all topics present, Router batching ambiguities explained, cross-reference guidance included
 - **Anomaly detection** — raw APY vs capital-aware rankings produce different results (intentional divergence)
@@ -440,7 +440,7 @@ npm run test:agent
 
 ### Subjective Test Suite (`AGENT-TESTS.md`)
 
-35 copy-pasteable questions across 10 tiers (basic tool usage → open emergence → reward completeness) with grading rubrics for evaluating LLM agent quality when using the MCP tools. Tier 8 tests "open emergence" — the ability to hold competing interpretations without collapsing to a single narrative. These are marked ⭐⭐ and test the hardest failure mode: premature narrative collapse that feels like good analysis from inside. Designed to be run by spawning subagents and scoring responses manually or with LLM-as-judge.
+38 copy-pasteable questions across 11 tiers (basic tool usage → open emergence → newcomer comprehension) with grading rubrics for evaluating LLM agent quality when using the MCP tools. Tier 8 tests "open emergence" — the ability to hold competing interpretations without collapsing to a single narrative. Tier 11 tests newcomer comprehension — can the agent explain deposit paths, recognize conservative impact estimates, and route to the right scanner? These are designed to be run by spawning subagents and scoring responses manually or with LLM-as-judge.
 
 ## API Reference
 

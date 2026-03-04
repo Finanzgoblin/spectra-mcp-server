@@ -62,6 +62,13 @@ MetaVaults are shown in a separate section (not interleaved with PT rankings) be
 they have different risk profiles: variable APY, curator-managed, auto-rolling positions.
 Set include_metavaults=false to skip MetaVault scanning.
 
+NOTE: This scans Spectra pools only. For broader coverage including Pendle markets,
+use scan_curator_opportunities — it includes both protocols and may surface significantly
+more opportunities, especially at smaller capital sizes.
+
+Effective APY is a conservative lower bound (constant-product impact model). Real Curve
+StableSwap-NG pools are more capital-efficient. Verify top picks with quote_trade().
+
 Use get_looping_strategy to drill into a specific opportunity's leverage details.
 Use get_pool_activity and get_portfolio to investigate trading patterns and positions.
 Use model_metavault_strategy to model MetaVault looping economics.`,
