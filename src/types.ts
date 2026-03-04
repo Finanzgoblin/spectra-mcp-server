@@ -524,6 +524,13 @@ export interface CuratorOpportunity {
   // Conservative MetaVault gross estimate (LP + 30% YT compounding)
   mvGrossEstimatePct?: number;
 
+  // Perp funding rate for delta-neutral strategy (from Hyperliquid)
+  funding?: {
+    perpSymbol: string;          // Hyperliquid symbol matched (e.g., "CRV")
+    annualizedPct: number;       // annualized funding rate (%). Negative = shorts get paid
+    deltaNeutralCostBudget?: number; // break-even borrow + funding adjustment
+  };
+
   // Cross-protocol match info (populated when a counterpart exists on the other protocol)
   matchedWith?: {
     protocol: "spectra" | "pendle";
