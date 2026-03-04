@@ -110,16 +110,16 @@ ${API_NETWORKS.map((k) => `- ${SUPPORTED_CHAINS[k].name} (use "${k}" in queries,
   Formula: annualized discount = (1 - ptPrice) * (365 / daysToMaturity).
 - Effective APY: Implied APY minus annualized entry cost (price impact from the AMM trade).
   IMPORTANT: Scanner estimates use a conservative constant-product model. Real Curve
-  StableSwap-NG pools are more capital-efficient — actual effective APY is typically
-  30-60% higher than shown. Use quote_trade() for exact on-chain quotes before acting.
+  StableSwap-NG pools are significantly more capital-efficient — actual effective APY
+  is higher than shown. Use quote_trade() for exact on-chain quotes before acting.
 - LLTV (Liquidation Loan-to-Value): Morpho's liquidation threshold. NOT the safe operating
   level — loop at 90-95% of LLTV for a safety buffer.
 - Gauge: A SPECTRA emission distributor. veSPECTRA voters direct SPECTRA rewards to specific
   pools. LP APY includes gauge emissions on top of trading fees.
-- Maturity Value: How much underlying 1 PT redeems for at maturity. Often shown as < 1.0
-  (e.g., 0.85). This is NOT a loss — it's the IBT conversion rate. You paid the discounted
-  PT price, so your profit is (maturityValue - ptPrice). If you bought at 0.82 and redeem
-  at 0.85, you earned the spread.
+- Maturity Value: How much underlying 1 PT ultimately converts to at maturity. The path is
+  1 PT → 1 IBT → maturityValue underlying (e.g., 0.85). Values < 1.0 are NOT a loss — this
+  is the IBT-to-underlying conversion rate. Your profit is (maturityValue - ptPrice). If you
+  bought PT at 0.82 and maturity value is 0.85, you earned the 0.03 spread.
 - veSPECTRA: Vote-escrowed SPECTRA token. Locked on Base chain. Boosts LP gauge rewards
   up to 2.5x and directs emissions to specific pools.
 - Flash-mint: Atomic operation via the Router: borrow IBT → mint PT+YT → sell PT on pool →
@@ -142,8 +142,8 @@ ${API_NETWORKS.map((k) => `- ${SUPPORTED_CHAINS[k].name} (use "${k}" in queries,
   many underlying tokens one vault share is worth (this is the IBT conversion rate).
 - Curve StableSwap-NG: The AMM design used for Spectra's PT/IBT pools. Optimized for
   assets that trade near 1:1 — much more capital-efficient than constant-product (x*y=k)
-  AMMs. This is why scanner estimates (which use constant-product math) understate real
-  pool efficiency by 30-60%. The "NG" (next-generation) variant supports dynamic fees.
+  AMMs. This is why scanner estimates (which use constant-product math) significantly
+  understate real pool efficiency. The "NG" (next-generation) variant supports dynamic fees.
 - Boost: The veSPECTRA multiplier on LP gauge rewards. Formula:
   B = min(2.5, 1.5 × (v/V) × (D/d) + 1), where v = your veSPECTRA, V = total supply,
   D = pool TVL, d = your deposit. Full 2.5x when your vote share ≥ your pool share.
@@ -156,8 +156,8 @@ If you're new to Spectra or unsure which tool to start with:
   It scans BOTH Spectra and Pendle across all chains with capital-aware metrics.
   scan_opportunities is Spectra-only and may return far fewer results at smaller capital sizes.
   IMPORTANT: Effective APY in scan results is a conservative lower bound (constant-product
-  impact model). Real Curve StableSwap-NG pools are more capital-efficient — actual effective
-  APY is typically 30-60% higher. Always verify top picks with quote_trade() before acting.
+  impact model). Real Curve StableSwap-NG pools are significantly more capital-efficient —
+  actual effective APY is higher than shown. Always verify top picks with quote_trade().
 
 Goal: "Find the best yield for my capital"
   Start with: scan_opportunities(capital_usd=YOUR_AMOUNT)
