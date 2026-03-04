@@ -29,6 +29,8 @@
 - `src/tools/protocol.ts` — `get_protocol_stats`, `get_supported_chains`
 - `src/tools/ve.ts` — `get_ve_info` (live veSPECTRA data from Base chain)
 - `src/tools/context.ts` — `get_protocol_context` (Layer 1 protocol mechanics, deposit paths, glossary, callable on-demand)
+- `src/tools/capacity.ts` — `get_pool_capacity` (multi-size quote ladder, sweet spot / exhaustion detection)
+- `src/tools/ibt_health.ts` — `check_ibt_health` (ERC-4626 conversion rate, APR composition, pool balance, verdict)
 
 ## Router-Mediated Transactions & eth_getLogs
 Most user interactions go through the **Spectra Router** (flash-mints, flash-redeems, batched mint+LP). The Router is `msg.sender` on underlying contracts, so event `topics[1]` stores the Router address, NOT the user. This is a fundamental EVM constraint, not a bug.

@@ -609,6 +609,79 @@ export async function fetchCurveGetDy(
 }
 
 // =============================================================================
+// On-Chain ERC-4626 Conversion Rate
+// =============================================================================
+
+// ERC-4626 function selector: convertToAssets(uint256)
+const ERC4626_SELECTORS = {
+  convertToAssets: "0xc6e6f592",
+} as const;
+
+/**
+ * Call ERC-4626 convertToAssets(10^decimals) on an IBT contract via eth_call.
+ * Returns the conversion rate as a number (underlying per 1 IBT), or null on failure.
+ *
+ * A healthy IBT typically has a rate >= 1.0 (accruing value over time).
+ * A rate below 1.0 may indicate the IBT has lost value (e.g., bad debt, hack, depeg).
+ *
+ * Best-effort — returns null if the chain has no RPC or the call reverts.
+ */
+export async function fetchIbtConversionRate(
+  ibtAddress: string,
+  decimals: number,
+  chainSlug: string,
+): Promise<number | null> {
+  const network = resolveNetwork(chainSlug);
+  const rpcUrl = CHAIN_RPC_URLS[network];
+  if (!rpcUrl) return null;
+
+  try {
+    // Encode: convertToAssets(10^decimals) — "how much underlying does 1 full IBT token equal?"
+    const oneToken = (10n ** BigInt(decimals)).toString(16).padStart(64, "0");
+    const calldata = ERC4626_SELECTORS.convertToAssets + oneToken;
+
+    const res = await fetchWithRetry(() =>
+      fetch(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "eth_call",
+          params: [
+            { to: ibtAddress, data: calldata },
+            "latest",
+          ],
+        }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      })
+    );
+
+    if (!res.ok) return null;
+
+    let json: any;
+    try {
+      json = await res.json();
+    } catch {
+      return null;
+    }
+
+    if (json.error) return null;
+
+    const hex: string = json.result;
+    if (!hex || hex === "0x" || hex === "0x0") return null;
+
+    const raw = BigInt(hex);
+    const divisor = 10n ** BigInt(decimals);
+    const intPart = raw / divisor;
+    const fracPart = raw % divisor;
+    return Number(intPart) + Number(fracPart) / Number(divisor);
+  } catch {
+    return null; // Best-effort — graceful degradation
+  }
+}
+
+// =============================================================================
 // MetaVault API
 // =============================================================================
 
