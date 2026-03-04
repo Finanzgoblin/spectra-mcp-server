@@ -331,8 +331,10 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
                       morphoBlock.hypotheticalLoops = bestHypoLoop;
                       morphoBlock.hypotheticalLeverage = bestHypoLev;
                       morphoBlock.hypotheticalLoopNetApy = bestHypoNet;
+                      // Use impliedApy (not effectiveApy) — curator controls liquidity depth,
+                      // so entry impact is a design choice, not a given constraint
                       morphoBlock.hypotheticalBreakEvenBorrow = bestHypoLev > 1
-                        ? (opp.effectiveApy * bestHypoLev) / (bestHypoLev - 1)
+                        ? (opp.impliedApy * bestHypoLev) / (bestHypoLev - 1)
                         : undefined;
                     }
                   }
