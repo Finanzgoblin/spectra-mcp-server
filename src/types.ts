@@ -512,6 +512,13 @@ export interface CuratorOpportunity {
     availableLiquidityUsd?: number;
     utilization?: number;
     breakEvenBorrowRate?: number;
+    // Hypothetical loop projections for PTs without a Morpho market (creation signal)
+    hypotheticalLoopNetApy?: number;   // net APY at assumed LLTV + borrow
+    hypotheticalLoops?: number;        // optimal loops at assumed params
+    hypotheticalLeverage?: number;
+    hypotheticalBreakEvenBorrow?: number; // max borrow rate before loop goes negative
+    hypotheticalLltv?: number;         // assumed LLTV used for projection
+    hypotheticalBorrowRate?: number;   // assumed borrow rate used
   };
 
   // Conservative MetaVault gross estimate (LP + 30% YT compounding)

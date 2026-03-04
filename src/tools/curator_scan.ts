@@ -305,7 +305,39 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
                 const opp = opportunities[entry.idx];
 
                 if (!market) {
-                  opp.morpho = { marketExists: false };
+                  // No Morpho market — compute hypothetical loop as creation signal
+                  const hypoLltv = 0.86;  // standard LLTV assumption
+                  const hypoBorrow = 3;   // conservative borrow rate assumption (%)
+                  const morphoBlock: typeof opp.morpho = { marketExists: false };
+
+                  if (opp.impliedApy > 0) {
+                    let bestHypoNet = opp.impliedApy;
+                    let bestHypoLoop = 0;
+                    let bestHypoLev = 1;
+
+                    for (let i = 1; i <= 5; i++) {
+                      const lev = cumulativeLeverageAtLoop(hypoLltv, i);
+                      const net = opp.impliedApy * lev - hypoBorrow * (lev - 1);
+                      if (net > bestHypoNet) {
+                        bestHypoNet = net;
+                        bestHypoLoop = i;
+                        bestHypoLev = lev;
+                      }
+                    }
+
+                    if (bestHypoLoop > 0) {
+                      morphoBlock.hypotheticalLltv = hypoLltv;
+                      morphoBlock.hypotheticalBorrowRate = hypoBorrow;
+                      morphoBlock.hypotheticalLoops = bestHypoLoop;
+                      morphoBlock.hypotheticalLeverage = bestHypoLev;
+                      morphoBlock.hypotheticalLoopNetApy = bestHypoNet;
+                      morphoBlock.hypotheticalBreakEvenBorrow = bestHypoLev > 1
+                        ? (opp.effectiveApy * bestHypoLev) / (bestHypoLev - 1)
+                        : undefined;
+                    }
+                  }
+
+                  opp.morpho = morphoBlock;
                   continue;
                 }
 
