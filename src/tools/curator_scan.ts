@@ -21,7 +21,7 @@ import {
   resolveNetwork,
 } from "../config.js";
 import type { CuratorOpportunity } from "../types.js";
-import { scanAllChainPools, scanAllPendleMarkets, findMorphoMarketsForPts, fetchVeTotalSupply } from "../api.js";
+import { scanAllChainPools, scanAllPendleMarkets, findMorphoMarketsForPts, fetchVeTotalSupply, fetchHyperliquidFunding, resolveHyperliquidSymbol } from "../api.js";
 import {
   formatPct,
   formatUsd,
@@ -434,6 +434,39 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
           if (opp.variableApr > opp.impliedApy * 2 && opp.impliedApy > 0) {
             opp.warnings.push("Variable APR 2x+ implied — consider YT exposure over PT");
           }
+        }
+
+        // ================================================================
+        // PHASE 3.6: Hyperliquid funding rates (delta-neutral signals)
+        // ================================================================
+        // Best-effort: fetch funding rates in parallel, match to underlyings.
+        // Stablecoins don't need hedging — only non-stable underlyings get funding data.
+        try {
+          const fundingMap = await fetchHyperliquidFunding();
+          if (fundingMap.size > 0) {
+            const STABLES = new Set(["USDC", "USDT", "DAI", "FRAX", "GHO", "LUSD", "AUSD", "NUSD", "SNUSD", "SUSD", "USP", "USDU", "SUSDU", "CUSD", "REUSD", "USDAI", "APYUSD", "COREUSD", "COREUSDC", "VBUSDC", "VBUSDT"]);
+            for (const opp of opportunities) {
+              if (STABLES.has(opp.underlying.toUpperCase())) continue;
+              const symbol = resolveHyperliquidSymbol(opp.underlying);
+              if (!symbol) continue;
+              const annualized = fundingMap.get(symbol);
+              if (annualized == null) continue;
+
+              // For shorts: you PAY positive funding, RECEIVE negative funding
+              // Delta-neutral cost budget = break-even borrow rate adjusted for funding
+              const breakEven = opp.morpho?.breakEvenBorrowRate
+                ?? opp.morpho?.hypotheticalBreakEvenBorrow;
+              opp.funding = {
+                perpSymbol: symbol,
+                annualizedPct: annualized,
+                deltaNeutralCostBudget: breakEven != null
+                  ? breakEven - annualized  // subtract funding cost (negative funding adds budget)
+                  : undefined,
+              };
+            }
+          }
+        } catch {
+          // Non-fatal: funding data is best-effort
         }
 
         // ================================================================

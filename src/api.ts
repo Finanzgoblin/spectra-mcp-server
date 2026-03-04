@@ -1256,3 +1256,84 @@ export function parseMerklRewards(
     unmatched: Array.from(unmatchedByToken.values()).filter(r => r.unclaimed > 0 || r.pending > 0),
   };
 }
+
+// =============================================================================
+// Hyperliquid Funding Rates (free, no auth)
+// =============================================================================
+
+const HYPERLIQUID_API = "https://api.hyperliquid.xyz/info";
+const FUNDING_CACHE_TTL_MS = 60_000; // 1 minute cache
+let _fundingCache: { data: Map<string, number>; expiresAt: number } | null = null;
+
+/**
+ * Fetch current hourly funding rates for all Hyperliquid perp assets.
+ * Returns Map<symbol, annualizedFundingPct> (e.g. "CRV" → 10.95).
+ * Negative = shorts get paid (adds to delta-neutral yield).
+ * Caches for 60s. Best-effort — returns empty map on failure.
+ */
+export async function fetchHyperliquidFunding(): Promise<Map<string, number>> {
+  if (_fundingCache && Date.now() < _fundingCache.expiresAt) {
+    return _fundingCache.data;
+  }
+
+  try {
+    const resp = await fetch(HYPERLIQUID_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "metaAndAssetCtxs" }),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!resp.ok) return _fundingCache?.data ?? new Map();
+
+    const raw = await resp.json() as [{ universe: { name: string; isDelisted?: boolean }[] }, { funding: string }[]];
+    const universe = raw[0].universe;
+    const ctxs = raw[1];
+    const result = new Map<string, number>();
+
+    for (let i = 0; i < universe.length; i++) {
+      if (universe[i].isDelisted) continue;
+      const hourlyRate = parseFloat(ctxs[i].funding);
+      if (isNaN(hourlyRate)) continue;
+      // Annualize: hourly rate * 24 * 365 * 100 (to percent)
+      result.set(universe[i].name.toUpperCase(), hourlyRate * 24 * 365 * 100);
+    }
+
+    _fundingCache = { data: result, expiresAt: Date.now() + FUNDING_CACHE_TTL_MS };
+    return result;
+  } catch {
+    return _fundingCache?.data ?? new Map();
+  }
+}
+
+/**
+ * Known mappings from DeFi yield token underlyings to Hyperliquid perp symbols.
+ * Best-effort — covers common patterns. Returns null if no match.
+ */
+export function resolveHyperliquidSymbol(underlying: string): string | null {
+  const u = underlying.toUpperCase();
+
+  // Direct match attempts
+  const KNOWN_MAP: Record<string, string> = {
+    "BTC.B": "BTC", "WBTC": "BTC", "TBTC": "BTC", "CBBTC": "BTC",
+    "FXRP": "XRP", "WFLR": "FLR",
+    "WETH": "ETH", "STETH": "ETH", "WSTETH": "ETH", "RETH": "ETH", "CBETH": "ETH", "EETH": "ETH",
+    "SDCRV": "CRV", "ASDCRV": "CRV",
+    "SKAITO": "KAITO",
+    "STK-EPENDLE": "PENDLE",
+    "SAVAX": "AVAX", "WAVAX": "AVAX",
+    "WSOL": "SOL",
+    "WBNB": "BNB",
+  };
+
+  if (KNOWN_MAP[u]) return KNOWN_MAP[u];
+
+  // Strip common DeFi prefixes and try again
+  const stripped = u
+    .replace(/^(SW-|YV-|YVV|PT-|YT-|A-|S-|W-|ST-|C-|R-)/, "")
+    .replace(/^(SW|YV|YVV|MEV)/, "");
+  if (KNOWN_MAP[stripped]) return KNOWN_MAP[stripped];
+
+  // If the underlying IS a Hyperliquid symbol (e.g., "BTC", "ETH")
+  // The caller checks against the fetched symbol set
+  return stripped || null;
+}

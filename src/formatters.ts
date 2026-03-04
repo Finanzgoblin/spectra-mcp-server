@@ -3130,6 +3130,10 @@ export function formatCuratorOpportunityCompact(opp: CuratorOpportunity, rank: n
       parts.push(`No Mkt`);
     }
   }
+  if (opp.funding) {
+    const sign = opp.funding.annualizedPct >= 0 ? "-" : "+";
+    parts.push(`${opp.funding.perpSymbol} ${sign}${formatPct(Math.abs(opp.funding.annualizedPct))}/yr`);
+  }
   const matchTag = opp.matchedWith
     ? ` ↔ ${opp.matchedWith.protocol === "spectra" ? "[S]" : "[P]"} ${formatPct(opp.matchedWith.impliedApy)} (${opp.matchedWith.matchQuality})`
     : "";
@@ -3194,6 +3198,18 @@ export function formatCuratorOpportunity(opp: CuratorOpportunity, rank: number):
           lines.push(`      Break-even borrow: ${formatPct(opp.morpho.hypotheticalBreakEvenBorrow)} — room for supply-side revenue`);
         }
       }
+    }
+  }
+
+  // Delta-neutral hedge (Hyperliquid funding)
+  if (opp.funding) {
+    const fundingDir = opp.funding.annualizedPct >= 0 ? "pay" : "receive";
+    const fundingAbs = Math.abs(opp.funding.annualizedPct);
+    lines.push(``);
+    lines.push(`    Hedge (${opp.funding.perpSymbol} perp):`);
+    lines.push(`      Funding: ${fundingDir} ${formatPct(fundingAbs)}/yr | Short to delta-neutralize`);
+    if (opp.funding.deltaNeutralCostBudget != null) {
+      lines.push(`      DN cost budget: ${formatPct(opp.funding.deltaNeutralCostBudget)} (break-even ${opp.funding.annualizedPct >= 0 ? "minus" : "plus"} funding)`);
     }
   }
 
