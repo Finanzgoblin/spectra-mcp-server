@@ -6,9 +6,10 @@
 - MCP server process must restart after rebuild
 - Worktrees are under `.claude/worktrees/`
 - Source code in `src/`, tools in `src/tools/`, shared helpers in `src/api.ts`, `src/formatters.ts`, `src/config.ts`, `src/types.ts`
-- Tests: `npm test` (405 integration tests), `npm run test:unit` (191 unit tests), `npm run test:agent` (82 agent reasoning assertions)
+- Tests: `npm test` (405 integration tests), `npm run test:unit` (191 unit tests), `npm run test:agent` (82 agent reasoning assertions), `npm run test:subjective` (38 LLM-graded questions)
 - Agent test suite in `test-agent.cjs` — multi-tool workflow validation (cross-tool consistency, Router mechanics, anomaly detection)
-- Subjective test suite in `AGENT-TESTS.md` — 38 questions with grading rubrics for LLM evaluation (incl. open emergence, coverage, newcomer comprehension tiers)
+- Subjective test harness in `test-subjective.cjs` — automated: parses AGENT-TESTS.md, calls MCP tools, sends to Claude for answering + grading. Requires `ANTHROPIC_API_KEY`. Supports `--tier N`, `--question N`, `--dry-run`
+- Subjective rubrics in `AGENT-TESTS.md` — 38 questions across 11 tiers (open emergence, coverage, newcomer comprehension)
 - TypeScript project — check types with `npx tsc --noEmit`
 
 ## Key Tool Files
