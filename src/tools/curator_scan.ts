@@ -302,11 +302,30 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
 
               for (const entry of ptsByChain[chain]) {
                 const market = markets.get(entry.addr.toLowerCase());
-                if (!market) continue;
-
                 const opp = opportunities[entry.idx];
+
+                if (!market) {
+                  opp.morpho = { marketExists: false };
+                  continue;
+                }
+
                 const lltv = formatMorphoLltv(market.lltv);
                 const borrowRatePct = (market.state?.borrowApy || 0) * 100;
+                const supplyApyPct = (market.state?.supplyApy || 0) * 100;
+                const availableLiquidityUsd = market.state?.liquidityAssetsUsd || 0;
+                const utilization = market.state?.utilization || 0;
+
+                // Populate morpho block for all markets (even if lltv is bad)
+                opp.morpho = {
+                  marketExists: true,
+                  marketKey: market.uniqueKey,
+                  lltv: lltv > 0 ? lltv : undefined,
+                  supplyApyPct,
+                  borrowApyPct: borrowRatePct,
+                  availableLiquidityUsd,
+                  utilization,
+                };
+
                 if (lltv <= 0) continue;
 
                 const maxLoops = 5;
@@ -342,16 +361,44 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
                     optimalNetApy: bestNet,
                     optimalEffectiveNetApy: effectiveNetApy,
                     cumulativeEntryImpactPct: cumImpactPct,
-                    morphoLiquidityUsd: market.state?.liquidityAssetsUsd || 0,
+                    morphoLiquidityUsd: availableLiquidityUsd,
                   };
+
+                  // Break-even borrow rate: max borrow before loop goes negative
+                  opp.morpho.breakEvenBorrowRate = bestLev > 1
+                    ? (opp.effectiveApy * bestLev) / (bestLev - 1)
+                    : undefined;
+
                   // Looping only becomes best strategy if it beats both LP and PT spot
                   if (effectiveNetApy > opp.sortApy) {
                     opp.sortApy = effectiveNetApy;
                     opp.bestStrategy = "pt_loop";
                   }
                 }
+
+                // Morpho warnings
+                if (utilization > 0.9) {
+                  opp.warnings.push("Morpho utilization >90% — limited borrow capacity");
+                }
+                if (availableLiquidityUsd > 0 && availableLiquidityUsd < capital_usd * 0.5) {
+                  opp.warnings.push("Morpho liquidity may not support full loop at this capital size");
+                }
               }
             }
+          }
+        }
+
+        // ================================================================
+        // PHASE 3.5: MetaVault gross estimate
+        // ================================================================
+        // Conservative estimate: LP APY + 30% of variable APR (YT compounding)
+        for (const opp of opportunities) {
+          if (opp.lpApy > 0 && opp.variableApr > 0) {
+            opp.mvGrossEstimatePct = opp.lpApy + opp.variableApr * 0.3;
+          }
+          // YT exposure signal: variable APR significantly exceeds implied fixed rate
+          if (opp.variableApr > opp.impliedApy * 2 && opp.impliedApy > 0) {
+            opp.warnings.push("Variable APR 2x+ implied — consider YT exposure over PT");
           }
         }
 

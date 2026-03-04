@@ -3109,39 +3109,47 @@ export function matchByAssetAndMaturity(
 // Curator Opportunity Formatters
 // =============================================================================
 
-/** One-liner for compact curator scan output. */
+/** One-liner for compact curator scan output — shows all strategy building blocks. */
 export function formatCuratorOpportunityCompact(opp: CuratorOpportunity, rank: number): string {
   const proto = opp.protocol === "spectra" ? "[S]" : "[P]";
-  const bestLabel = opp.bestStrategy === "lp" ? `LP ${formatPct(opp.lpApy)}`
-    : opp.bestStrategy === "pt_loop" && opp.looping ? `Loop ${formatPct(opp.looping.optimalEffectiveNetApy)}`
-    : `PT ${formatPct(opp.effectiveApy)}`;
-  const loopTag = opp.looping ? ` | Loop ${formatPct(opp.looping.optimalNetApy)}` : "";
+  const parts: string[] = [];
+  parts.push(`PT ${formatPct(opp.effectiveApy)}`);
+  parts.push(`LP ${formatPct(opp.lpApy)}`);
+  if (opp.looping) {
+    parts.push(`Loop ${formatPct(opp.looping.optimalEffectiveNetApy)}@${opp.looping.optimalLoops}x`);
+  }
+  if (opp.mvGrossEstimatePct != null) {
+    parts.push(`MV~${formatPct(opp.mvGrossEstimatePct)}`);
+  }
+  if (opp.morpho) {
+    if (opp.morpho.marketExists) {
+      parts.push(`Mkt: ${formatUsd(opp.morpho.availableLiquidityUsd || 0)}/${formatPct(opp.morpho.supplyApyPct || 0)}/${Math.round((opp.morpho.utilization || 0) * 100)}%`);
+    } else {
+      parts.push(`No Mkt`);
+    }
+  }
   const matchTag = opp.matchedWith
-    ? ` ↔ ${opp.matchedWith.protocol === "spectra" ? "[S]" : "[P]"} ${formatPct(opp.matchedWith.impliedApy)} (${opp.matchedWith.matchQuality}, ${opp.matchedWith.maturityGapDays}d gap)`
+    ? ` ↔ ${opp.matchedWith.protocol === "spectra" ? "[S]" : "[P]"} ${formatPct(opp.matchedWith.impliedApy)} (${opp.matchedWith.matchQuality})`
     : "";
   const warnTag = opp.warnings.length > 0 ? ` ⚠${opp.warnings.length}` : "";
-  return `  #${rank} ${proto} ${opp.name} | ${opp.chain} | Best: ${bestLabel} | Impl ${formatPct(opp.impliedApy)} | Eff ${formatPct(opp.effectiveApy)}${loopTag} | LP ${formatPct(opp.lpApy)} | TVL ${formatUsd(opp.tvlUsd)} | ${opp.daysToMaturity}d${matchTag}${warnTag}`;
+  return `  #${rank} ${proto} ${opp.name} | ${opp.chain} | ${parts.join(" | ")} | TVL ${formatUsd(opp.tvlUsd)} | ${opp.daysToMaturity}d${matchTag}${warnTag}`;
 }
 
-/** Full detail for a single curator opportunity. */
+/** Full detail for a single curator opportunity — shows Strategy Space building blocks. */
 export function formatCuratorOpportunity(opp: CuratorOpportunity, rank: number): string {
   const proto = opp.protocol === "spectra" ? "Spectra" : "Pendle";
   const lines: string[] = [];
-  const bestLabel = opp.bestStrategy === "lp" ? `LP ${formatPct(opp.lpApy)}`
-    : opp.bestStrategy === "pt_loop" && opp.looping ? `Loop ${formatPct(opp.looping.optimalEffectiveNetApy)}`
-    : `PT Spot ${formatPct(opp.effectiveApy)}`;
-  lines.push(`  #${rank} [${proto}] ${opp.name} — Best: ${bestLabel}`);
-  lines.push(`    Chain: ${opp.chain} | Maturity: ${new Date(opp.maturityTimestamp * 1000).toISOString().slice(0, 10)} (${opp.daysToMaturity}d)`);
-  lines.push(`    Implied APY: ${formatPct(opp.impliedApy)} | Effective APY: ${formatPct(opp.effectiveApy)} | Variable APR: ${formatPct(opp.variableApr)}`);
-  lines.push(`    LP APY: ${formatPct(opp.lpApy)} | TVL: ${formatUsd(opp.tvlUsd)} | Pool Liquidity: ${formatUsd(opp.poolLiquidityUsd)}`);
-  lines.push(`    Entry Impact: ${formatPct(opp.entryImpactPct)} | Capacity: ${formatUsd(opp.capacityUsd)}`);
 
-  // Spectra-specific: looping
-  if (opp.looping) {
-    lines.push(`    Morpho Looping: ${opp.looping.optimalLoops} loops @ ${formatPct(opp.looping.optimalNetApy)} net APY (${opp.looping.optimalLeverage.toFixed(2)}x leverage, borrow ${formatPct(opp.looping.borrowRatePct)})`);
-  }
+  lines.push(`  #${rank} [${proto}] ${opp.name} — ${opp.chain}`);
+  lines.push(`    Underlying: ${opp.underlying} | Maturity: ${new Date(opp.maturityTimestamp * 1000).toISOString().slice(0, 10)} (${opp.daysToMaturity}d)`);
+  lines.push(`    TVL: ${formatUsd(opp.tvlUsd)} | Liquidity: ${formatUsd(opp.poolLiquidityUsd)} | Entry Impact: ${formatPct(opp.entryImpactPct)} | Capacity: ${formatUsd(opp.capacityUsd)}`);
 
-  // Spectra-specific: LP breakdown
+  // Strategy Space — all building blocks, no single "best" collapsed
+  lines.push(``);
+  lines.push(`    Strategy Space:`);
+  lines.push(`      PT spot:  ${formatPct(opp.effectiveApy)} effective (${formatPct(opp.impliedApy)} implied - ${formatPct(opp.entryImpactPct > 0 && opp.daysToMaturity > 0 ? opp.entryImpactPct * (365 / opp.daysToMaturity) : opp.entryImpactPct)} entry)`);
+
+  // LP line with breakdown if available
   if (opp.lpApyBreakdown) {
     const bd = opp.lpApyBreakdown;
     const parts: string[] = [];
@@ -3149,7 +3157,36 @@ export function formatCuratorOpportunity(opp: CuratorOpportunity, rank: number):
     if (bd.pt) parts.push(`PT ${formatPct(bd.pt)}`);
     if (bd.ibt) parts.push(`IBT ${formatPct(bd.ibt)}`);
     for (const [k, v] of Object.entries(bd.rewards)) parts.push(`${k} ${formatPct(v)}`);
-    if (parts.length > 0) lines.push(`    LP Breakdown: ${parts.join(" + ")}`);
+    lines.push(`      LP:       ${formatPct(opp.lpApy)}${parts.length > 0 ? ` (${parts.join(" + ")})` : ""}`);
+  } else {
+    lines.push(`      LP:       ${formatPct(opp.lpApy)}`);
+  }
+
+  if (opp.looping) {
+    lines.push(`      PT loop:  ${formatPct(opp.looping.optimalEffectiveNetApy)} net @ ${opp.looping.optimalLoops}x (LLTV ${formatPct((opp.looping.lltv || 0) * 100)}, borrow ${formatPct(opp.looping.borrowRatePct)})`);
+  }
+
+  if (opp.mvGrossEstimatePct != null) {
+    lines.push(`      MV est:   ~${formatPct(opp.mvGrossEstimatePct)} gross (LP + 30% YT compound)`);
+  }
+
+  lines.push(`      Variable: ${formatPct(opp.variableApr)} APR`);
+
+  // Morpho Market section
+  lines.push(``);
+  if (opp.morpho) {
+    if (opp.morpho.marketExists) {
+      lines.push(`    Morpho Market:`);
+      lines.push(`      Available: ${formatUsd(opp.morpho.availableLiquidityUsd || 0)} | Supply APY: ${formatPct(opp.morpho.supplyApyPct || 0)} | Util: ${Math.round((opp.morpho.utilization || 0) * 100)}%`);
+      if (opp.morpho.breakEvenBorrowRate != null) {
+        lines.push(`      Break-even borrow: ${formatPct(opp.morpho.breakEvenBorrowRate)}`);
+      }
+      if (opp.morpho.marketKey) {
+        lines.push(`      Key: ${opp.morpho.marketKey.slice(0, 10)}...`);
+      }
+    } else {
+      lines.push(`    Morpho Market: none — creation opportunity`);
+    }
   }
 
   // Cross-protocol match
@@ -3200,6 +3237,19 @@ export function formatCuratorScanResults(
       lines.push(formatCuratorOpportunity(opps[i], i + 1));
       if (i < opps.length - 1) lines.push(``);
     }
+  }
+
+  // Maturity Pipelines — group by expiry windows for rollover planning
+  if (opps.length > 1) {
+    const near = opps.map((o, i) => ({ o, rank: i + 1 })).filter(x => x.o.daysToMaturity <= 30);
+    const mid = opps.map((o, i) => ({ o, rank: i + 1 })).filter(x => x.o.daysToMaturity > 30 && x.o.daysToMaturity <= 90);
+    const far = opps.map((o, i) => ({ o, rank: i + 1 })).filter(x => x.o.daysToMaturity > 90);
+
+    lines.push(``);
+    lines.push(`--- Maturity Pipelines ---`);
+    if (near.length > 0) lines.push(`  <30d:   ${near.map(x => `#${x.rank} ${x.o.name} (${x.o.daysToMaturity}d)`).join(", ")}`);
+    if (mid.length > 0) lines.push(`  30-90d: ${mid.map(x => `#${x.rank} ${x.o.name} (${x.o.daysToMaturity}d)`).join(", ")}`);
+    if (far.length > 0) lines.push(`  >90d:   ${far.map(x => `#${x.rank} ${x.o.name} (${x.o.daysToMaturity}d)`).join(", ")}`);
   }
 
   // Next steps
