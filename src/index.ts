@@ -56,6 +56,8 @@ import { register as registerContext } from "./tools/context.js";
 import { register as registerPendle } from "./tools/pendle.js";
 import { register as registerCuratorScan } from "./tools/curator_scan.js";
 import { register as registerOnchain } from "./tools/onchain.js";
+import { register as registerCapacity } from "./tools/capacity.js";
+import { register as registerIbtHealth } from "./tools/ibt_health.js";
 
 // =============================================================================
 // MCP Server Setup
@@ -83,6 +85,8 @@ registerContext(server);
 registerPendle(server);
 registerCuratorScan(server);
 registerOnchain(server);
+registerCapacity(server);
+registerIbtHealth(server);
 
 // =============================================================================
 // Resources: Protocol context for agents

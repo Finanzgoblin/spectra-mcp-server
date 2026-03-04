@@ -179,9 +179,11 @@ Goal: "Analyze a wallet's strategy"
 
 Goal: "Evaluate a specific opportunity in depth"
   Start with: get_pt_details(chain, pt_address) for base data
+  Then: check_ibt_health(chain, pt_address) to verify the underlying IBT is sound
   Then: compare_yield(chain, pt_address) for fixed vs variable spread
+  Then: get_pool_capacity(chain, pt_address) to see depth at your capital size
   Then: get_looping_strategy(chain, pt_address) if Morpho market exists
-  Then: quote_trade(chain, pt_address, amount, side) for entry cost
+  Then: quote_trade(chain, pt_address, amount, side) for exact entry cost
   Then: simulate_portfolio_after_trade(...) to preview the result
 
 Goal: "Find YT mispricing"
@@ -218,12 +220,22 @@ Goal: "Compare Spectra vs Pendle on a specific chain"
   Matching is by underlying asset + maturity proximity (exact ≤7d, close ≤30d, loose ≤90d).
   Pendle-only chains (${Object.keys(PENDLE_CHAIN_IDS).filter((k) => !SUPPORTED_CHAINS[k]).map((k) => PENDLE_CHAIN_NAMES[k]).join(", ")}) represent Spectra expansion opportunities.
 
+Goal: "Assess pool depth and IBT safety before deploying"
+  Start with: check_ibt_health(chain, pt_address) — multi-signal IBT verdict
+  Then: get_pool_capacity(chain, pt_address) — capacity curve across capital tiers
+  check_ibt_health verifies: conversion rate, APR sustainability, pool balance, liquidity.
+  get_pool_capacity shows: impact & effective APY at geometric capital tiers, sweet spot, exhaustion.
+
 Four discovery tools and when to use each:
   get_best_fixed_yields — headline rates across all chains (no capital adjustment)
   scan_opportunities — capital-aware effective APY with Morpho looping (Spectra-only)
   scan_curator_opportunities — cross-protocol (Spectra + Pendle) capital-aware scanner
   scan_yt_arbitrage — YT spread opportunities (rate conviction bets)
-  These four intentionally produce different rankings. The disagreement is a feature.`,
+  These four intentionally produce different rankings. The disagreement is a feature.
+
+Two due-diligence tools for before-you-deploy checks:
+  check_ibt_health — IBT conversion rate, APR composition, protocol recognition, liquidity
+  get_pool_capacity — multi-size quote ladder showing impact degradation at scale`,
 };
 
 const ALL_TOPIC_NAMES = Object.keys(TOPICS);
