@@ -502,6 +502,21 @@ export interface CuratorOpportunity {
   looping?: ScanOpportunity["looping"];
   lpApyBreakdown?: ScanOpportunity["lpApyBreakdown"];
 
+  // Morpho supply-side economics (populated for all PTs on Morpho-capable chains)
+  morpho?: {
+    marketExists: boolean;
+    marketKey?: string;
+    lltv?: number;
+    supplyApyPct?: number;
+    borrowApyPct?: number;
+    availableLiquidityUsd?: number;
+    utilization?: number;
+    breakEvenBorrowRate?: number;
+  };
+
+  // Conservative MetaVault gross estimate (LP + 30% YT compounding)
+  mvGrossEstimatePct?: number;
+
   // Cross-protocol match info (populated when a counterpart exists on the other protocol)
   matchedWith?: {
     protocol: "spectra" | "pendle";
