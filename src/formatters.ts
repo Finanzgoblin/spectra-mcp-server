@@ -3124,6 +3124,8 @@ export function formatCuratorOpportunityCompact(opp: CuratorOpportunity, rank: n
   if (opp.morpho) {
     if (opp.morpho.marketExists) {
       parts.push(`Mkt: ${formatUsd(opp.morpho.availableLiquidityUsd || 0)}/${formatPct(opp.morpho.supplyApyPct || 0)}/${Math.round((opp.morpho.utilization || 0) * 100)}%`);
+    } else if (opp.morpho.hypotheticalLoopNetApy != null) {
+      parts.push(`No Mkt (→Loop ~${formatPct(opp.morpho.hypotheticalLoopNetApy)}@${opp.morpho.hypotheticalLoops}x, BE ${formatPct(opp.morpho.hypotheticalBreakEvenBorrow || 0)})`);
     } else {
       parts.push(`No Mkt`);
     }
@@ -3186,6 +3188,12 @@ export function formatCuratorOpportunity(opp: CuratorOpportunity, rank: number):
       }
     } else {
       lines.push(`    Morpho Market: none — creation opportunity`);
+      if (opp.morpho.hypotheticalLoopNetApy != null && opp.morpho.hypotheticalLoops) {
+        lines.push(`      If created (LLTV ${Math.round((opp.morpho.hypotheticalLltv || 0.86) * 100)}%, ~${formatPct(opp.morpho.hypotheticalBorrowRate || 3)} borrow): Loop ~${formatPct(opp.morpho.hypotheticalLoopNetApy)} net @${opp.morpho.hypotheticalLoops}x`);
+        if (opp.morpho.hypotheticalBreakEvenBorrow != null) {
+          lines.push(`      Break-even borrow: ${formatPct(opp.morpho.hypotheticalBreakEvenBorrow)} — room for supply-side revenue`);
+        }
+      }
     }
   }
 
