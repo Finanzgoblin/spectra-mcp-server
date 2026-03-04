@@ -2,7 +2,7 @@
 
 Makes [Spectra Finance](https://spectra.finance) discoverable and usable by AI agents via the [Model Context Protocol](https://modelcontextprotocol.io).
 
-26 tools · 10 chains · read-only · on-chain Curve quoting · historical eth_getLogs · cross-protocol Pendle comparison · zero web3 library dependencies
+29 tools · 10 chains · read-only · on-chain Curve quoting · ERC-4626 health checks · yield curve term structure · historical eth_getLogs · cross-protocol Pendle comparison · zero web3 library dependencies
 
 ## What This Does
 
@@ -27,6 +27,9 @@ Any AI agent (Claude, GPT, open-source) that supports MCP can now:
 - **Compare** Spectra vs Pendle yield opportunities side-by-side with maturity-aware matching on overlapping chains
 - **Scan** both Spectra and Pendle for the best curator opportunities with capital-aware sizing and cross-protocol match tagging
 - **Browse** Pendle markets across all Pendle-supported chains (including Pendle-only chains)
+- **Assess** pool depth with multi-size capacity curves — quote PT trades at geometric capital tiers ($1K→$1M) to find the sweet spot and exhaustion point
+- **Verify** IBT health before deploying — on-chain ERC-4626 conversion rate, APR sustainability (organic vs incentive), pool balance, protocol recognition, liquidity
+- **Visualize** yield curves (term structure) for any underlying across all chains — all maturities sorted chronologically with curve shape analysis
 - **Recover** historical on-chain pool activity via `eth_getLogs` when API data has aged out — with dynamic RPC URL support for any chain
 - **Learn** protocol mechanics on-demand via `get_protocol_context` (PT/YT identity, Router batching, deposit paths, glossary, workflow routing)
 
@@ -145,6 +148,9 @@ The observation coverage layer addresses a deeper problem: even perfect interpre
 | `compare_pendle_spectra` | Side-by-side Pendle vs Spectra yield comparison on overlapping chains (mainnet, base, arbitrum, optimism, sonic, bsc). Maturity-aware matching with configurable tolerance (exact ≤7d, close ≤30d, loose ≤90d). |
 | `scan_curator_opportunities` | Cross-protocol (Spectra + Pendle) capital-aware scanner for MetaVault curators. Price impact at your size, effective APY, Morpho looping (Spectra), cross-protocol match tagging. Supports `compact` mode. |
 | `get_onchain_activity` | Historical on-chain activity via `eth_getLogs` — recovers data when the API has aged out transactions. Supports dynamic `rpc_url` parameter for any chain, `token_decimals` for correct formatting (USDC=6, WBTC=8). Decodes **Curve pool events** (swaps, LP adds/removes) via `pool_address` AND **Spectra PT vault events** (Mint, Redeem, YieldClaimed) via `pt_address`. Both can be provided simultaneously for merged results. |
+| `get_pool_capacity` | Multi-size capacity curve — quotes PT trades at geometric capital tiers to show price impact and effective APY degradation. Identifies sweet spot and exhaustion point. On-chain Curve quotes. |
+| `check_ibt_health` | Multi-signal IBT health assessment — on-chain ERC-4626 conversion rate, APR composition (organic vs incentive), pool balance ratio, protocol recognition, liquidity level. Returns HEALTHY/CAUTION/WARNING verdict. |
+| `get_yield_curve` | Term structure for a given underlying across all chains. All maturities sorted chronologically with implied APY, TVL, liquidity. Curve shape analysis (normal/inverted/flat), steepest segment, cross-chain pairs. |
 | `get_protocol_context` | Returns protocol mechanics reference (PT/YT identity, Router batching, deposit paths, glossary, workflow routing). 8 topics callable on-demand. |
 
 ## Supported Chains
@@ -266,6 +272,10 @@ Once connected, you can ask Claude things like:
 - "Compare Spectra vs Pendle yields on Base -- which protocol offers better rates for USDC?"
 - "I'm curating a MetaVault with $500K -- scan both Spectra and Pendle for the best opportunities"
 - "Show me all active Pendle markets on Arbitrum sorted by TVL"
+- "How much capital can I put into this pool before the price impact kills my yield?"
+- "Is the IBT behind this PT healthy? Check the conversion rate and APR composition"
+- "Show me the USDC yield curve -- what rates are available at each maturity?"
+- "Compare the 30-day vs 90-day vs 180-day rates for ETH across all chains"
 - "This address traded on Katana weeks ago but get_pool_activity shows nothing -- pull on-chain logs for the last 7 days"
 - "Fetch historical activity for this pool using my RPC URL: https://rpc.katana.network"
 
@@ -304,7 +314,8 @@ src/
   types.ts          TypeScript interfaces (SpectraPt, MorphoMarket, ScanOpportunity, MerklTokenReward, MerklChainRewards, etc.)
   api.ts            Fetch helpers with retry, GraphQL sanitization, Morpho batch lookup,
                       veSPECTRA RPC with Promise-based dedup cache, 30s TTL pool data cache,
-                      Curve get_dy() on-chain quoting, eth_getCode contract detection,
+                      Curve get_dy() on-chain quoting, ERC-4626 convertToAssets() health check,
+                      eth_getCode contract detection,
                       MetaVault multi-chain scanning, API response validation at system boundary,
                       chunked eth_getLogs with retry for historical event log fetching,
                       Merkl reward fetching and parsing (pool address extraction from reason keys,
@@ -342,6 +353,9 @@ src/
     pendle.ts       list_pendle_markets, compare_pendle_spectra (maturity-aware cross-protocol yield comparison)
     curator_scan.ts scan_curator_opportunities (cross-protocol capital-aware scanner for MetaVault curators)
     onchain.ts      get_onchain_activity (historical eth_getLogs, Curve pool + PT vault event decoding, dynamic RPC)
+    capacity.ts     get_pool_capacity (multi-size quote ladder, sweet spot / exhaustion detection)
+    ibt_health.ts   check_ibt_health (ERC-4626 conversion rate, APR composition, pool balance, verdict)
+    yield_curve.ts  get_yield_curve (term structure for a given underlying across all chains)
 test.cjs              Integration test suite (405 tests, McpTestClient over stdio)
 test-agent.cjs        Agent reasoning test suite (82 assertions, McpTestClient over stdio)
 AGENT-TESTS.md        38-question subjective test suite with grading rubrics (incl. open emergence, coverage, newcomer comprehension tiers)
@@ -385,6 +399,7 @@ All address parameters are validated (`0x` + 40 hex chars). All API calls have a
 - **veSPECTRA cache**: Promise-based deduplication prevents duplicate RPC calls when multiple tools run concurrently (5-minute TTL)
 - **Morpho batch limit**: `first` parameter capped at `min(addresses * 3, 500)` to avoid GraphQL response limits
 - **On-chain quoting**: Curve `get_dy()` via raw `eth_call` on 8 chains with automatic fallback to math estimate on RPC failure
+- **IBT health checks**: ERC-4626 `convertToAssets()` via raw `eth_call` — graceful degradation when RPC unavailable (other health checks still run)
 - **Historical event logs**: Chunked `eth_getLogs` (2000 blocks/chunk) with per-chunk retry — failed chunks are skipped so partial results are still returned. Dynamic `rpc_url` parameter enables any chain without hardcoded RPCs
 - **Contract detection cache**: Permanent `Map` cache for `eth_getCode` results (contract code doesn't change)
 - **Merkl rewards**: Best-effort parallel fetch from Merkl API — failure does not block portfolio display. Pool address matching via regex extraction from reason keys. BigInt `parseWei()` conversion for safe 18-decimal arithmetic
@@ -448,8 +463,8 @@ This server wraps these endpoints:
 
 | Endpoint | Used By |
 |----------|---------|
-| `GET /v1/{chain}/pools` | `list_pools`, `get_best_fixed_yields`, `scan_opportunities`, `scan_yt_arbitrage` (30s TTL cache) |
-| `GET /v1/{chain}/pt/{address}` | `get_pt_details`, `compare_yield`, `get_looping_strategy`, `quote_trade`, `simulate_portfolio_after_trade`, `get_pool_volume`/`get_pool_activity` (PT→pool resolution) |
+| `GET /v1/{chain}/pools` | `list_pools`, `get_best_fixed_yields`, `scan_opportunities`, `scan_yt_arbitrage`, `get_yield_curve` (30s TTL cache) |
+| `GET /v1/{chain}/pt/{address}` | `get_pt_details`, `compare_yield`, `get_looping_strategy`, `quote_trade`, `simulate_portfolio_after_trade`, `get_pool_capacity`, `check_ibt_health`, `get_pool_volume`/`get_pool_activity` (PT→pool resolution) |
 | `GET /v1/{chain}/portfolio/{wallet}` | `get_portfolio`, `simulate_portfolio_after_trade`, `get_address_activity` (expired pool discovery) |
 | `GET /v1/{chain}/pools/{pool}/volume` | `get_pool_volume` |
 | `GET /v1/{chain}/pools/{pool}/activity` | `get_pool_activity`, `get_address_activity` (active + expired pools) |
@@ -459,7 +474,8 @@ This server wraps these endpoints:
 | `GET app.spectra.finance/api/v1/spectra/total-supply` | `get_protocol_stats` |
 | `POST api.morpho.org/graphql` | `get_morpho_markets`, `get_morpho_rate`, `get_looping_strategy` (auto-detect), `scan_opportunities` (batch) |
 | `POST mainnet.base.org` (eth_call) | `get_ve_info`, `scan_opportunities`, `scan_yt_arbitrage`, `compare_yield` (veSPECTRA total supply) |
-| `POST {chain RPC}` (eth_call: `get_dy`) | `quote_trade`, `simulate_portfolio_after_trade` (Curve StableSwap-NG on-chain quotes) |
+| `POST {chain RPC}` (eth_call: `get_dy`) | `quote_trade`, `simulate_portfolio_after_trade`, `get_pool_capacity` (Curve StableSwap-NG on-chain quotes) |
+| `POST {chain RPC}` (eth_call: `convertToAssets`) | `check_ibt_health` (ERC-4626 IBT conversion rate health check) |
 | `POST {chain RPC}` (eth_call: `eth_getCode`) | `get_pool_activity` (contract vs EOA detection in address mode) |
 | `POST {chain RPC}` (eth_getLogs) | `get_onchain_activity` (historical Curve pool events + Spectra PT vault events — supports dynamic `rpc_url` override) |
 | `GET api-v2.pendle.finance/core/v2/{chainId}/markets/active` | `list_pendle_markets` (Pendle market discovery) |
