@@ -102,9 +102,18 @@ Spectra is a permissionless interest rate derivatives protocol for DeFi.
 Core Mechanism:
 - Users deposit ERC-4626 interest-bearing tokens (IBTs) like Yearn V3 vaults, Aave aTokens, etc.
 - The deposit is split into Principal Tokens (PT) and Yield Tokens (YT)
-- PT = fixed-rate position (bought at discount, redeems 1:1 at maturity)
+- PT = fixed-rate position (bought at discount, redeems for 1 IBT at maturity)
+  Note: 1 IBT may convert to < 1 underlying (e.g., 0.85). This is NOT a loss — it's the
+  IBT conversion rate. Your profit is (maturityValue - ptPrice), not (1 - ptPrice).
 - YT = variable yield exposure (leveraged bet on future yield)
 - Fundamental identity: PT + YT = 1 underlying at maturity. YT price = 1 - PT price.
+
+Yield Calculation:
+- Implied APY: The fixed rate from buying PT at discount. Annualized: (1 - ptPrice) × (365 / daysToMaturity).
+- Effective APY: Implied APY minus annualized entry cost (price impact from AMM trade).
+  Scanner estimates use a conservative constant-product model. Real Curve StableSwap-NG pools
+  are significantly more capital-efficient — effective APY shown is a lower bound.
+  Use quote_trade() for exact on-chain quotes before acting on scanner output.
 
 Trading Mechanics (how PT and YT move on-chain):
 - PT trades on Curve StableSwap-NG pools (IBT/PT pairs). Pool activity shows BUY_PT and SELL_PT.
@@ -138,10 +147,13 @@ Known Limitation — Mint Visibility:
   to build the most complete picture possible within available data.
 
 Reading a wallet's strategy from its holdings:
-- A wallet holding YT but no PT has sold/LPed its PT (yield bull, leveraged long variable rate).
-- A wallet holding PT but no YT has sold its YT (fixed rate lock).
-- Balanced PT + YT = recently minted, no directional position yet.
-- High LP = liquidity provider (but check if YT balance is also high — could be mint+LP loop).
+These patterns have MULTIPLE valid interpretations — do not collapse to one without evidence:
+- YT but no PT: COULD be yield bull (sold PT), OR LPed the PT, OR PT in Morpho collateral.
+  Cross-reference with get_portfolio and get_pool_activity to distinguish.
+- PT but no YT: COULD be fixed-rate lock (sold YT), OR bought PT on market, OR partial redeem.
+- Balanced PT + YT: COULD be recently minted (no position yet), OR accumulated separately.
+- High LP + high YT: COULD be mint+LP loop (minted PT+YT, LPed PT+IBT, kept YT).
+Always cross-reference portfolio (WHAT they hold) with activity (HOW they got there).
 
 Key Integrations:
 - AMM: Curve Finance (PT/IBT pools)
@@ -159,7 +171,7 @@ Looping Strategy (most capital-efficient yield in DeFi):
 3. Use PT as collateral on Morpho
 4. Borrow USDC against PT collateral
 5. Repeat steps 1-4 for leveraged fixed yield
-6. At maturity, PT redeems 1:1, repay Morpho, keep profit
+6. At maturity, PT redeems for IBT (at maturity value), repay Morpho, keep profit
 
 Oracle: Custom Curve oracle built by Spectra team, used by Morpho for PT pricing.
 
