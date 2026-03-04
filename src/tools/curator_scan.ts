@@ -28,6 +28,7 @@ import {
   daysToMaturity,
   pendleDaysToMaturity,
   estimatePriceImpact,
+  estimatePendlePriceImpact,
   estimateLoopingEntryCost,
   formatMorphoLltv,
   cumulativeLeverageAtLoop,
@@ -219,7 +220,10 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
           const maturityTs = Math.floor(new Date(market.expiry).getTime() / 1000);
           const lpApy = (market.details.aggregatedApy || 0) * 100;
 
-          const impactFrac = estimatePriceImpact(capital_usd, poolLiqUsd);
+          // Pendle logit AMM impact: uses pool reserves + maturity for tighter estimate
+          const totalPt = market.details.totalPt || 0;
+          const totalSy = market.details.totalSy || 0;
+          const impactFrac = estimatePendlePriceImpact(capital_usd, poolLiqUsd, totalPt, totalSy, days);
           const impactPct = impactFrac * 100;
           // Impact filter: skip only if BOTH PT and LP strategies are unviable
           if (impactFrac > maxImpactFrac && lpApy <= 0) continue;

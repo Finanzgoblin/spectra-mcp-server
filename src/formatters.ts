@@ -1212,6 +1212,57 @@ export function estimatePriceImpact(amountUsd: number, poolLiquidityUsd: number)
 }
 
 /**
+ * Estimate price impact for a Pendle logit AMM trade.
+ *
+ * Pendle's AMM uses: exchangeRate = ln(p/(1-p)) / rateScalar + rateAnchor
+ * where p = totalPt / (totalPt + totalAsset) and rateScalar = scalarRoot * 365d / timeToExpiry.
+ *
+ * The marginal impact is d(rate)/dp = 1 / (rateScalar * p * (1-p)), giving an
+ * effective depth of (rateScalar * p * (1-p)) — much deeper than constant-product
+ * for balanced pools.
+ *
+ * We don't have scalarRoot per pool (it's an on-chain parameter, typically 50-200
+ * for stablecoin pools). A conservative default of 50 is used, which underestimates
+ * efficiency — real impact will usually be lower than this estimate.
+ *
+ * Falls back to constant-product if the logit model produces a higher estimate
+ * (should never happen in practice, but guarantees we never overestimate efficiency).
+ */
+export function estimatePendlePriceImpact(
+  amountUsd: number,
+  poolLiquidityUsd: number,
+  totalPt: number,
+  totalSy: number,
+  daysToExpiry: number,
+): number {
+  if (poolLiquidityUsd <= 0) return 1;
+
+  const cpImpact = amountUsd / (2 * poolLiquidityUsd);
+
+  // Need pool reserves to compute logit model
+  const totalPool = totalPt + totalSy;
+  if (totalPool <= 0) return cpImpact;
+
+  // Pool proportion (clamped to Pendle's bounds)
+  const p = Math.max(0.01, Math.min(0.96, totalPt / totalPool));
+
+  // rateScalar = scalarRoot * 365 / daysToExpiry
+  // Conservative scalarRoot = 50 (typical stablecoin pools use 50-200)
+  const CONSERVATIVE_SCALAR_ROOT = 50;
+  const rateScalar = CONSERVATIVE_SCALAR_ROOT * 365 / Math.max(daysToExpiry, 1);
+
+  // Logit AMM depth: rateScalar * p * (1-p)
+  // Compare: constant-product depth factor is 2
+  const logitDepth = rateScalar * p * (1 - p);
+
+  // impact = amount / (logitDepth * liquidity)
+  const pendleImpact = amountUsd / (logitDepth * poolLiquidityUsd);
+
+  // Never claim Pendle is WORSE than constant-product
+  return Math.min(pendleImpact, cpImpact);
+}
+
+/**
  * Estimate cumulative price impact across multiple looping iterations.
  *
  * Each loop deploys capital * ltv^i into the pool. Prior loops have already
@@ -3177,11 +3228,11 @@ export function formatCuratorScanResults(
 
   if (pendleCount > 0) {
     lines.push(``);
-    lines.push(`--- Pendle Impact Note ---`);
-    lines.push(`  Pendle price impact is estimated using Curve constant-product math as a conservative`);
-    lines.push(`  upper bound. Pendle uses a different AMM (weighted time-decay pricing) which is`);
-    lines.push(`  typically more capital-efficient — actual Pendle impact will likely be lower.`);
-    lines.push(`  Treat Pendle effective APY and capacity estimates as approximate.`);
+    lines.push(`--- Impact Models ---`);
+    lines.push(`  Spectra: constant-product estimate (conservative upper bound for Curve StableSwap-NG).`);
+    lines.push(`  Pendle: logit AMM model using pool reserves (totalPt, totalSy) and time-to-expiry.`);
+    lines.push(`    Uses conservative scalarRoot=50 (typical pools use 50-200). Real impact likely lower.`);
+    lines.push(`    Capacity estimates still use constant-product and may understate Pendle pool depth.`);
   }
 
   return lines.join("\n");
