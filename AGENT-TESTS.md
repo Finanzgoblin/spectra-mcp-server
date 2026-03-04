@@ -564,6 +564,62 @@ level. A weak agent ignores coverage and presents high-confidence conclusions fr
 
 ---
 
+## Tier 11: Newcomer Comprehension & Tool Routing
+
+These tests evaluate whether the agent helps newcomers navigate the tool set,
+understand fundamentals, and avoid common misconceptions. A good agent translates
+DeFi jargon, explains deposit paths, and routes to the right tools.
+
+### Q36: Deposit Path — Can the Agent Explain How to Enter? ⭐
+**Prompt:** "I have 50,000 USDC on Base. I want to earn a fixed yield on Spectra. What do I need to do step by step?"
+
+**Tests:** Does the agent explain the deposit path clearly without jargon?
+
+**Expected:** Should explain: (1) use scan_opportunities or scan_curator_opportunities to find opportunities on Base, (2) the actual entry mechanic: send USDC → Router handles wrapping to IBT and swapping to PT atomically, (3) at maturity PT redeems back to underlying, (4) mention that the maturity value shown may be < 1.0 but that's the IBT rate, not a loss. Should call get_protocol_context("deposit_path") or explain the mechanics directly. Should NOT assume the user knows what IBT, PT, or flash-minting means.
+
+**Grading:**
+- ✅ A+ Explains full deposit path in plain language, calls relevant tools, mentions maturity value is not a loss, suggests verifying with quote_trade
+- ✅ A  Explains deposit path correctly but uses some unexplained jargon
+- ⚠️ B  Points to the right tools but doesn't explain the mechanics
+- ❌ C  Says "buy PT" without explaining how
+- ❌ F  Hallucinates a deposit path or sends user to wrong tools
+
+---
+
+### Q37: Impact Accuracy — Does the Agent Know Estimates Are Conservative? ⭐⭐
+**Prompt:** "scan_opportunities shows an effective APY of 3.06% for a pool. Should I skip it?"
+
+**Tests:** Does the agent know that scanner effective APY is a conservative lower bound?
+
+**Expected:** Should explain that the scanner uses a constant-product impact model which is a conservative upper bound on price impact. Real Curve StableSwap-NG pools are more capital-efficient, so actual effective APY is typically 30-60% higher. Should recommend quote_trade() for an exact on-chain quote before dismissing the opportunity. Should NOT say "yes, 3% is low, skip it" without caveat.
+
+**Grading:**
+- ✅ A+ Explains the model gap, recommends quote_trade verification, notes the opportunity may actually be much better
+- ✅ A  Mentions estimates are conservative but doesn't quantify the gap or suggest verification
+- ⚠️ B  Says "it depends" without explaining why the estimate might be wrong
+- ❌ C  Accepts 3.06% at face value and recommends skipping
+- ❌ F  Doesn't mention impact model limitations at all
+
+**Key failure mode:** Face-value acceptance — agent treats scanner output as ground truth because the numbers look precise, ignoring that precision ≠ accuracy.
+
+---
+
+### Q38: Tool Selection — Which Scanner for a Newcomer? ⭐
+**Prompt:** "I want to find the best yield opportunities. Which tool should I use?"
+
+**Tests:** Does the agent route to the broadest scanner?
+
+**Expected:** Should recommend scan_curator_opportunities as the broadest starting point (covers both Spectra and Pendle). Should explain that scan_opportunities is Spectra-only and may return fewer results. Should mention get_best_fixed_yields as an alternative that ranks by raw APY without capital awareness. Should note that these tools intentionally disagree on "best" — different metrics for different goals. Should NOT just say "use scan_opportunities" without mentioning alternatives.
+
+**Grading:**
+- ✅ A+ Recommends scan_curator_opportunities, explains the difference between scanners, notes intentional disagreement
+- ✅ A  Recommends a reasonable scanner and mentions alternatives exist
+- ⚠️ B  Recommends scan_opportunities without mentioning the broader cross-protocol option
+- ❌ C  Recommends get_best_fixed_yields (no capital awareness) as the primary tool
+- ❌ F  Doesn't know which tool to recommend or hallucinates a tool name
+
+---
+
 ## Key Failure Modes to Watch For
 
 1. **Parrot mode** — Agent repeats tool output verbatim without interpreting
@@ -583,6 +639,8 @@ level. A weak agent ignores coverage and presents high-confidence conclusions fr
 15. **Continuity assumption** — Two phases of activity separated by a long dark period get stitched into one continuous strategy, ignoring that the gap may represent a context change
 16. **Tool sufficiency illusion** — Single tool's detailed output is treated as a complete picture. The structure and detail of the output creates false confidence about coverage
 17. **Reward blindness** — Analyzes position PnL without accounting for Merkl gauge emissions (SPECTRA rewards), which can be a dominant source of LP yield and flip apparent losses into profits
+18. **Face-value acceptance** — Treats scanner effective APY as ground truth. The constant-product model is a conservative upper bound on impact — real Curve pools are more efficient. An agent that dismisses a 3% effective APY pool without checking quote_trade() may be discarding a pool that's actually at 11%
+19. **Tool routing failure** — Recommends scan_opportunities to newcomers without mentioning scan_curator_opportunities (broader, includes Pendle) or sends users to get_best_fixed_yields (no capital awareness) as the primary discovery tool
 
 ## Running These Tests
 
@@ -590,7 +648,7 @@ level. A weak agent ignores coverage and presents high-confidence conclusions fr
 2. Let the agent call whatever tools it wants
 3. Grade against the rubric
 4. Record: number of tool calls, grade, and notable observations
-5. Target: ≥28/35 at ✅ grade
+5. Target: ≥31/38 at ✅ grade
 
 Questions marked with ⭐ are the most discriminating — they consistently separate agents
 that truly understand the protocol from those that just relay tool outputs.

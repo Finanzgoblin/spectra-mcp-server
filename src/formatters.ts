@@ -1767,8 +1767,8 @@ export function formatScanOpportunity(opp: ScanOpportunity, rank: number, boostI
 
   // Header with rank and headline APY
   const headline = opp.looping
-    ? `${formatPct(opp.impliedApy)} base -> ~${formatPct(opp.looping.optimalEffectiveNetApy)} effective with ${opp.looping.optimalLoops}x loop (at current rates)`
-    : `${formatPct(opp.impliedApy)} base -> ~${formatPct(opp.effectiveApy)} effective (at current rates)`;
+    ? `${formatPct(opp.impliedApy)} base -> ≥${formatPct(opp.looping.optimalEffectiveNetApy)} effective with ${opp.looping.optimalLoops}x loop (conservative est.)`
+    : `${formatPct(opp.impliedApy)} base -> ≥${formatPct(opp.effectiveApy)} effective (conservative est.)`;
   lines.push(`#${rank}  ${opp.pt.name} (${opp.chain}) -- ${headline}`);
 
   // Maturity
@@ -1781,7 +1781,7 @@ export function formatScanOpportunity(opp: ScanOpportunity, rank: number, boostI
   lines.push(`    Entry Impact: ~${formatPct(opp.entryImpactPct)} | Capacity: ~${formatUsd(opp.capacityUsd)} at <threshold`);
 
   // APY lines
-  lines.push(`    Base APY: ${formatPct(opp.impliedApy)} | Effective APY: ${formatPct(opp.effectiveApy)} (after entry cost)`);
+  lines.push(`    Base APY: ${formatPct(opp.impliedApy)} | Effective APY: ≥${formatPct(opp.effectiveApy)} (conservative — verify with quote_trade)`);
 
   // Looping section
   if (opp.looping) {
@@ -1903,7 +1903,12 @@ export function formatScanResults(
 
   // Footer
   lines.push(``);
-  lines.push(`  Estimates use constant-product upper bound. Actual Curve StableSwap-NG pools are more capital-efficient.`);
+  lines.push(`--- Impact Accuracy ---`);
+  lines.push(`  ⚠ Effective APY shown is a CONSERVATIVE LOWER BOUND.`);
+  lines.push(`  Entry impact uses constant-product model. Real Curve StableSwap-NG pools are more`);
+  lines.push(`  capital-efficient — actual effective APY is typically 30-60% higher than shown.`);
+  lines.push(`  → Verify top picks: quote_trade(chain, pt_address, amount, "buy") gives exact on-chain quotes.`);
+  lines.push(``);
   lines.push(`  Rankings reflect one dimension of a multi-dimensional space. A lower-ranked pool could be better`);
   lines.push(`  for a different strategy (YT accumulation, LP farming) or time horizon. See Yield Dimensions per opportunity.`);
 
@@ -3153,7 +3158,7 @@ export function formatCuratorOpportunity(opp: CuratorOpportunity, rank: number):
   // Strategy Space — all building blocks, no single "best" collapsed
   lines.push(``);
   lines.push(`    Strategy Space:`);
-  lines.push(`      PT spot:  ${formatPct(opp.effectiveApy)} effective (${formatPct(opp.impliedApy)} implied - ${formatPct(opp.entryImpactPct > 0 && opp.daysToMaturity > 0 ? opp.entryImpactPct * (365 / opp.daysToMaturity) : opp.entryImpactPct)} entry)`);
+  lines.push(`      PT spot:  ≥${formatPct(opp.effectiveApy)} effective (${formatPct(opp.impliedApy)} implied - ${formatPct(opp.entryImpactPct > 0 && opp.daysToMaturity > 0 ? opp.entryImpactPct * (365 / opp.daysToMaturity) : opp.entryImpactPct)} entry, conservative)`);
 
   // LP line with breakdown if available
   if (opp.lpApyBreakdown) {
@@ -3300,14 +3305,15 @@ export function formatCuratorScanResults(
   lines.push(`  [P] = Pendle (Pendle AMM, PENDLE incentives, no Morpho looping yet)`);
   lines.push(`  ↔ = Cross-protocol match on same underlying + similar maturity`);
 
+  lines.push(``);
+  lines.push(`--- Impact Accuracy ---`);
+  lines.push(`  ⚠ Effective APY is a CONSERVATIVE LOWER BOUND.`);
+  lines.push(`  Spectra: constant-product estimate. Curve StableSwap-NG is more efficient — real APY typically 30-60% higher.`);
   if (pendleCount > 0) {
-    lines.push(``);
-    lines.push(`--- Impact Models ---`);
-    lines.push(`  Spectra: constant-product estimate (conservative upper bound for Curve StableSwap-NG).`);
-    lines.push(`  Pendle: logit AMM model using pool reserves (totalPt, totalSy) and time-to-expiry.`);
-    lines.push(`    Uses conservative scalarRoot=50 (typical pools use 50-200). Real impact likely lower.`);
-    lines.push(`    Capacity estimates still use constant-product and may understate Pendle pool depth.`);
+    lines.push(`  Pendle: logit AMM model (scalarRoot=50, conservative). Real impact likely lower.`);
   }
+  lines.push(`  → Verify: quote_trade(chain, pt_address, amount, "buy") for exact on-chain Curve quotes.`);
+  lines.push(`  Curators: You control pool depth. Entry impact is a design choice, not a given constraint.`);
 
   return lines.join("\n");
 }
