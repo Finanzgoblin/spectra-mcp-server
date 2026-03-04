@@ -125,7 +125,29 @@ ${API_NETWORKS.map((k) => `- ${SUPPORTED_CHAINS[k].name} (use "${k}" in queries,
 - Flash-mint: Atomic operation via the Router: borrow IBT → mint PT+YT → sell PT on pool →
   keep YT. Used to buy YT without the pool trading it directly.
 - Flash-redeem: Atomic operation via the Router: borrow IBT → buy PT on pool → burn PT+YT →
-  repay → profit. Used to sell YT without the pool trading it directly.`,
+  repay → profit. Used to sell YT without the pool trading it directly.
+- APR vs APY: APR = simple annual rate (no compounding). APY = compound annual yield.
+  IBT rates are shown as APR (continuously accruing). Scanner implied yields are APY
+  (annualized from PT discount). A 5% APR ≈ 5.13% APY. The distinction matters most
+  when comparing IBT variable rates (APR) against fixed rates (APY) in compare_yield.
+- Underlying: The base asset before any wrapping. USDC, ETH, GHO, etc. The chain of
+  conversions: underlying → IBT (yield-bearing wrapper) → PT + YT (Spectra split).
+  When tools say "in underlying terms," they mean denominated in this base asset.
+- LP (Liquidity Providing): Depositing paired assets (IBT + PT) into a Curve pool to
+  earn trading fees + SPECTRA gauge emissions. LP APY = fee APY + gauge APY. LPs take
+  on IL (impermanent loss) risk as the PT/IBT ratio shifts, but Curve StableSwap-NG
+  minimizes this for assets that converge at maturity.
+- ERC-4626: The standard interface for tokenized yield vaults. Any vault that implements
+  ERC-4626 can be plugged into Spectra. The key method: convertToAssets() tells you how
+  many underlying tokens one vault share is worth (this is the IBT conversion rate).
+- Curve StableSwap-NG: The AMM design used for Spectra's PT/IBT pools. Optimized for
+  assets that trade near 1:1 — much more capital-efficient than constant-product (x*y=k)
+  AMMs. This is why scanner estimates (which use constant-product math) understate real
+  pool efficiency by 30-60%. The "NG" (next-generation) variant supports dynamic fees.
+- Boost: The veSPECTRA multiplier on LP gauge rewards. Formula:
+  B = min(2.5, 1.5 × (v/V) × (D/d) + 1), where v = your veSPECTRA, V = total supply,
+  D = pool TVL, d = your deposit. Full 2.5x when your vote share ≥ your pool share.
+  Without any veSPECTRA, boost = 1x (base rate). Use get_ve_info to compute scenarios.`,
 
   "workflow_routing": `Workflow Routing — How tools compose for common goals
 
@@ -222,7 +244,7 @@ Use topic "workflow_routing" to learn which tools to call for a given goal
 into each other. Recommended starting point for agents new to the tool set.
 
 Use topic "deposit_path" for step-by-step entry mechanics (how to buy PT, mint YT, LP, loop).
-Use topic "glossary" for key term definitions (IBT, sw-prefix, LLTV, gauge, maturity value).
+Use topic "glossary" for key term definitions (IBT, sw-prefix, LLTV, gauge, maturity value, APR vs APY, underlying, LP, ERC-4626, Curve StableSwap-NG, boost formula).
 
 Available topics: ${ALL_TOPIC_NAMES.join(", ")}
 Omit the topic parameter to get all topics at once.`,
