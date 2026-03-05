@@ -609,6 +609,65 @@ export async function fetchCurveGetDy(
 }
 
 // =============================================================================
+// On-Chain ERC-20 decimals()
+// =============================================================================
+
+/**
+ * Call ERC-20 decimals() on a token contract via eth_call.
+ * Returns the number of decimals (e.g., 6 for USDC, 18 for most tokens), or null on failure.
+ * Best-effort — returns null if the chain has no RPC or the call reverts.
+ */
+export async function fetchTokenDecimals(
+  tokenAddress: string,
+  chainSlug: string,
+): Promise<number | null> {
+  const network = resolveNetwork(chainSlug);
+  const rpcUrl = CHAIN_RPC_URLS[network];
+  if (!rpcUrl) return null;
+
+  try {
+    // decimals() selector: 0x313ce567
+    const res = await fetchWithRetry(() =>
+      fetch(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "eth_call",
+          params: [
+            { to: tokenAddress, data: "0x313ce567" },
+            "latest",
+          ],
+        }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      })
+    );
+
+    if (!res.ok) return null;
+
+    let json: any;
+    try {
+      json = await res.json();
+    } catch {
+      return null;
+    }
+
+    if (json.error) return null;
+
+    const hex: string = json.result;
+    if (!hex || hex === "0x" || hex === "0x0") return null;
+
+    const val = Number(BigInt(hex));
+    // Sanity check — decimals should be 0-36
+    if (val < 0 || val > 36) return null;
+    return val;
+  } catch {
+    return null;
+  }
+}
+
+// =============================================================================
 // On-Chain ERC-4626 Conversion Rate
 // =============================================================================
 
