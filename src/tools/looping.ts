@@ -13,6 +13,7 @@ import {
   daysToMaturity,
   parsePtResponse,
   formatMorphoLltv,
+  getEffectiveLiquidityUsd,
   cumulativeLeverageAtLoop,
   estimateLoopingEntryCost,
   estimatePriceImpact,
@@ -119,7 +120,7 @@ discover the best looping opportunities across all chains with capital-aware siz
           lines.push(`    Collateral: ${morphoMarket!.collateralAsset?.symbol || "?"}`);
           lines.push(`    Loan: ${morphoMarket!.loanAsset?.symbol || "?"}`);
           lines.push(`    Utilization: ${formatPct((morphoMarket!.state?.utilization || 0) * 100)}`);
-          lines.push(`    Available Liquidity: ${formatUsd(morphoMarket!.state?.liquidityAssetsUsd || 0)}`);
+          lines.push(`    Available Liquidity: ${formatUsd(getEffectiveLiquidityUsd(morphoMarket!))}`);
           if (morpho_ltv !== undefined) lines.push(`    LLTV: ${formatPct(effectiveLtv * 100)} (user override)`);
           else lines.push(`    LLTV: ${formatPct(effectiveLtv * 100)} (from Morpho)`);
           if (borrow_rate !== undefined) lines.push(`    Borrow Rate: ${formatPct(effectiveBorrowRate)} (user override)`);
