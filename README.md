@@ -241,6 +241,28 @@ Restart Claude Desktop. You'll see the Spectra tools available.
 claude mcp add spectra-finance -- npx spectra-mcp-server
 ```
 
+## Deep Analysis Prompts
+
+The more context you give upfront, the deeper the agent can go. Each input unlocks a different tool chain:
+
+| Input | What it unlocks |
+|-------|----------------|
+| Capital size (`$200K`) | Price impact at your size, pool capacity limits, effective APY |
+| Wallet address (`0x...`) | Portfolio simulation, existing position context, Merkl rewards |
+| veSPECTRA balance | Real per-pool boost (not min/max range) |
+| Asset preference | Filtered yield curve, targeted scans |
+| Strategy type | LP vs PT vs looping vs MetaVault — determines which tools get chained |
+| Maturity window | Term structure analysis, rollover timing |
+
+**The ideal prompt combines all of these.** Here are examples that trigger 8-10 tool chains:
+
+- **Yield hunter:** "I have $50K USDC and 10,000 veSPECTRA. Find me the best risk-adjusted fixed yield for 60-180 days. Check IBT health, quote my exact entry, and show who else is in the pool."
+- **Curator:** "I'm building a USDC MetaVault on Base with $500K own capital, expecting $2M external. Model the double-loop economics and compare Spectra vs Pendle LP allocation."
+- **Investigator:** "Wallet 0xABC... is active on Spectra mainnet. Show me everything — portfolio, activity across all pools, sequence analysis, and what strategy they're running."
+- **Term structure:** "Show me the ETH yield curve across all chains. Where are the term premium anomalies? Quote pool capacity at $200K for the top 3 mispricings."
+
+The cross-referencing between tools is where the real depth happens — no single tool tells the full story. The agent calls `get_protocol_context(topic="workflow_routing")` to learn these compositions at runtime.
+
 ## Example Queries
 
 Once connected, you can ask Claude things like:
