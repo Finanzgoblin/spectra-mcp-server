@@ -18,10 +18,12 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
   MORPHO_CHAIN_IDS,
+  SUPPORTED_CHAINS,
+  PENDLE_CHAIN_IDS,
   resolveNetwork,
 } from "../config.js";
-import type { CuratorOpportunity } from "../types.js";
-import { scanAllChainPools, scanAllPendleMarkets, findMorphoMarketsForPts, fetchVeTotalSupply, fetchHyperliquidFunding, resolveHyperliquidSymbol } from "../api.js";
+import type { CuratorOpportunity, MerklCampaign } from "../types.js";
+import { scanAllChainPools, scanAllPendleMarkets, findMorphoMarketsForPts, fetchVeTotalSupply, fetchHyperliquidFunding, resolveHyperliquidSymbol, fetchMerklCampaigns, lookupMerklCampaigns } from "../api.js";
 import {
   formatPct,
   formatUsd,
@@ -51,6 +53,7 @@ Unlike scan_opportunities (Spectra-only), this tool includes Pendle markets with
 - Maturity-aware cross-protocol matching (same underlying + similar expiry)
 - Morpho looping analysis for Spectra PTs (Pendle looping in future phase)
 - Unified ranking by effective APY across both protocols
+- External Merkl campaign APR for both protocols (incentive programs beyond native yield)
 - Protocol tags ([Spectra] vs [Pendle]) and cross-protocol match indicators
 
 Unlike get_best_fixed_yields or list_pendle_markets, this tool computes effective APY
@@ -141,6 +144,28 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
         const { markets: rawPendle, failedChains: pendleFailed } = pendleResult;
         const failedChains = [...new Set([...spectraFailed, ...pendleFailed])];
 
+        // Fetch Merkl campaigns for all unique chains (best-effort, parallel)
+        const allChainIds = new Map<string, number>();
+        for (const { chain } of rawSpectra) {
+          const net = resolveNetwork(chain);
+          const info = SUPPORTED_CHAINS[net];
+          if (info && !allChainIds.has(net)) allChainIds.set(net, info.id);
+        }
+        for (const { chain } of rawPendle) {
+          const chainId = PENDLE_CHAIN_IDS[chain];
+          if (chainId && !allChainIds.has(chain)) allChainIds.set(chain, chainId);
+        }
+        const curatorMerklMaps = new Map<string, Map<string, MerklCampaign[]>>();
+        const curatorMerklResults = await Promise.allSettled(
+          [...allChainIds.entries()].map(async ([net, chainId]) => {
+            const map = await fetchMerklCampaigns(chainId).catch(() => new Map<string, MerklCampaign[]>());
+            return { net, map };
+          })
+        );
+        for (const r of curatorMerklResults) {
+          if (r.status === "fulfilled") curatorMerklMaps.set(r.value.net, r.value.map);
+        }
+
         // ================================================================
         // PHASE 2: Compute capital-aware metrics for both protocols
         // ================================================================
@@ -185,6 +210,13 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
           if (effectiveApy < 0) warnings.push("Negative effective APY");
 
           const bestIsLp = lpData.lpApy > effectiveApy;
+
+          // Look up Merkl campaigns
+          const spectraNet = resolveNetwork(chain);
+          const spectraMerklMap = curatorMerklMaps.get(spectraNet) || new Map();
+          const spectraAddrs = [pt.address, pool.address, pt.ibt?.address].filter(Boolean) as string[];
+          const spectraMerklCampaigns = lookupMerklCampaigns(spectraMerklMap, spectraAddrs);
+
           opportunities.push({
             protocol: "spectra",
             chain,
@@ -206,6 +238,7 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
             poolAddress: pool.address || "",
             looping: null,
             lpApyBreakdown: lpData.lpApyBreakdown,
+            merklCampaigns: spectraMerklCampaigns.length > 0 ? spectraMerklCampaigns : undefined,
             warnings,
           });
         }
@@ -260,6 +293,11 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
               : {},
           };
 
+          // Look up Merkl campaigns for Pendle market
+          const pendleMerklMap = curatorMerklMaps.get(chain) || new Map();
+          const pendleAddrs = [market.address, market.pt, market.yt, market.sy].filter(Boolean);
+          const pendleMerklCampaigns = lookupMerklCampaigns(pendleMerklMap, pendleAddrs);
+
           opportunities.push({
             protocol: "pendle",
             chain,
@@ -281,6 +319,7 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
             pendlePtAddress: market.pt,
             pendleSyAddress: market.sy,
             lpApyBreakdown: pendleLpBreakdown,
+            merklCampaigns: pendleMerklCampaigns.length > 0 ? pendleMerklCampaigns : undefined,
             warnings,
           });
         }

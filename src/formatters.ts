@@ -2,7 +2,7 @@
  * Data formatting helpers — USD, percentages, dates, balances, pool/position/Morpho summaries.
  */
 
-import type { SpectraPt, SpectraPool, SpectraMetavault, SpectraMetavaultPosition, MorphoMarket, PendleMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavaultBridgeTx, MerklTokenReward, CrossProtocolMatch, CuratorOpportunity } from "./types.js";
+import type { SpectraPt, SpectraPool, SpectraMetavault, SpectraMetavaultPosition, MorphoMarket, PendleMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavaultBridgeTx, MerklTokenReward, CrossProtocolMatch, CuratorOpportunity, MerklCampaign } from "./types.js";
 import { SUPPORTED_CHAINS } from "./config.js";
 
 // =============================================================================
@@ -130,10 +130,49 @@ export function parsePtResponse(data: any): SpectraPt | undefined {
 }
 
 // =============================================================================
+// Merkl Campaign Formatting
+// =============================================================================
+
+/**
+ * Format Merkl campaign lines for display under a pool/market.
+ * Filters out campaigns whose reward tokens are already shown via API rewards.
+ * Returns formatted lines (empty array if nothing to show).
+ */
+export function formatMerklCampaignLines(
+  campaigns: MerklCampaign[],
+  existingRewardTokens?: Set<string>,
+  indent: string = "    ",
+): string[] {
+  if (!campaigns || campaigns.length === 0) return [];
+
+  // Filter to campaigns with meaningful APR, skip tokens already shown
+  const filtered = campaigns.filter((c) => {
+    if (c.apr <= 0) return false;
+    if (existingRewardTokens && c.rewardTokens.length > 0) {
+      // Skip if ALL reward tokens are already displayed
+      const allKnown = c.rewardTokens.every((t) => existingRewardTokens.has(t.toUpperCase()));
+      if (allKnown) return false;
+    }
+    return true;
+  });
+
+  if (filtered.length === 0) return [];
+
+  const lines: string[] = [];
+  lines.push(`${indent.slice(2)}Merkl Campaigns:`);
+  for (const c of filtered) {
+    const tokens = c.rewardTokens.length > 0 ? c.rewardTokens.join(", ") : "Rewards";
+    const action = c.action ? ` (${c.action})` : "";
+    lines.push(`${indent}+-- ${tokens}${action}: ${formatPct(c.apr)} APR`);
+  }
+  return lines;
+}
+
+// =============================================================================
 // Pool & PT Summaries
 // =============================================================================
 
-export function formatPoolSummary(pt: SpectraPt, pool: SpectraPool, chain: string): string {
+export function formatPoolSummary(pt: SpectraPt, pool: SpectraPool, chain: string, merklCampaigns?: MerklCampaign[]): string {
   const lines = [
     `-- ${pt.name} --`,
     `  Chain: ${chain}`,
@@ -186,6 +225,16 @@ export function formatPoolSummary(pt: SpectraPt, pool: SpectraPool, chain: strin
   // Boosted total (max boost APY)
   if (pool.lpApy?.boostedTotal && pool.lpApy.boostedTotal > (pool.lpApy?.total || 0)) {
     lines.push(`  LP APY (Max Boost): ${formatPct(pool.lpApy.boostedTotal)}`);
+  }
+
+  // Merkl campaign incentives (supplemental to API rewards)
+  if (merklCampaigns && merklCampaigns.length > 0) {
+    const existingTokens = new Set<string>();
+    if (rewards) {
+      for (const token of Object.keys(rewards)) existingTokens.add(token.toUpperCase());
+    }
+    const merklLines = formatMerklCampaignLines(merklCampaigns, existingTokens);
+    for (const ml of merklLines) lines.push(ml);
   }
 
   // LP APY sustainability signal: flag when incentives dominate
@@ -262,10 +311,10 @@ export function formatPoolSummary(pt: SpectraPt, pool: SpectraPool, chain: strin
   return lines.join("\n");
 }
 
-export function formatPtSummary(pt: SpectraPt, chain: string): string {
+export function formatPtSummary(pt: SpectraPt, chain: string, merklCampaigns?: MerklCampaign[]): string {
   const pool = pt.pools?.[0];
   if (!pool) return `${pt.name} -- no active pool`;
-  return formatPoolSummary(pt, pool, chain);
+  return formatPoolSummary(pt, pool, chain, merklCampaigns);
 }
 
 // =============================================================================
@@ -1913,6 +1962,14 @@ export function formatScanOpportunity(opp: ScanOpportunity, rank: number, boostI
   const lpLines = formatLpApyLines(opp.lpApy, opp.lpApyBoostedTotal, opp.lpApyAtBoost, opp.lpApyBreakdown, boostInfo);
   for (const ll of lpLines) lines.push(ll);
 
+  // Merkl external campaigns (supplemental to API rewards)
+  if (opp.merklCampaigns && opp.merklCampaigns.length > 0) {
+    const existingTokens = new Set<string>();
+    for (const token of Object.keys(opp.lpApyBreakdown.rewards)) existingTokens.add(token.toUpperCase());
+    const merklLines = formatMerklCampaignLines(opp.merklCampaigns, existingTokens, "      ");
+    for (const ml of merklLines) lines.push(ml);
+  }
+
   // Yield dimensions — all strategies side by side so the agent sees the tension
   const dims: string[] = [
     `Fixed: ${formatPct(opp.effectiveApy)}`,
@@ -2067,6 +2124,14 @@ export function formatYtArbitrageOpportunity(opp: YtArbitrageOpportunity, rank: 
   // LP yield (always incentivized by gauge emissions)
   const lpLines = formatLpApyLines(opp.lpApy, opp.lpApyBoostedTotal, opp.lpApyAtBoost, opp.lpApyBreakdown, boostInfo);
   for (const ll of lpLines) lines.push(ll);
+
+  // Merkl external campaigns
+  if (opp.merklCampaigns && opp.merklCampaigns.length > 0) {
+    const existingTokens = new Set<string>();
+    for (const token of Object.keys(opp.lpApyBreakdown.rewards)) existingTokens.add(token.toUpperCase());
+    const merklLines = formatMerklCampaignLines(opp.merklCampaigns, existingTokens, "      ");
+    for (const ml of merklLines) lines.push(ml);
+  }
 
   // Underlying info
   lines.push(`    Underlying: ${opp.underlying} | IBT: ${opp.ibtSymbol} (${opp.ibtProtocol})`);
@@ -2958,7 +3023,7 @@ export function formatPendleMarketCompact(m: PendleMarket, chain: string): strin
 /**
  * Format a single Pendle market in full detail.
  */
-export function formatPendleMarketSummary(m: PendleMarket, chain: string): string {
+export function formatPendleMarketSummary(m: PendleMarket, chain: string, merklCampaigns?: MerklCampaign[]): string {
   const d = m.details;
   const days = pendleDaysToMaturity(m.expiry);
   const expiryDate = m.expiry.split("T")[0];
@@ -2987,6 +3052,14 @@ export function formatPendleMarketSummary(m: PendleMarket, chain: string): strin
   if (d.maxBoostedApy > 0) {
     lines.push(`    +-- Max Boosted LP APY: ${formatPct(d.maxBoostedApy * 100)}`);
   }
+
+  // Merkl external incentive campaigns (LP, YT holding, SY campaigns)
+  if (merklCampaigns && merklCampaigns.length > 0) {
+    const existingTokens = new Set(["PENDLE"]); // PENDLE incentives already shown above
+    const merklLines = formatMerklCampaignLines(merklCampaigns, existingTokens);
+    for (const ml of merklLines) lines.push(ml);
+  }
+
   lines.push(``);
   lines.push(`  TVL: ${formatUsd(d.totalTvl)}`);
   lines.push(`  Pool Liquidity: ${formatUsd(d.liquidity)}`);
@@ -3315,6 +3388,16 @@ export function formatCuratorOpportunity(opp: CuratorOpportunity, rank: number):
     lines.push(`      LP:       ${formatPct(opp.lpApy)}${parts.length > 0 ? ` (${parts.join(" + ")})` : ""}`);
   } else {
     lines.push(`      LP:       ${formatPct(opp.lpApy)}`);
+  }
+
+  // Merkl external campaigns
+  if (opp.merklCampaigns && opp.merklCampaigns.length > 0) {
+    const existingTokens = new Set<string>();
+    if (opp.lpApyBreakdown) {
+      for (const token of Object.keys(opp.lpApyBreakdown.rewards)) existingTokens.add(token.toUpperCase());
+    }
+    const merklLines = formatMerklCampaignLines(opp.merklCampaigns, existingTokens, "        ");
+    for (const ml of merklLines) lines.push(ml);
   }
 
   if (opp.looping) {

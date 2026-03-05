@@ -17,8 +17,9 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { YtArbitrageOpportunity } from "../types.js";
-import { scanAllChainPools, fetchVeTotalSupply } from "../api.js";
+import type { YtArbitrageOpportunity, MerklCampaign } from "../types.js";
+import { scanAllChainPools, fetchVeTotalSupply, fetchMerklCampaigns, lookupMerklCampaigns } from "../api.js";
+import { SUPPORTED_CHAINS, resolveNetwork } from "../config.js";
 import {
   formatPct,
   formatUsd,
@@ -44,8 +45,9 @@ market price. When these diverge significantly, an arbitrage opportunity may exi
   - Negative spread (IBT APR < YT implied rate): IBT earns less than the YT price implies
 
 Returns opportunities sorted by absolute spread, with capital-aware entry sizing,
-break-even analysis, and IBT APR composition (organic base yield vs external incentive
-programs — critical for assessing whether the spread is driven by sustainable yield).
+break-even analysis, IBT APR composition (organic base yield vs external incentive
+programs — critical for assessing whether the spread is driven by sustainable yield),
+and external Merkl campaign APR when available.
 
 Execution mechanics:
 - Buying YT: The Spectra Router can flash-mint (flash-borrow IBT → mint PT+YT → sell PT
@@ -136,6 +138,24 @@ Use get_pool_activity to monitor recent trading patterns in the target pool.`,
           asset_filter,
         });
 
+        // Fetch Merkl campaigns for unique chains in results (best-effort)
+        const uniqueChainIds = new Map<string, number>();
+        for (const { chain } of rawOpps) {
+          const net = resolveNetwork(chain);
+          const info = SUPPORTED_CHAINS[net];
+          if (info && !uniqueChainIds.has(net)) uniqueChainIds.set(net, info.id);
+        }
+        const merklMaps = new Map<string, Map<string, MerklCampaign[]>>();
+        const ytMerklResults = await Promise.allSettled(
+          [...uniqueChainIds.entries()].map(async ([net, chainId]) => {
+            const map = await fetchMerklCampaigns(chainId).catch(() => new Map<string, MerklCampaign[]>());
+            return { net, map };
+          })
+        );
+        for (const r of ytMerklResults) {
+          if (r.status === "fulfilled") merklMaps.set(r.value.net, r.value.map);
+        }
+
         // ================================================================
         // PHASE 2: Compute YT arbitrage metrics per opportunity
         // ================================================================
@@ -201,6 +221,12 @@ Use get_pool_activity to monitor recent trading patterns in the target pool.`,
           }
           const lpData = extractLpApyBreakdown(pool, boostInfo?.boostFraction ?? 0);
 
+          // Look up Merkl campaigns
+          const network = resolveNetwork(chain);
+          const merklMap = merklMaps.get(network) || new Map();
+          const lookupAddrs = [pt.address, pool.address, pt.ibt?.address].filter(Boolean) as string[];
+          const ytMerklCampaigns = lookupMerklCampaigns(merklMap, lookupAddrs);
+
           opportunities.push({
             pt,
             pool,
@@ -224,6 +250,7 @@ Use get_pool_activity to monitor recent trading patterns in the target pool.`,
             lpApyBoostedTotal: lpData.lpApyBoostedTotal,
             lpApyAtBoost: lpData.lpApyAtBoost,
             lpApyBreakdown: lpData.lpApyBreakdown,
+            merklCampaigns: ytMerklCampaigns.length > 0 ? ytMerklCampaigns : undefined,
             underlying: pt.underlying?.symbol || "?",
             ibtAddress: pt.ibt?.address || "",
             ibtSymbol: pt.ibt?.symbol || "?",

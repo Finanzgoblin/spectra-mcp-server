@@ -5,8 +5,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, SUPPORTED_CHAINS, resolveNetwork } from "../config.js";
-import type { SpectraPt, SpectraPool } from "../types.js";
-import { fetchSpectra, fetchVeTotalSupply, scanAllChainPools } from "../api.js";
+import type { SpectraPt, SpectraPool, MerklCampaign } from "../types.js";
+import { fetchSpectra, fetchVeTotalSupply, scanAllChainPools, fetchMerklCampaigns, lookupMerklCampaigns } from "../api.js";
 import {
   formatUsd,
   formatPct,
@@ -19,6 +19,7 @@ import {
   extractLpApyBreakdown,
   computeSpectraBoost,
   estimatePriceImpact,
+  formatMerklCampaignLines,
 } from "../formatters.js";
 
 export function register(server: McpServer): void {
@@ -42,6 +43,9 @@ Protocol context:
 - IBT APR breakdown shows organic yield vs external incentive programs. High APR from
   incentives alone may not be sustainable.
 
+Includes external Merkl campaign APR when available (incentive programs beyond the
+native IBT yield). Merkl campaigns are fetched best-effort and shown alongside pool data.
+
 Use compare_yield to compare fixed vs. variable rates. Use get_looping_strategy to
 calculate leveraged fixed yield via Morpho. Use get_portfolio to check wallet holdings.
 Use get_pool_activity to see trading patterns on this pool.`,
@@ -52,7 +56,13 @@ Use get_pool_activity to see trading patterns on this pool.`,
     async ({ chain, pt_address }) => {
       try {
         const network = resolveNetwork(chain);
-        const data = await fetchSpectra(`/${network}/pt/${pt_address}`) as any;
+        const chainInfo = SUPPORTED_CHAINS[network];
+
+        // Fetch PT data and Merkl campaigns in parallel
+        const [data, merklMap] = await Promise.all([
+          fetchSpectra(`/${network}/pt/${pt_address}`) as Promise<any>,
+          chainInfo ? fetchMerklCampaigns(chainInfo.id).catch(() => new Map<string, MerklCampaign[]>()) : Promise.resolve(new Map<string, MerklCampaign[]>()),
+        ]);
         const pt = parsePtResponse(data);
 
         if (!pt) {
@@ -60,11 +70,16 @@ Use get_pool_activity to see trading patterns on this pool.`,
           return { content: [{ type: "text" as const, text }], isError: true };
         }
 
-        const summary = formatPtSummary(pt, chain);
+        // Look up Merkl campaigns for this pool's addresses
+        const poolAddr = pt.pools?.[0]?.address;
+        const ibtAddr = pt.ibt?.address;
+        const lookupAddrs = [pt_address, poolAddr, ibtAddr].filter(Boolean) as string[];
+        const campaigns = lookupMerklCampaigns(merklMap, lookupAddrs);
+
+        const summary = formatPtSummary(pt, chain, campaigns);
 
         // Next-step hints: guide agent to logical follow-up tools
         const ptAddr = pt.address || pt_address;
-        const poolAddr = pt.pools?.[0]?.address;
         const nextSteps = [
           ``,
           `--- Next Steps ---`,
@@ -102,6 +117,9 @@ LP APY is the yield from providing liquidity to the pool (fees + gauge emissions
 Set include_expired=true to also show recently matured pools (if the API returns them).
 By default only active (non-expired) pools are shown.
 
+Includes external Merkl campaign APR when available (incentive programs like KAT rewards
+that supplement native pool yield). Merkl data is fetched best-effort per chain.
+
 For multi-chain discovery, use get_best_fixed_yields (raw APY ranking) or
 scan_opportunities (capital-aware with price impact and looping analysis).
 Use get_pool_activity on a specific pool to see recent trading patterns.`,
@@ -127,7 +145,13 @@ Use get_pool_activity on a specific pool to see recent trading patterns.`,
     async ({ chain, sort_by, min_tvl_usd, compact, include_expired }) => {
       try {
         const network = resolveNetwork(chain);
-        const raw = await fetchSpectra(`/${network}/pools`) as any;
+        const chainInfo = SUPPORTED_CHAINS[network];
+
+        // Fetch pools and Merkl campaigns in parallel
+        const [raw, merklMap] = await Promise.all([
+          fetchSpectra(`/${network}/pools`) as Promise<any>,
+          chainInfo ? fetchMerklCampaigns(chainInfo.id).catch(() => new Map<string, MerklCampaign[]>()) : Promise.resolve(new Map<string, MerklCampaign[]>()),
+        ]);
         const pts: SpectraPt[] = raw?.data || raw || [];
 
         if (!Array.isArray(pts) || pts.length === 0) {
@@ -172,7 +196,11 @@ Use get_pool_activity on a specific pool to see recent trading patterns.`,
         if (compact) {
           body = expanded.map(({ pt, pool }) => formatPoolCompact(pt, pool, chain)).join("\n");
         } else {
-          body = expanded.map(({ pt, pool }) => formatPoolSummary(pt, pool, chain)).join("\n\n");
+          body = expanded.map(({ pt, pool }) => {
+            const addrs = [pt.address, pool.address, pt.ibt?.address].filter(Boolean) as string[];
+            const campaigns = lookupMerklCampaigns(merklMap, addrs);
+            return formatPoolSummary(pt, pool, chain, campaigns);
+          }).join("\n\n");
         }
 
         const footer = [
@@ -297,6 +325,8 @@ Protocol context:
 - LP alternative: providing liquidity to the Curve pool earns trading fees + SPECTRA
   gauge emissions. This is a third option alongside fixed (PT) and variable (IBT).
 
+Includes external Merkl campaign APR when available, shown alongside LP and IBT data.
+
 Use get_looping_strategy to lever up the fixed yield via Morpho. Use get_portfolio to
 check your current positions. Use scan_opportunities for multi-chain comparison.`,
     {
@@ -316,7 +346,13 @@ check your current positions. Use scan_opportunities for multi-chain comparison.
     async ({ chain, pt_address, ve_spectra_balance, capital_usd }) => {
       try {
         const network = resolveNetwork(chain);
-        const data = await fetchSpectra(`/${network}/pt/${pt_address}`) as any;
+        const chainInfo = SUPPORTED_CHAINS[network];
+
+        // Fetch PT data and Merkl campaigns in parallel
+        const [data, merklMap] = await Promise.all([
+          fetchSpectra(`/${network}/pt/${pt_address}`) as Promise<any>,
+          chainInfo ? fetchMerklCampaigns(chainInfo.id).catch(() => new Map<string, MerklCampaign[]>()) : Promise.resolve(new Map<string, MerklCampaign[]>()),
+        ]);
         const pt = parsePtResponse(data);
 
         if (!pt) {
@@ -425,6 +461,18 @@ check your current positions. Use scan_opportunities for multi-chain comparison.
           }
         }
         lines.push(`  YT Leverage: ${(pool.ytLeverage || 0).toFixed(1)}x`);
+
+        // Merkl external campaigns
+        {
+          const addrs = [pt_address, pool.address, pt.ibt?.address].filter(Boolean) as string[];
+          const campaigns = lookupMerklCampaigns(merklMap, addrs);
+          if (campaigns.length > 0) {
+            const existingTokens = new Set<string>();
+            for (const token of Object.keys(lpData.lpApyBreakdown.rewards)) existingTokens.add(token.toUpperCase());
+            const merklLines = formatMerklCampaignLines(campaigns, existingTokens);
+            for (const ml of merklLines) lines.push(ml);
+          }
+        }
 
         // Next-step hints
         const ptAddr = pt.address || pt_address;
