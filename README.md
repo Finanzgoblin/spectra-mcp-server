@@ -2,7 +2,7 @@
 
 Makes [Spectra Finance](https://spectra.finance) discoverable and usable by AI agents via the [Model Context Protocol](https://modelcontextprotocol.io).
 
-31 tools · 10 chains · read-only · on-chain Curve quoting · ERC-4626 health checks · yield curve term structure · historical eth_getLogs · cross-protocol Pendle comparison · Morpho supply-side visibility · zero web3 library dependencies
+31 tools · 10 chains · read-only · on-chain Curve quoting · ERC-4626 health checks · yield curve term structure · historical eth_getLogs · cross-protocol Pendle comparison · Morpho supply-side visibility · Merkl campaign APR integration · zero web3 library dependencies
 
 ## What This Does
 
@@ -13,6 +13,7 @@ Any AI agent (Claude, GPT, open-source) that supports MCP can now:
 - **Calculate** leveraged looping strategies (Spectra PT + Morpho collateral) with auto-detected borrow rates
 - **Compare** fixed vs. variable yields to make informed decisions
 - **Track** wallet portfolios across all Spectra positions (PT, YT, LP) with Merkl reward integration for complete PnL
+- **Surface** external Merkl campaign APR alongside pool and market data for both Spectra and Pendle
 - **Monitor** pool trading volume, individual transaction activity, and cross-pool address scanning
 - **Quote** PT trades with on-chain Curve `get_dy()` for exact output, falling back to math estimates
 - **Simulate** portfolio state after a hypothetical trade (BEFORE / TRADE / AFTER with deltas)
@@ -77,6 +78,8 @@ Layer 3: Structured Output Hints (computed at runtime in tool output)
   → Incentive sustainability: flags when >50% of IBT APR or LP APY comes from incentives,
     shows "organic only" APY so agents can assess yield durability without incentive assumptions
   → Pool reserves: IBT/PT amounts with ratio for AMM imbalance analysis
+  → Merkl campaign APR: external incentive programs (e.g., KAT rewards) shown per-pool/market
+    with double-counting avoidance (skips campaigns whose reward tokens are already displayed)
   → Points multipliers: external programs (Drops, InfiniFi, Firelight) with amounts
   → "Could be" / "at current rates" language: preserves ambiguity in ranked output
   → Makes key signals SALIENT without prescribing interpretation
@@ -321,6 +324,7 @@ Spectra MCP Server (this)
   +-- api.spectra.finance/v1/{chain}/metavaults
   +-- app.spectra.finance/api/v1/spectra/*
   +-- api.merkl.xyz/v3/userRewards (unclaimed Merkl rewards per wallet)
+  +-- api.merkl.xyz/v4/opportunities (Merkl campaign APR per chain)
   +-- api.morpho.org/graphql (PT collateral markets, borrow rates)
   +-- api-v2.pendle.finance/core/* (Pendle market data for cross-protocol comparison)
   +-- mainnet.base.org (veSPECTRA on-chain reads via raw eth_call)
@@ -337,7 +341,7 @@ src/
                       curator-strategy-guide), main(), graceful shutdown
   config.ts         Constants, chain config, Zod schemas, protocol parameters, veSPECTRA constants,
                       block time constants per chain, RPC URL resolution (hardcoded + dynamic override)
-  types.ts          TypeScript interfaces (SpectraPt, MorphoMarket, ScanOpportunity, MerklTokenReward, MerklChainRewards, etc.)
+  types.ts          TypeScript interfaces (SpectraPt, MorphoMarket, ScanOpportunity, MerklTokenReward, MerklChainRewards, MerklCampaign, etc.)
   api.ts            Fetch helpers with retry, GraphQL sanitization, Morpho batch lookup,
                       veSPECTRA RPC with Promise-based dedup cache, 30s TTL pool data cache,
                       Curve get_dy() on-chain quoting, ERC-4626 convertToAssets() health check,
@@ -345,7 +349,8 @@ src/
                       MetaVault multi-chain scanning, API response validation at system boundary,
                       chunked eth_getLogs with retry for historical event log fetching,
                       Merkl reward fetching and parsing (pool address extraction from reason keys,
-                      BigInt wei→human conversion, matched/unmatched reward categorization)
+                      BigInt wei→human conversion, matched/unmatched reward categorization),
+                      Merkl v4 campaign APR fetching (60s TTL cache, inflight dedup, address-based lookup)
   formatters.ts     Formatting, BigInt LLTV parsing, closed-form leverage math,
                       price impact, fractional-day maturity, boost computation,
                       slim envelope helpers, token amount formatting (BigInt → human-readable),
@@ -356,7 +361,8 @@ src/
                       flow accounting with competing hypotheses),
                       Layer 4 observation coverage (value coverage, temporal gaps,
                       data source coverage, activity diversity, boundary markers),
-                      Merkl reward display (per-position matched rewards, unmatched/exited rewards)
+                      Merkl reward display (per-position matched rewards, unmatched/exited rewards),
+                      Merkl campaign APR display (formatMerklCampaignLines with double-counting avoidance)
   tools/            Layer 2: each tool description teaches domain-specific mechanics
     context.ts      get_protocol_context (Layer 1 protocol mechanics, deposit paths, glossary, callable on-demand)
     pt.ts           get_pt_details, list_pools, get_best_fixed_yields, compare_yield
@@ -429,6 +435,7 @@ All address parameters are validated (`0x` + 40 hex chars). All API calls have a
 - **Historical event logs**: Chunked `eth_getLogs` (2000 blocks/chunk) with per-chunk retry — failed chunks are skipped so partial results are still returned. Dynamic `rpc_url` parameter enables any chain without hardcoded RPCs
 - **Contract detection cache**: Permanent `Map` cache for `eth_getCode` results (contract code doesn't change)
 - **Merkl rewards**: Best-effort parallel fetch from Merkl API — failure does not block portfolio display. Pool address matching via regex extraction from reason keys. BigInt `parseWei()` conversion for safe 18-decimal arithmetic
+- **Merkl campaigns**: Best-effort v4 campaign APR fetch per chain (60s TTL cache with inflight dedup). Failure returns empty map — tool output is unchanged. Double-counting avoidance skips campaigns whose reward tokens are already displayed via native API data
 - **MCP error signaling**: All error catch blocks return `isError: true` so agents can distinguish errors from empty results
 - **PT address resolution**: Pool tools (`get_pool_volume`, `get_pool_activity`) accept either pool address or PT address and resolve automatically
 - **Error logging**: Catch blocks in Morpho lookups log to stderr instead of silently swallowing failures
@@ -496,6 +503,7 @@ This server wraps these endpoints:
 | `GET /v1/{chain}/pools/{pool}/activity` | `get_pool_activity`, `get_address_activity` (active + expired pools) |
 | `GET /v1/{chain}/metavaults` | `get_metavaults`, `model_metavault_strategy` (live mode) |
 | `GET api.merkl.xyz/v3/userRewards?user={address}&chainId={chainId}` | `get_portfolio` (Merkl reward fetching — SPECTRA gauge emissions + incentive programs) |
+| `GET api.merkl.xyz/v4/opportunities?chainId={chainId}` | `list_pools`, `get_pt_details`, `compare_yield`, `list_pendle_markets`, `compare_pendle_spectra`, `scan_opportunities`, `scan_curator_opportunities`, `scan_yt_arbitrage` (Merkl campaign APR — 60s TTL cache) |
 | `GET app.spectra.finance/api/v1/spectra/circulating-supply` | `get_protocol_stats` |
 | `GET app.spectra.finance/api/v1/spectra/total-supply` | `get_protocol_stats` |
 | `POST api.morpho.org/graphql` | `get_morpho_markets`, `get_morpho_rate`, `get_looping_strategy` (auto-detect), `scan_opportunities` (batch) |

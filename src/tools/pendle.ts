@@ -15,8 +15,8 @@ import {
   resolveNetwork,
   EVM_ADDRESS,
 } from "../config.js";
-import type { PendleMarket, SpectraPt, SpectraPool } from "../types.js";
-import { fetchPendleMarkets, scanAllPendleMarkets, fetchSpectra } from "../api.js";
+import type { PendleMarket, SpectraPt, SpectraPool, MerklCampaign } from "../types.js";
+import { fetchPendleMarkets, scanAllPendleMarkets, fetchSpectra, fetchMerklCampaigns, lookupMerklCampaigns } from "../api.js";
 import {
   formatUsd,
   formatPct,
@@ -56,6 +56,9 @@ better rates for a given underlying + maturity.
 Pendle-supported chains: ${PENDLE_CHAIN_KEYS.map((k) => `${PENDLE_CHAIN_NAMES[k]} (${k})`).join(", ")}
 Chains with Spectra overlap: ${PENDLE_CHAIN_KEYS.filter((k) => SUPPORTED_CHAINS[k]).join(", ")}
 Pendle-only chains (Spectra not deployed): ${PENDLE_CHAIN_KEYS.filter((k) => !SUPPORTED_CHAINS[k]).join(", ")}
+
+Includes external Merkl campaign APR when available (LP, YT, and SY incentive programs).
+Merkl campaigns are fetched best-effort per chain and shown alongside native PENDLE incentives.
 
 Use compare_pendle_spectra to do a head-to-head comparison on a specific underlying.
 Use scan_curator_opportunities for unified cross-protocol ranking with capital-aware sizing.
@@ -131,6 +134,23 @@ Use scan_opportunities for Spectra-native opportunity ranking.`,
           return { content: [{ type: "text" as const, text }] };
         }
 
+        // Fetch Merkl campaigns for chains present in results (best-effort, parallel)
+        const uniqueChains = [...new Set(capped.map(({ chain: c }) => c))];
+        const merklMaps = new Map<string, Map<string, MerklCampaign[]>>();
+        if (!compact) {
+          const merklResults = await Promise.allSettled(
+            uniqueChains.map(async (c) => {
+              const chainId = PENDLE_CHAIN_IDS[c];
+              if (!chainId) return { chain: c, map: new Map<string, MerklCampaign[]>() };
+              const map = await fetchMerklCampaigns(chainId).catch(() => new Map<string, MerklCampaign[]>());
+              return { chain: c, map };
+            })
+          );
+          for (const r of merklResults) {
+            if (r.status === "fulfilled") merklMaps.set(r.value.chain, r.value.map);
+          }
+        }
+
         // Format
         const header = chain
           ? `== Pendle Markets: ${PENDLE_CHAIN_NAMES[chain] || chain} ==\n  Found: ${capped.length} market(s)${allMarkets.length > top_n ? ` (showing top ${top_n} of ${allMarkets.length})` : ""}\n\n`
@@ -140,7 +160,12 @@ Use scan_opportunities for Spectra-native opportunity ranking.`,
         if (compact) {
           body = capped.map(({ market, chain: c }) => formatPendleMarketCompact(market, c)).join("\n");
         } else {
-          body = capped.map(({ market, chain: c }) => formatPendleMarketSummary(market, c)).join("\n\n");
+          body = capped.map(({ market, chain: c }) => {
+            const merklMap = merklMaps.get(c) || new Map();
+            const addrs = [market.address, market.pt, market.yt, market.sy].filter(Boolean);
+            const campaigns = lookupMerklCampaigns(merklMap, addrs);
+            return formatPendleMarketSummary(market, c, campaigns);
+          }).join("\n\n");
         }
 
         // Chain coverage info
@@ -187,6 +212,8 @@ Essential for MetaVault curators who can allocate to either protocol. Shows:
 
 Only works on chains where both Spectra and Pendle are deployed:
 ${PENDLE_CHAIN_KEYS.filter((k) => SUPPORTED_CHAINS[k]).map((k) => PENDLE_CHAIN_NAMES[k]).join(", ")}
+
+Includes external Merkl campaign APR for both protocols when available.
 
 Use list_pendle_markets for Pendle-only chain data.
 Use scan_curator_opportunities for unified cross-protocol ranking with capital-aware sizing.

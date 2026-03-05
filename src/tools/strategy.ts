@@ -17,10 +17,11 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
   MORPHO_CHAIN_IDS,
+  SUPPORTED_CHAINS,
   resolveNetwork,
 } from "../config.js";
-import type { ScanOpportunity } from "../types.js";
-import { scanAllChainPools, scanAllMetavaults, findMorphoMarketsForPts, fetchVeTotalSupply } from "../api.js";
+import type { ScanOpportunity, MerklCampaign } from "../types.js";
+import { scanAllChainPools, scanAllMetavaults, findMorphoMarketsForPts, fetchVeTotalSupply, fetchMerklCampaigns, lookupMerklCampaigns } from "../api.js";
 import {
   formatPct,
   formatUsd,
@@ -50,6 +51,7 @@ Unlike get_best_fixed_yields (which ranks by raw APY), this tool computes:
 - Pool capacity (max capital before price impact exceeds your threshold)
 - IBT APR composition (organic base yield vs external incentive programs)
 - Points program multipliers and asset tags per opportunity
+- External Merkl campaign APR (incentive programs beyond native yield)
 - Risk warnings (low liquidity, short maturity, high impact)
 - MetaVault alternatives (curated auto-rolling LP vaults with YT compounding)
 
@@ -156,6 +158,24 @@ Use model_metavault_strategy to model MetaVault looping economics.`,
 
         const { opportunities: rawOpps, failedChains } = poolResult;
 
+        // Fetch Merkl campaigns for unique chains in results (best-effort, parallel)
+        const uniqueChainIds = new Map<string, number>();
+        for (const { chain } of rawOpps) {
+          const net = resolveNetwork(chain);
+          const info = SUPPORTED_CHAINS[net];
+          if (info && !uniqueChainIds.has(net)) uniqueChainIds.set(net, info.id);
+        }
+        const merklMaps = new Map<string, Map<string, MerklCampaign[]>>();
+        const merklResults = await Promise.allSettled(
+          [...uniqueChainIds.entries()].map(async ([net, chainId]) => {
+            const map = await fetchMerklCampaigns(chainId).catch(() => new Map<string, MerklCampaign[]>());
+            return { net, map };
+          })
+        );
+        for (const r of merklResults) {
+          if (r.status === "fulfilled") merklMaps.set(r.value.net, r.value.map);
+        }
+
         // ================================================================
         // PHASE 2: Compute capital-aware metrics per opportunity
         // ================================================================
@@ -206,6 +226,12 @@ Use model_metavault_strategy to model MetaVault looping economics.`,
           }
           const lpData = extractLpApyBreakdown(pool, boostInfo?.boostFraction ?? 0);
 
+          // Look up Merkl campaigns for this pool
+          const network = resolveNetwork(chain);
+          const merklMap = merklMaps.get(network) || new Map();
+          const lookupAddrs = [pt.address, pool.address, pt.ibt?.address].filter(Boolean) as string[];
+          const merklCampaigns = lookupMerklCampaigns(merklMap, lookupAddrs);
+
           opportunities.push({
             pt,
             pool,
@@ -227,6 +253,7 @@ Use model_metavault_strategy to model MetaVault looping economics.`,
             lpApyBoostedTotal: lpData.lpApyBoostedTotal,
             lpApyAtBoost: lpData.lpApyAtBoost,
             lpApyBreakdown: lpData.lpApyBreakdown,
+            merklCampaigns: merklCampaigns.length > 0 ? merklCampaigns : undefined,
             sortApy: effectiveApy,   // updated in Phase 3 if looping profitable
             underlying: pt.underlying?.symbol || "?",
             ibtAddress: pt.ibt?.address || "",
