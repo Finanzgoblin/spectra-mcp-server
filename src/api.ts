@@ -17,7 +17,7 @@ import {
   CHAIN_RPC_URLS,
   MAX_LOG_BLOCK_RANGE,
 } from "./config.js";
-import type { MorphoMarket, MorphoMarketSupplier, MorphoVault, MorphoVaultAllocation, SpectraPt, SpectraPool, SpectraMetavault, PendleMarket, RawPoolOpportunity, ChainScanResult, MerklTokenReward, MerklChainRewards } from "./types.js";
+import type { MorphoMarket, MorphoMarketSupplier, MorphoVault, MorphoVaultAllocation, SpectraPt, SpectraPool, SpectraMetavault, PendleMarket, RawPoolOpportunity, ChainScanResult, MerklTokenReward, MerklChainRewards, MerklCampaign } from "./types.js";
 
 // =============================================================================
 // Retry Logic
@@ -1742,6 +1742,122 @@ export function parseMerklRewards(
     matched,
     unmatched: Array.from(unmatchedByToken.values()).filter(r => r.unclaimed > 0 || r.pending > 0),
   };
+}
+
+// =============================================================================
+// Merkl Campaign APR (v4 Opportunities API)
+// =============================================================================
+
+const MERKL_V4_API = "https://api.merkl.xyz/v4";
+const MERKL_CAMPAIGN_TTL_MS = 60_000; // 60 seconds
+const _merklCampaignCache = new Map<number, { campaigns: Map<string, MerklCampaign[]>; expiresAt: number }>();
+const _merklCampaignInflight = new Map<number, Promise<Map<string, MerklCampaign[]>>>();
+
+/**
+ * Extract a clean 0x address from a Merkl opportunity identifier.
+ * Identifiers can have suffixes like "JUMPER", "WHITELIST_CAMPAIGN", etc.
+ * Extracts the first 42-char 0x address found.
+ */
+function cleanMerklIdentifier(identifier: string): string | null {
+  const match = identifier.match(/0x[a-fA-F0-9]{40}/);
+  return match ? match[0].toLowerCase() : null;
+}
+
+/**
+ * Fetch Merkl v4 campaign opportunities for a chain, indexed by target address.
+ * Returns Map<lowercased_address, MerklCampaign[]>.
+ * Cached for 60s with inflight dedup. Best-effort — returns empty map on error.
+ */
+export async function fetchMerklCampaigns(chainId: number): Promise<Map<string, MerklCampaign[]>> {
+  const now = Date.now();
+  const cached = _merklCampaignCache.get(chainId);
+  if (cached && now < cached.expiresAt) return cached.campaigns;
+
+  const inflight = _merklCampaignInflight.get(chainId);
+  if (inflight) return inflight;
+
+  const promise = (async () => {
+    try {
+      const url = `${MERKL_V4_API}/opportunities?chainId=${chainId}`;
+      const res = await fetchWithRetry(() =>
+        fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
+      );
+      if (!res.ok) return new Map<string, MerklCampaign[]>();
+
+      const raw = await res.json() as any[];
+      if (!Array.isArray(raw)) return new Map<string, MerklCampaign[]>();
+
+      const campaignMap = new Map<string, MerklCampaign[]>();
+
+      for (const opp of raw) {
+        if (!opp || typeof opp !== "object") continue;
+        if (opp.status !== "LIVE") continue;
+        if (!opp.identifier || typeof opp.identifier !== "string") continue;
+
+        const addr = cleanMerklIdentifier(opp.identifier);
+        if (!addr) continue;
+
+        const apr = typeof opp.apr === "number" ? opp.apr : 0;
+        if (apr <= 0) continue;
+
+        // Extract reward token symbols from tokens array
+        const rewardTokens: string[] = [];
+        if (Array.isArray(opp.tokens)) {
+          for (const t of opp.tokens) {
+            if (t?.symbol && typeof t.symbol === "string") {
+              rewardTokens.push(t.symbol);
+            }
+          }
+        }
+
+        const campaign: MerklCampaign = {
+          identifier: addr,
+          apr,
+          type: opp.type || "",
+          action: opp.action || "",
+          name: opp.name || "",
+          tvl: typeof opp.tvl === "number" ? opp.tvl : 0,
+          status: opp.status || "",
+          rewardTokens,
+          dailyRewards: typeof opp.dailyRewards === "number" ? opp.dailyRewards : 0,
+        };
+
+        const existing = campaignMap.get(addr);
+        if (existing) {
+          existing.push(campaign);
+        } else {
+          campaignMap.set(addr, [campaign]);
+        }
+      }
+
+      _merklCampaignCache.set(chainId, { campaigns: campaignMap, expiresAt: Date.now() + MERKL_CAMPAIGN_TTL_MS });
+      return campaignMap;
+    } catch (err) {
+      console.error(`Merkl campaign fetch failed for chainId ${chainId}:`, err instanceof Error ? err.message : err);
+      return new Map<string, MerklCampaign[]>();
+    } finally {
+      _merklCampaignInflight.delete(chainId);
+    }
+  })();
+
+  _merklCampaignInflight.set(chainId, promise);
+  return promise;
+}
+
+/**
+ * Look up Merkl campaigns for a set of addresses.
+ * Returns all matching campaigns across all provided addresses.
+ */
+export function lookupMerklCampaigns(
+  merklMap: Map<string, MerklCampaign[]>,
+  addresses: string[],
+): MerklCampaign[] {
+  const campaigns: MerklCampaign[] = [];
+  for (const addr of addresses) {
+    const found = merklMap.get(addr.toLowerCase());
+    if (found) campaigns.push(...found);
+  }
+  return campaigns;
 }
 
 // =============================================================================

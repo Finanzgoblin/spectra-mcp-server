@@ -276,6 +276,9 @@ export interface ScanOpportunity {
   // Sort key — used internally for default ordering; agents see all yield dimensions
   sortApy: number;            // looping?.optimalEffectiveNetApy || effectiveApy
 
+  // Merkl external incentive campaigns (populated when available)
+  merklCampaigns?: MerklCampaign[];
+
   // Metadata
   underlying: string;
   ibtAddress: string;
@@ -328,6 +331,9 @@ export interface YtArbitrageOpportunity {
     rewards: Record<string, number>;
     boostedRewards: Record<string, { min: number; max: number }>;
   };
+
+  // Merkl external incentive campaigns (populated when available)
+  merklCampaigns?: MerklCampaign[];
 
   // Metadata
   underlying: string;
@@ -453,6 +459,23 @@ export interface MetavaultCuratorEconomics {
   curatorFeeRevenueUsd: number;  // annual fee income on external deposits
   ownYieldUsd: number;           // annual yield on own capital
   effectiveCuratorApy: number;   // (ownYield + feeRevenue) / capital * 100
+}
+
+// =============================================================================
+// Merkl Campaign Types
+// =============================================================================
+
+/** A Merkl incentive campaign fetched from the v4 opportunities API. */
+export interface MerklCampaign {
+  identifier: string;    // pool/vault/token address (cleaned, lowercased 0x...)
+  apr: number;           // total APR (%)
+  type: string;          // CLAMM, ERC20LOGPROCESSOR, MORPHOVAULT, etc.
+  action: string;        // POOL, HOLD, etc.
+  name: string;          // human-readable campaign name
+  tvl: number;           // campaign TVL in USD
+  status: string;        // LIVE, PAST, etc.
+  rewardTokens: string[]; // reward token symbols
+  dailyRewards: number;  // USD daily rewards
 }
 
 // =============================================================================
@@ -591,6 +614,9 @@ export interface CuratorOpportunity {
     maturityGapDays: number;
     matchQuality: "exact" | "close" | "loose";
   };
+
+  // Merkl external incentive campaigns (populated when available)
+  merklCampaigns?: MerklCampaign[];
 
   warnings: string[];
 }
