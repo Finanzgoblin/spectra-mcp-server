@@ -105,6 +105,7 @@ export interface MorphoAsset {
   symbol: string;
   name: string;
   decimals?: number;
+  priceUsd?: number | null;
 }
 
 export interface MorphoMarketReward {
@@ -126,6 +127,17 @@ export interface MorphoMarketState {
   rewards?: MorphoMarketReward[];
 }
 
+/** Shared liquidity from a vault's Public Allocator that can be reallocated to this market. */
+export interface MorphoPublicAllocatorLiquidity {
+  vault: { address: string; name: string | null };
+  assets: string; // raw BigInt as string
+  withdrawMarket: {
+    uniqueKey: string;
+    loanAsset: { symbol: string } | null;
+    collateralAsset: { symbol: string } | null;
+  } | null;
+}
+
 export interface MorphoWarning {
   type: string;
   level: string;
@@ -137,9 +149,12 @@ export interface MorphoMarket {
   listed: boolean;
   collateralAsset: MorphoAsset | null;
   loanAsset: MorphoAsset;
-  morphoBlue: { chain: { id: number; network: string } };
+  morphoBlue: { address?: string; chain: { id: number; network: string } };
   state: MorphoMarketState | null;
   warnings: MorphoWarning[];
+  // Public Allocator fields — available when queried with extended market fields
+  reallocatableLiquidityAssets?: string | null; // raw BigInt as string
+  publicAllocatorSharedLiquidity?: MorphoPublicAllocatorLiquidity[];
 }
 
 // =============================================================================
