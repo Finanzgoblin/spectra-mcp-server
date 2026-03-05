@@ -750,6 +750,75 @@ export async function fetchIbtConversionRate(
 }
 
 // =============================================================================
+// On-Chain Pendle SY Exchange Rate
+// =============================================================================
+
+// Pendle IStandardizedYield function selector: exchangeRate()
+const PENDLE_SY_SELECTORS = {
+  exchangeRate: "0x3ba0b9a9",
+} as const;
+
+/**
+ * Call Pendle SY exchangeRate() on a Standardized Yield token via eth_call.
+ * Returns the exchange rate as a number (underlying per 1 SY), or null on failure.
+ *
+ * exchangeRate() is a no-arg view function returning uint256 in 18-decimal fixed point,
+ * regardless of the underlying token's decimals. 1 SY = result / 1e18 underlying.
+ *
+ * Best-effort — returns null if the chain has no RPC or the call reverts.
+ */
+export async function fetchSyExchangeRate(
+  syAddress: string,
+  chainSlug: string,
+): Promise<number | null> {
+  const network = resolveNetwork(chainSlug);
+  const rpcUrl = CHAIN_RPC_URLS[network];
+  if (!rpcUrl) return null;
+
+  try {
+    const res = await fetchWithRetry(() =>
+      fetch(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "eth_call",
+          params: [
+            { to: syAddress, data: PENDLE_SY_SELECTORS.exchangeRate },
+            "latest",
+          ],
+        }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      })
+    );
+
+    if (!res.ok) return null;
+
+    let json: any;
+    try {
+      json = await res.json();
+    } catch {
+      return null;
+    }
+
+    if (json.error) return null;
+
+    const hex: string = json.result;
+    if (!hex || hex === "0x" || hex === "0x0") return null;
+
+    const raw = BigInt(hex);
+    // exchangeRate() always returns in 18-decimal fixed point
+    const divisor = 10n ** 18n;
+    const intPart = raw / divisor;
+    const fracPart = raw % divisor;
+    return Number(intPart) + Number(fracPart) / Number(divisor);
+  } catch {
+    return null; // Best-effort — graceful degradation
+  }
+}
+
+// =============================================================================
 // MetaVault API
 // =============================================================================
 

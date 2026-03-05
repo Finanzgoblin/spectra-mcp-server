@@ -185,8 +185,9 @@ Goal: "Evaluate a specific opportunity in depth"
   Then: get_looping_strategy(chain, pt_address) if Morpho market exists
   Then: quote_trade(chain, pt_address, amount, side) for exact entry cost
   Then: simulate_portfolio_after_trade(...) to preview the result
-  For Pendle markets: use check_ibt_health(chain, ibt_address=underlyingAsset) — direct mode
-  runs on-chain ERC-4626 checks without needing a Spectra PT.
+  For Pendle markets: use check_ibt_health(chain, ibt_address=SY_ADDRESS) — direct mode
+  tries ERC-4626, then falls back to Pendle SY exchangeRate(). Use the SY address, not
+  underlyingAsset (which is the base token with no conversion rate).
 
 Goal: "Find YT mispricing"
   Start with: scan_yt_arbitrage(capital_usd) for spread-sorted opportunities
@@ -222,11 +223,25 @@ Goal: "Compare Spectra vs Pendle on a specific chain"
   Matching is by underlying asset + maturity proximity (exact ≤7d, close ≤30d, loose ≤90d).
   Pendle-only chains (${Object.keys(PENDLE_CHAIN_IDS).filter((k) => !SUPPORTED_CHAINS[k]).map((k) => PENDLE_CHAIN_NAMES[k]).join(", ")}) represent Spectra expansion opportunities.
 
+Goal: "Evaluate a Pendle market for MetaVault allocation"
+  Start with: list_pendle_markets(chain=CHAIN) — find market, note SY address
+  Then: check_ibt_health(chain, ibt_address=SY_ADDRESS) — verify SY→underlying rate on-chain
+  Note: use the SY address (not underlyingAsset) for health checks. SY is the yield-bearing
+  wrapper; underlyingAsset is the base token (e.g., USDC) which has no conversion rate.
+  Pendle LP APY breakdown: swap fees + PENDLE incentives + underlying variable yield.
+  vePENDLE holders get boosted LP APY (shown as "Max Boosted LP APY" in market output).
+  Key differences from Spectra: Pendle uses time-decay AMM pricing (not Curve StableSwap),
+  Pendle positions require manual rollover (no auto-rolling like Spectra MetaVaults),
+  and Pendle LP has different risk profile (impermanent loss from AMM time decay).
+
 Goal: "Assess pool depth and IBT safety before deploying"
   Start with: check_ibt_health(chain, pt_address) — multi-signal IBT verdict
   Then: get_pool_capacity(chain, pt_address) — capacity curve across capital tiers
   check_ibt_health verifies: conversion rate, APR sustainability, pool balance, liquidity.
-  check_ibt_health also accepts ibt_address for direct ERC-4626 checks (Pendle SY tokens, any vault).
+  check_ibt_health direct mode tries ERC-4626 convertToAssets(), then Pendle SY exchangeRate().
+  For Pendle: use check_ibt_health(chain, ibt_address=SY_ADDRESS) where SY is the
+  Standardized Yield token. The SY address is shown in list_pendle_markets output.
+  Do NOT use underlyingAsset — that's the base token (USDC, ETH) with no conversion rate.
   get_pool_capacity shows: impact & effective APY at geometric capital tiers, sweet spot, exhaustion.
 
 Goal: "Compare maturities for a single underlying (term structure)"
