@@ -226,6 +226,12 @@ Goal: "Assess pool depth and IBT safety before deploying"
   check_ibt_health verifies: conversion rate, APR sustainability, pool balance, liquidity.
   get_pool_capacity shows: impact & effective APY at geometric capital tiers, sweet spot, exhaustion.
 
+Goal: "Compare maturities for a single underlying (term structure)"
+  Start with: get_yield_curve(underlying="USDC") — all maturities across all chains
+  Shows implied APY at each maturity point, sorted chronologically.
+  Identifies curve shape (normal/inverted/flat), steepest segment, cross-chain pairs.
+  Then: get_pt_details or check_ibt_health on specific maturities to drill deeper.
+
 Four discovery tools and when to use each:
   get_best_fixed_yields — headline rates across all chains (no capital adjustment)
   scan_opportunities — capital-aware effective APY with Morpho looping (Spectra-only)
