@@ -9,7 +9,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork } from "../config.js";
-import { fetchSpectra, fetchIbtConversionRate, fetchTokenDecimals } from "../api.js";
+import { fetchSpectra, fetchIbtConversionRate, fetchTokenDecimals, fetchSyExchangeRate } from "../api.js";
 import { parsePtResponse, formatUsd, formatPct, formatBalance } from "../formatters.js";
 
 type Signal = "ok" | "caution" | "warning";
@@ -38,7 +38,8 @@ deploying" — something looks anomalous.
 
 Two modes:
   1. Spectra mode (pt_address): Full analysis using Spectra API + on-chain checks.
-  2. Direct mode (ibt_address): Protocol-agnostic on-chain ERC-4626 checks only.
+  2. Direct mode (ibt_address): Protocol-agnostic on-chain checks.
+     Tries ERC-4626 convertToAssets(), falls back to Pendle SY exchangeRate().
      Use for Pendle SY tokens, or any ERC-4626 vault not listed on Spectra.
      Runs: conversion rate + rate direction. Skips: APR, pool balance, liquidity.
 
@@ -414,11 +415,40 @@ async function runDirectMode(chain: string, ibtAddress: string) {
       });
     }
   } else {
-    checks.push({
-      name: "Conversion Rate",
-      signal: "caution",
-      lines: ["Could not read convertToAssets() — token may not be ERC-4626, or no RPC available for this chain."],
-    });
+    // ERC-4626 failed — try Pendle SY exchangeRate() as fallback
+    const syRate = await fetchSyExchangeRate(ibtAddress, chain);
+    if (syRate !== null) {
+      checks.push({
+        name: "Conversion Rate",
+        signal: "ok",
+        lines: [`${syRate.toFixed(6)} underlying per token (Pendle SY exchangeRate)`],
+      });
+
+      // Rate direction (same logic as ERC-4626)
+      if (syRate < 1.0) {
+        checks.push({
+          name: "Rate Direction",
+          signal: "warning",
+          lines: [
+            `${syRate.toFixed(6)} — below 1.0`,
+            "SY token may have lost value, or this may be a wrapper where sub-1.0 is expected.",
+          ],
+        });
+      } else {
+        checks.push({
+          name: "Rate Direction",
+          signal: "ok",
+          lines: [`${syRate.toFixed(6)} — above 1.0 (SY accruing value normally)`],
+        });
+      }
+    } else {
+      // Neither ERC-4626 nor Pendle SY worked
+      checks.push({
+        name: "Conversion Rate",
+        signal: "caution",
+        lines: ["Could not read convertToAssets() or exchangeRate() — token may not be ERC-4626 or Pendle SY, or no RPC available."],
+      });
+    }
   }
 
   // ── Aggregate verdict ──
