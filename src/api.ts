@@ -17,7 +17,7 @@ import {
   CHAIN_RPC_URLS,
   MAX_LOG_BLOCK_RANGE,
 } from "./config.js";
-import type { MorphoMarket, SpectraPt, SpectraPool, SpectraMetavault, PendleMarket, RawPoolOpportunity, ChainScanResult, MerklTokenReward, MerklChainRewards } from "./types.js";
+import type { MorphoMarket, MorphoMarketSupplier, MorphoVault, MorphoVaultAllocation, SpectraPt, SpectraPool, SpectraMetavault, PendleMarket, RawPoolOpportunity, ChainScanResult, MerklTokenReward, MerklChainRewards } from "./types.js";
 
 // =============================================================================
 // Retry Logic
@@ -152,6 +152,11 @@ export const MORPHO_MARKET_FIELDS = `
     utilization
     fee
     timestamp
+    rewards {
+      asset { address symbol }
+      supplyApr
+      borrowApr
+    }
   }
   warnings { type level }
 `;
@@ -257,6 +262,215 @@ export async function findMorphoMarketsForPts(
   }
 
   return result;
+}
+
+// =============================================================================
+// Morpho Supply-Side: Market Suppliers & Vaults
+// =============================================================================
+
+/**
+ * Fetch top suppliers for a Morpho market, then identify which are vaults.
+ * Returns enriched supplier list with vault metadata.
+ * Best-effort — returns empty array on error.
+ */
+export async function fetchMorphoMarketSuppliers(
+  marketKey: string,
+  chainId: number,
+  topN: number = 10,
+): Promise<MorphoMarketSupplier[]> {
+  try {
+    // Step 1: Get top suppliers by supply shares
+    const posQuery = `{
+      marketPositions(
+        where: {
+          marketUniqueKey_in: ["${sanitizeGraphQL(marketKey)}"]
+          chainId_in: [${chainId}]
+        }
+        first: ${Math.min(topN, 50)}
+        orderBy: SupplyShares
+        orderDirection: Desc
+      ) {
+        items {
+          user { address }
+          state {
+            supplyShares
+            supplyAssets
+            supplyAssetsUsd
+            borrowShares
+            borrowAssets
+            borrowAssetsUsd
+            collateral
+            collateralUsd
+          }
+        }
+      }
+    }`;
+
+    const posData = await fetchMorpho(posQuery) as any;
+    const positions = posData?.marketPositions?.items || [];
+
+    // Filter to actual suppliers (non-zero supply)
+    const suppliers = positions.filter(
+      (p: any) => p.state?.supplyAssetsUsd > 0
+    );
+
+    if (suppliers.length === 0) return [];
+
+    // Step 2: Check which supplier addresses are Morpho vaults
+    const supplierAddrs = suppliers.map((p: any) => p.user?.address).filter(Boolean);
+    const addrList = supplierAddrs
+      .map((a: string) => `"${sanitizeGraphQL(a)}"`)
+      .join(", ");
+
+    const vaultQuery = `{
+      vaults(
+        where: {
+          address_in: [${addrList}]
+          chainId_in: [${chainId}]
+        }
+        first: ${supplierAddrs.length}
+      ) {
+        items {
+          address
+          name
+          symbol
+          state {
+            totalAssetsUsd
+          }
+          metadata { curators { name } }
+        }
+      }
+    }`;
+
+    let vaultMap = new Map<string, any>();
+    try {
+      const vaultData = await fetchMorpho(vaultQuery) as any;
+      const vaults = vaultData?.vaults?.items || [];
+      for (const v of vaults) {
+        vaultMap.set(v.address.toLowerCase(), v);
+      }
+    } catch {
+      // Vault lookup is best-effort
+    }
+
+    // Step 3: Combine into enriched supplier list
+    const result: MorphoMarketSupplier[] = [];
+    for (const pos of suppliers) {
+      const addr = pos.user?.address || "";
+      const vault = vaultMap.get(addr.toLowerCase());
+      const curatorName = vault?.metadata?.curators?.[0]?.name;
+      result.push({
+        address: addr,
+        supplyAssetsUsd: pos.state?.supplyAssetsUsd || 0,
+        borrowAssetsUsd: pos.state?.borrowAssetsUsd || 0,
+        collateralUsd: pos.state?.collateralUsd || 0,
+        isVault: !!vault,
+        ...(vault ? {
+          vaultName: vault.name,
+          vaultSymbol: vault.symbol,
+          vaultTotalAssetsUsd: vault.state?.totalAssetsUsd || 0,
+          vaultCurator: curatorName || undefined,
+        } : {}),
+      });
+    }
+
+    return result;
+  } catch (err) {
+    console.error(`Morpho supplier lookup failed for market ${marketKey}:`, err instanceof Error ? err.message : err);
+    return [];
+  }
+}
+
+/** GraphQL fields for Morpho vault queries. */
+const MORPHO_VAULT_FIELDS = `
+  address
+  name
+  symbol
+  listed
+  asset { address symbol decimals }
+  chain { id network }
+  state {
+    totalAssetsUsd
+    apy
+    netApy
+    fee
+    allocation {
+      market { uniqueKey loanAsset { symbol } collateralAsset { symbol } }
+      supplyAssetsUsd
+      supplyCap
+      supplyCapUsd
+    }
+  }
+  metadata { curators { name } }
+`;
+
+/**
+ * Fetch Morpho vaults on a chain.
+ * Best-effort — returns empty array on error.
+ */
+export async function fetchMorphoVaults(
+  chain: string,
+  opts?: { assetFilter?: string; minTvlUsd?: number; topN?: number },
+): Promise<MorphoVault[]> {
+  const network = resolveNetwork(chain);
+  const morphoChainId = MORPHO_CHAIN_IDS[network];
+  if (!morphoChainId) return [];
+
+  try {
+    const topN = Math.min(opts?.topN || 50, 100);
+    const minTvl = opts?.minTvlUsd || 0;
+
+    const query = `{
+      vaults(
+        where: {
+          chainId_in: [${morphoChainId}]
+          ${minTvl > 0 ? `totalAssetsUsd_gte: ${minTvl}` : ""}
+          ${opts?.assetFilter ? `search: "${sanitizeGraphQL(opts.assetFilter)}"` : ""}
+        }
+        first: ${topN}
+        orderBy: TotalAssetsUsd
+        orderDirection: Desc
+      ) {
+        items { ${MORPHO_VAULT_FIELDS} }
+        pageInfo { count countTotal }
+      }
+    }`;
+
+    const data = await fetchMorpho(query) as any;
+    const items = data?.vaults?.items || [];
+
+    return items.map((v: any): MorphoVault => {
+      const curatorName = v.metadata?.curators?.[0]?.name;
+      const allocations: MorphoVaultAllocation[] = (v.state?.allocation || []).map((a: any) => ({
+        marketKey: a.market?.uniqueKey || "",
+        collateralSymbol: a.market?.collateralAsset?.symbol || "?",
+        loanSymbol: a.market?.loanAsset?.symbol || "?",
+        supplyAssetsUsd: a.supplyAssetsUsd || 0,
+        supplyCap: a.supplyCap || null,
+        supplyCapUsd: a.supplyCapUsd || null,
+      }));
+
+      return {
+        address: v.address,
+        name: v.name || "Unnamed",
+        symbol: v.symbol || "?",
+        listed: v.listed ?? false,
+        asset: v.asset || { address: "", symbol: "?", name: "?" },
+        chain: v.chain || { id: morphoChainId, network },
+        state: v.state ? {
+          totalAssetsUsd: v.state.totalAssetsUsd || null,
+          apy: v.state.apy || null,
+          netApy: v.state.netApy || null,
+          fee: v.state.fee || null,
+          allocation: allocations,
+        } : null,
+        curator: curatorName || undefined,
+      };
+    });
+  } catch (err) {
+    console.error(`Morpho vault fetch failed for ${chain}:`, err instanceof Error ? err.message : err);
+    return [];
+  }
 }
 
 // =============================================================================

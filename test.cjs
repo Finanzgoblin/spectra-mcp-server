@@ -185,7 +185,7 @@ async function testToolRegistration(client) {
   const tools = await client.listTools();
   const names = tools.map((t) => t.name);
 
-  assert(tools.length === 29, "exactly 29 tools registered", `got ${tools.length}: ${names.join(", ")}`);
+  assert(tools.length === 31, "exactly 31 tools registered", `got ${tools.length}: ${names.join(", ")}`);
 
   const expected = [
     "get_pt_details",
@@ -201,6 +201,8 @@ async function testToolRegistration(client) {
     "get_address_activity",
     "get_morpho_markets",
     "get_morpho_rate",
+    "get_morpho_market_suppliers",
+    "get_morpho_vaults",
     "quote_trade",
     "simulate_portfolio_after_trade",
     "scan_opportunities",
@@ -1216,6 +1218,108 @@ async function testLoopingAutoMorpho(client) {
   }
 }
 
+async function testGetMorphoMarketSuppliers(client) {
+  console.log("\n--- get_morpho_market_suppliers ---");
+
+  // Use mainnet with a discovered market key when possible, fall back to a known katana key
+  let testChain = "mainnet";
+  let testKey = "0x09c2ecea058050d726f4c7df77d7a0af0e6a4cbc1949c3a7cd44cf245e2ef312";
+
+  // Try to discover a real market key from get_morpho_markets
+  const { text: marketsText } = await client.callTool("get_morpho_markets", {
+    top_n: 1,
+  });
+  const keyMatch = marketsText.match(/Morpho Market:\s+(0x[a-fA-F0-9]+\.\.\.[a-fA-F0-9]+)/);
+  if (keyMatch) {
+    // Reconstruct full key from the abbreviated form — not possible, use katana key
+    // Instead check if we can extract a full key from the raw output
+    const fullKeyMatch = marketsText.match(/0x([a-fA-F0-9]{64})/);
+    if (fullKeyMatch) {
+      testKey = fullKeyMatch[0];
+      // Detect chain from output
+      if (marketsText.includes("katana")) testChain = "katana";
+      else if (marketsText.includes("base")) testChain = "base";
+      else if (marketsText.includes("arbitrum")) testChain = "arbitrum";
+    }
+  }
+
+  const { text } = await client.callTool("get_morpho_market_suppliers", {
+    chain: testChain,
+    market_key: testKey,
+  });
+
+  // Accept: supplier analysis, market not found, or API error (Morpho API can be flaky)
+  assert(
+    text.includes("Supply-Side Analysis") || text.includes("No Morpho market") || text.includes("Error"),
+    "has supplier analysis, market not found, or error",
+    `unexpected: ${text.slice(0, 200)}`
+  );
+
+  if (text.includes("Supply-Side Analysis")) {
+    assert(text.includes("Total Supply"), "has total supply", "missing");
+    assert(text.includes("Utilization"), "has utilization", "missing");
+    assert(text.includes("Supply APY"), "has supply APY", "missing");
+    // Either has suppliers or says none found
+    assert(
+      text.includes("Top Suppliers") || text.includes("No supply-side positions"),
+      "has supplier list or empty notice",
+      "missing"
+    );
+  }
+
+  // Test with chain that has no Morpho
+  const { text: noMorpho } = await client.callTool("get_morpho_market_suppliers", {
+    chain: "sonic",
+    market_key: testKey,
+  });
+  assert(
+    noMorpho.includes("not tracked"),
+    "unsupported chain for get_morpho_market_suppliers handled",
+    `unexpected: ${noMorpho.slice(0, 100)}`
+  );
+}
+
+async function testGetMorphoVaults(client) {
+  console.log("\n--- get_morpho_vaults ---");
+
+  // Query mainnet vaults (most likely to have vaults)
+  const { text } = await client.callTool("get_morpho_vaults", {
+    chain: "mainnet",
+  });
+
+  assert(
+    text.includes("Morpho Vaults") || text.includes("No Morpho vaults"),
+    "has vault listing or empty notice",
+    `unexpected: ${text.slice(0, 200)}`
+  );
+
+  if (text.includes("Morpho Vaults")) {
+    assert(text.includes("AUM"), "has AUM", "missing");
+    assert(text.includes("APY"), "has APY", "missing");
+  }
+
+  // Test with asset filter
+  const { text: filtered } = await client.callTool("get_morpho_vaults", {
+    chain: "mainnet",
+    asset_filter: "USDC",
+  });
+  assert(
+    filtered.includes("Morpho Vaults") || filtered.includes("No Morpho vaults"),
+    "filtered vault listing works",
+    `unexpected: ${filtered.slice(0, 200)}`
+  );
+
+  // Test unsupported chain
+  const { text: noMorpho } = await client.callTool("get_morpho_vaults", {
+    chain: "sonic",
+  });
+  assert(
+    noMorpho.includes("not tracked"),
+    "unsupported chain for get_morpho_vaults handled",
+    `unexpected: ${noMorpho.slice(0, 100)}`
+  );
+}
+
 async function testQuoteTrade(client) {
   console.log("\n--- quote_trade ---");
 
@@ -2202,6 +2306,8 @@ async function main() {
       // Morpho integration
       await testGetMorphoMarkets(client);
       await testGetMorphoRate(client);
+      await testGetMorphoMarketSuppliers(client);
+      await testGetMorphoVaults(client);
       await testLoopingAutoMorpho(client);
 
       // Trade quoting & simulation
