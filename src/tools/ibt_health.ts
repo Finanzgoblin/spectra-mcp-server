@@ -9,7 +9,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork } from "../config.js";
-import { fetchSpectra, fetchIbtConversionRate } from "../api.js";
+import { fetchSpectra, fetchIbtConversionRate, fetchTokenDecimals } from "../api.js";
 import { parsePtResponse, formatUsd, formatPct, formatBalance } from "../formatters.js";
 
 type Signal = "ok" | "caution" | "warning";
@@ -56,7 +56,12 @@ Use compare_yield for fixed-vs-variable rate analysis on the same PT.`,
         const ibt = pt.ibt;
         const ibtAddress = ibt?.address;
         const ibtDecimals = ibt?.decimals ?? pt.decimals ?? 18;
-        const underlyingDecimals = pt.underlying?.decimals ?? ibtDecimals;
+        // Underlying decimals: prefer API, then on-chain fallback, then ibtDecimals
+        let underlyingDecimals = pt.underlying?.decimals;
+        if (underlyingDecimals == null && pt.underlying?.address) {
+          underlyingDecimals = await fetchTokenDecimals(pt.underlying.address, chain) ?? undefined;
+        }
+        const effectiveUnderlyingDecimals = underlyingDecimals ?? ibtDecimals;
         const ibtSymbol = ibt?.symbol || "IBT";
         const ibtProtocol = ibt?.protocol || "";
         const poolLiqUsd = pool?.liquidity?.usd || 0;
@@ -66,7 +71,7 @@ Use compare_yield for fixed-vs-variable rate analysis on the same PT.`,
         // ── Check 1: Conversion Rate (on-chain ERC-4626) ──
         const apiRate = ibt?.price?.underlying;
         if (ibtAddress) {
-          const onChainRate = await fetchIbtConversionRate(ibtAddress, ibtDecimals, chain, underlyingDecimals);
+          const onChainRate = await fetchIbtConversionRate(ibtAddress, ibtDecimals, chain, effectiveUnderlyingDecimals);
           if (onChainRate !== null) {
             const rateLines: string[] = [`${onChainRate.toFixed(6)} underlying per IBT (on-chain)`];
 
