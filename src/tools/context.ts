@@ -185,6 +185,8 @@ Goal: "Evaluate a specific opportunity in depth"
   Then: get_looping_strategy(chain, pt_address) if Morpho market exists
   Then: quote_trade(chain, pt_address, amount, side) for exact entry cost
   Then: simulate_portfolio_after_trade(...) to preview the result
+  For Pendle markets: use check_ibt_health(chain, ibt_address=underlyingAsset) — direct mode
+  runs on-chain ERC-4626 checks without needing a Spectra PT.
 
 Goal: "Find YT mispricing"
   Start with: scan_yt_arbitrage(capital_usd) for spread-sorted opportunities
@@ -224,6 +226,7 @@ Goal: "Assess pool depth and IBT safety before deploying"
   Start with: check_ibt_health(chain, pt_address) — multi-signal IBT verdict
   Then: get_pool_capacity(chain, pt_address) — capacity curve across capital tiers
   check_ibt_health verifies: conversion rate, APR sustainability, pool balance, liquidity.
+  check_ibt_health also accepts ibt_address for direct ERC-4626 checks (Pendle SY tokens, any vault).
   get_pool_capacity shows: impact & effective APY at geometric capital tiers, sweet spot, exhaustion.
 
 Goal: "Compare maturities for a single underlying (term structure)"

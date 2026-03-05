@@ -30,7 +30,7 @@
 - `src/tools/ve.ts` — `get_ve_info` (live veSPECTRA data from Base chain)
 - `src/tools/context.ts` — `get_protocol_context` (Layer 1 protocol mechanics, deposit paths, glossary, callable on-demand)
 - `src/tools/capacity.ts` — `get_pool_capacity` (multi-size quote ladder, sweet spot / exhaustion detection)
-- `src/tools/ibt_health.ts` — `check_ibt_health` (ERC-4626 conversion rate, APR composition, pool balance, verdict)
+- `src/tools/ibt_health.ts` — `check_ibt_health` (ERC-4626 conversion rate, APR composition, pool balance, verdict; supports direct ibt_address param for Pendle SY or any ERC-4626 vault)
 - `src/tools/yield_curve.ts` — `get_yield_curve` (term structure for a given underlying across all chains)
 
 ## Router-Mediated Transactions & eth_getLogs

@@ -2849,6 +2849,7 @@ export function formatPendleMarketSummary(m: PendleMarket, chain: string): strin
   lines.push(`  PT: ${m.pt}`);
   lines.push(`  YT: ${m.yt}`);
   lines.push(`  SY: ${m.sy}`);
+  lines.push(`  Underlying Asset: ${m.underlyingAsset}`);
   lines.push(`  Maturity: ${expiryDate} (${days}d)`);
   lines.push(``);
   lines.push(`  Implied APY (Fixed Rate): ${formatPct(d.impliedApy * 100)}`);
