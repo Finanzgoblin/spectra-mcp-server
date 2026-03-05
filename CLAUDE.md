@@ -19,7 +19,7 @@
 - `src/tools/onchain.ts` — `get_onchain_activity` (direct RPC/eth_getLogs)
 - `src/tools/strategy.ts` — `scan_opportunities` (capital-aware, batch Morpho, negative-APY filtering)
 - `src/tools/yt_arb.ts` — `scan_yt_arbitrage` (YT execution mechanics, flash-mint/flash-redeem)
-- `src/tools/morpho.ts` — `get_morpho_markets`, `get_morpho_rate`
+- `src/tools/morpho.ts` — `get_morpho_markets`, `get_morpho_rate`, `get_morpho_market_suppliers`, `get_morpho_vaults`
 - `src/tools/looping.ts` — `get_looping_strategy` (borrow rate sensitivity, break-even period, failure scenarios)
 - `src/tools/quote.ts` — `quote_trade` (on-chain Curve get_dy() with math fallback), exports `tryOnChainQuote` shared by simulate.ts
 - `src/tools/simulate.ts` — `simulate_portfolio_after_trade` (imports tryOnChainQuote from quote.ts)

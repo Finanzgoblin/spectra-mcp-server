@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Finanzgoblin/spectra-mcp-server",
-  "description": "Makes Spectra Finance discoverable and usable by AI agents via MCP. 21 tools, 10 chains, read-only. Covers yield discovery, PT/YT analysis, looping strategies, Morpho integration, MetaVault discovery, portfolio tracking, on-chain Curve quoting, and more.",
+  "description": "Makes Spectra Finance discoverable and usable by AI agents via MCP. 31 tools, 10 chains, read-only. Covers yield discovery, PT/YT analysis, looping strategies, Morpho integration (borrow + supply side), MetaVault discovery, portfolio tracking, on-chain Curve quoting, and more.",
   "repository": {
     "url": "https://github.com/Finanzgoblin/spectra-mcp-server.git",
     "source": "github"
@@ -23,8 +23,10 @@
     { "name": "get_pt_details", "description": "Deep dive on a specific Principal Token" },
     { "name": "compare_yield", "description": "Fixed vs variable yield comparison" },
     { "name": "get_looping_strategy", "description": "Calculate leveraged yield via PT + Morpho looping" },
-    { "name": "get_morpho_markets", "description": "Find Morpho markets accepting Spectra PTs as collateral" },
-    { "name": "get_morpho_rate", "description": "Live borrow rate for a Morpho market" },
+    { "name": "get_morpho_markets", "description": "Find Morpho markets accepting Spectra PTs as collateral, with reward incentives" },
+    { "name": "get_morpho_rate", "description": "Live borrow rate and supply-side context for a Morpho market" },
+    { "name": "get_morpho_market_suppliers", "description": "Who supplies lending liquidity to a Morpho market — vaults, EOAs, concentration" },
+    { "name": "get_morpho_vaults", "description": "List Morpho vaults on a chain with AUM, APY, curator, allocations" },
     { "name": "get_protocol_stats", "description": "SPECTRA tokenomics, emissions, governance" },
     { "name": "get_supported_chains", "description": "List available networks" },
     { "name": "get_portfolio", "description": "Wallet positions across PT, YT, LP" },
@@ -38,6 +40,14 @@
     { "name": "get_ve_info", "description": "Live veSPECTRA data and boost calculator" },
     { "name": "get_metavaults", "description": "List live MetaVaults with curator info, TVL, APY, positions" },
     { "name": "model_metavault_strategy", "description": "MetaVault double-loop strategy modeler (live data or manual)" },
+    { "name": "get_curator_dashboard", "description": "Operational dashboard for MetaVault curators" },
+    { "name": "list_pendle_markets", "description": "List active Pendle markets on a chain or all chains" },
+    { "name": "compare_pendle_spectra", "description": "Side-by-side Pendle vs Spectra yield comparison with maturity matching" },
+    { "name": "scan_curator_opportunities", "description": "Cross-protocol Spectra + Pendle capital-aware scanner for curators" },
+    { "name": "get_onchain_activity", "description": "Historical on-chain activity via eth_getLogs with dynamic RPC" },
+    { "name": "get_pool_capacity", "description": "Multi-size capacity curve for pool depth analysis" },
+    { "name": "check_ibt_health", "description": "Multi-signal IBT health assessment with ERC-4626 conversion check" },
+    { "name": "get_yield_curve", "description": "Yield curve term structure for an underlying across all chains" },
     { "name": "get_protocol_context", "description": "On-demand protocol mechanics explainer" }
   ]
 }

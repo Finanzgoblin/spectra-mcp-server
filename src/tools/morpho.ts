@@ -277,18 +277,25 @@ Use get_looping_strategy with these rates to calculate leveraged yield projectio
   server.tool(
     "get_morpho_market_suppliers",
     `Show who supplies lending liquidity to a specific Morpho market.
-Returns top suppliers ranked by supply size, identifies Morpho vaults vs EOAs/loopers,
+Returns top suppliers ranked by supply size, identifies Morpho vaults vs EOAs vs loopers,
 and provides concentration analysis.
 
-Essential for understanding supply-side dynamics:
-- Where does the lending liquidity come from?
-- Is it concentrated in one vault or diversified?
-- Are there supply-side reward incentives?
-- Is there enough available liquidity for looping?
+A market's supply side determines looping viability. A high-APY market with $10K supply
+from a single vault has different risk/capacity than $10M from diverse sources.
+
+Protocol context:
+- Suppliers are identified via Morpho's marketPositions query, then cross-referenced
+  against the vault registry. Addresses that aren't vaults could be EOAs or contracts.
+- A supplier with both collateral and borrows is likely a looper, not a lender.
+  The tool tags these as [Looper] — but this is inference from position shape, not
+  confirmed. The address could be a contract doing something more complex.
+- Supply concentration affects rate stability: one vault withdrawing could spike borrow
+  rates. High concentration is a signal, not necessarily a problem.
+- Reward incentives (supply APR) can make supply competitive — or mask thin organic yield.
 
 Use get_morpho_markets to find market keys first.
-Use get_morpho_vaults to discover all vaults on a chain.
-Use get_morpho_rate for borrow-side rate analysis.`,
+Use get_morpho_vaults to discover all vaults on a chain and their allocations.
+Use get_morpho_rate for borrow-side rate and PT spread analysis.`,
     {
       chain: CHAIN_ENUM.describe("The blockchain network"),
       market_key: z
@@ -358,16 +365,23 @@ Use get_morpho_rate for borrow-side rate analysis.`,
     `List Morpho vaults on a chain — discover where supply-side liquidity lives.
 Returns vault details including AUM, APY, fees, curator info, and market allocations.
 
-Morpho vaults are curated lending strategies that allocate deposits across markets.
-They are the primary source of supply-side liquidity for PT looping markets.
+Morpho vaults are curated lending strategies managed by curators who allocate deposits
+across lending markets. They are often (but not always) the primary source of supply-side
+liquidity for PT looping markets. EOA suppliers also exist.
 
-Use this to:
-- Find which vaults supply liquidity to PT markets
-- Compare vault APYs and fee structures
-- Understand the supply-side ecosystem on a chain
+Protocol context:
+- Vault APY comes from lending yield on allocated markets, minus the curator's fee.
+  High APY could indicate high borrow demand or could reflect temporary incentives.
+- A vault's allocation breakdown shows which markets it supplies and how much capital
+  is deployed to each. A vault allocating to a PT market directly funds the looping pool.
+- Supply cap (when present) limits how much a vault will deploy to a given market.
+  Uncapped allocations track demand; capped allocations create a ceiling.
+- Not all vaults on a chain allocate to PT markets — many serve non-PT markets. Use
+  get_morpho_market_suppliers with a specific market key to find who actually supplies it.
 
 Use get_morpho_market_suppliers to see who supplies a specific market.
-Use get_morpho_markets to find available PT lending markets.`,
+Use get_morpho_markets to find available PT lending markets.
+Use get_looping_strategy to model leveraged yield after identifying supply liquidity.`,
     {
       chain: CHAIN_ENUM.describe("The blockchain network to query"),
       asset_filter: z
