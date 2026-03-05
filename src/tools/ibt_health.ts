@@ -36,14 +36,34 @@ A CAUTION flag means "proceed with awareness" — the IBT may be fine but has
 characteristics that warrant attention. A WARNING flag means "investigate before
 deploying" — something looks anomalous.
 
+Two modes:
+  1. Spectra mode (pt_address): Full analysis using Spectra API + on-chain checks.
+  2. Direct mode (ibt_address): Protocol-agnostic on-chain ERC-4626 checks only.
+     Use for Pendle SY tokens, or any ERC-4626 vault not listed on Spectra.
+     Runs: conversion rate + rate direction. Skips: APR, pool balance, liquidity.
+
+If both are provided, pt_address takes priority (richer data from Spectra API).
+
 Use get_pool_capacity to assess how much capital the pool can absorb.
 Use compare_yield for fixed-vs-variable rate analysis on the same PT.`,
     {
       chain: CHAIN_ENUM.describe("The blockchain network"),
-      pt_address: EVM_ADDRESS.describe("The PT contract address (resolves to underlying IBT)"),
+      pt_address: EVM_ADDRESS.optional().describe("The PT contract address (resolves to underlying IBT). Provide this OR ibt_address."),
+      ibt_address: EVM_ADDRESS.optional().describe("Direct IBT/ERC-4626 address for protocol-agnostic health check. Use for Pendle SY tokens or any ERC-4626 vault."),
     },
-    async ({ chain, pt_address }) => {
+    async ({ chain, pt_address, ibt_address }) => {
       try {
+        // ── Validate: need at least one address ──
+        if (!pt_address && !ibt_address) {
+          return { content: [{ type: "text" as const, text: "Provide either pt_address (Spectra mode) or ibt_address (direct ERC-4626 mode)." }], isError: true };
+        }
+
+        // ── Direct mode: raw ERC-4626 health check without Spectra API ──
+        if (ibt_address && !pt_address) {
+          return await runDirectMode(chain, ibt_address);
+        }
+
+        // ── Spectra mode: full analysis via Spectra API ──
         const network = resolveNetwork(chain);
         const data = await fetchSpectra(`/${network}/pt/${pt_address}`) as any;
         const pt = parsePtResponse(data);
@@ -347,4 +367,101 @@ Use compare_yield for fixed-vs-variable rate analysis on the same PT.`,
       }
     },
   );
+}
+
+// =============================================================================
+// Direct Mode — protocol-agnostic ERC-4626 health check
+// =============================================================================
+
+async function runDirectMode(chain: string, ibtAddress: string) {
+  const checks: HealthCheck[] = [];
+
+  // Read decimals on-chain
+  const decimals = await fetchTokenDecimals(ibtAddress, chain);
+  const effectiveDecimals = decimals ?? 18;
+
+  if (decimals != null) {
+    checks.push({ name: "Token Decimals", signal: "ok", lines: [`${decimals}`] });
+  } else {
+    checks.push({ name: "Token Decimals", signal: "caution", lines: ["Could not read decimals() — assuming 18. May be non-ERC-20."] });
+  }
+
+  // Conversion rate: convertToAssets(10^decimals) — ERC-4626
+  const onChainRate = await fetchIbtConversionRate(ibtAddress, effectiveDecimals, chain);
+  if (onChainRate !== null) {
+    checks.push({
+      name: "Conversion Rate",
+      signal: "ok",
+      lines: [`${onChainRate.toFixed(6)} underlying per token (on-chain ERC-4626)`],
+    });
+
+    // Rate direction
+    if (onChainRate < 1.0) {
+      checks.push({
+        name: "Rate Direction",
+        signal: "warning",
+        lines: [
+          `${onChainRate.toFixed(6)} — below 1.0`,
+          "Token may have lost value (bad debt, hack, or depeg). Or this may be a wrapper token where sub-1.0 is expected.",
+          "Verify: is this a wrapper (like sw- tokens)? If so, sub-1.0 is the exchange ratio, not value loss.",
+        ],
+      });
+    } else {
+      checks.push({
+        name: "Rate Direction",
+        signal: "ok",
+        lines: [`${onChainRate.toFixed(6)} — above 1.0 (accruing value normally)`],
+      });
+    }
+  } else {
+    checks.push({
+      name: "Conversion Rate",
+      signal: "caution",
+      lines: ["Could not read convertToAssets() — token may not be ERC-4626, or no RPC available for this chain."],
+    });
+  }
+
+  // ── Aggregate verdict ──
+  const hasWarning = checks.some(c => c.signal === "warning");
+  const hasCaution = checks.some(c => c.signal === "caution");
+  const cautionCount = checks.filter(c => c.signal === "caution").length;
+  const warningCount = checks.filter(c => c.signal === "warning").length;
+
+  let overallLabel: string;
+  if (hasWarning) {
+    overallLabel = `WARNING (${warningCount} warning${warningCount > 1 ? "s" : ""}${cautionCount > 0 ? `, ${cautionCount} caution${cautionCount > 1 ? "s" : ""}` : ""})`;
+  } else if (hasCaution) {
+    overallLabel = `CAUTION (${cautionCount} flag${cautionCount > 1 ? "s" : ""})`;
+  } else {
+    overallLabel = "HEALTHY";
+  }
+
+  // ── Format output ──
+  const addrShort = `${ibtAddress.slice(0, 6)}...${ibtAddress.slice(-4)}`;
+  const lines: string[] = [];
+  lines.push(`IBT Health Check: ${addrShort} (direct mode)`);
+  lines.push("=".repeat(lines[0].length));
+  lines.push("");
+  lines.push(`Address: ${ibtAddress}`);
+  lines.push(`Chain: ${chain}`);
+  lines.push(`Overall: ${overallLabel}`);
+  lines.push("");
+  lines.push("Checks:");
+
+  for (const check of checks) {
+    const icon = ICON[check.signal];
+    const firstLine = check.lines[0];
+    lines.push(`  ${check.name.padEnd(20)} [${icon}]  ${firstLine}`);
+    for (let i = 1; i < check.lines.length; i++) {
+      lines.push(`  ${"".padEnd(20)}       ${check.lines[i]}`);
+    }
+  }
+
+  lines.push("");
+  lines.push("Direct mode: on-chain ERC-4626 checks only.");
+  lines.push("APR composition, pool balance, and liquidity checks require a Spectra PT address.");
+  lines.push("Use get_pt_details with a Spectra PT for full analysis.");
+
+  const text = lines.join("\n");
+  return { content: [{ type: "text" as const, text }] };
 }
