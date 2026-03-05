@@ -241,7 +241,68 @@ Four discovery tools and when to use each:
 
 Two due-diligence tools for before-you-deploy checks:
   check_ibt_health — IBT conversion rate, APR composition, protocol recognition, liquidity
-  get_pool_capacity — multi-size quote ladder showing impact degradation at scale`,
+  get_pool_capacity — multi-size quote ladder showing impact degradation at scale
+
+---
+
+Maximizing analysis depth — what user context unlocks which tools:
+
+  Capital size (e.g., "$200K")
+    → scan_opportunities / scan_curator_opportunities compute price impact at YOUR size
+    → get_pool_capacity shows where your capital exhausts the pool
+    → get_looping_strategy sizes leverage to your capital
+    → Without this: tools default to $10K, which may wildly misrepresent your real options
+
+  Wallet address (e.g., "0xABC...")
+    → get_portfolio shows existing positions, claimable yield, Merkl rewards
+    → simulate_portfolio_after_trade previews how a new trade changes your holdings
+    → get_pool_activity with address isolation reveals your own trading patterns
+    → Without this: analysis is generic, can't account for existing exposure
+
+  veSPECTRA balance (e.g., "50,000 veSPECTRA")
+    → scan_opportunities / compare_yield / get_ve_info compute real per-pool boost
+    → LP APY shown as your boosted rate, not the min/max range
+    → Without this: tools show unboosted ranges, understating LP yield for veHolders
+
+  Asset preference (e.g., "USDC", "ETH", "stables")
+    → Filters yield curve, opportunity scans, and cross-protocol comparison
+    → get_yield_curve shows term structure for that specific asset
+    → Without this: scans return everything, requiring manual filtering
+
+  Strategy type (e.g., "fixed yield", "LP", "looping", "MetaVault curation")
+    → Determines which tool chain to prioritize:
+      Fixed yield: scan → compare_yield → quote_trade → simulate
+      LP: scan → compare_yield (LP APY) → get_ve_info (boost) → quote
+      Looping: scan → get_looping_strategy → get_morpho_rate → capacity
+      Curation: scan_curator_opportunities → get_curator_dashboard → model_metavault_strategy
+    → Without this: analysis covers all strategies broadly instead of going deep on one
+
+  Maturity preference (e.g., "60-180 days", "short term only")
+    → get_yield_curve filtered to relevant horizon
+    → Rollover timing becomes part of the analysis
+    → Without this: all maturities shown equally, no time-horizon reasoning
+
+The ideal prompt provides ALL of these: capital + wallet + veSPECTRA + asset + strategy + maturity.
+This lets the agent chain 8-10 tools into a single end-to-end analysis with cross-referencing
+at every step. Each missing input collapses one dimension of the analysis.
+
+Example high-context prompts that trigger deep multi-tool workflows:
+
+  Yield hunter:
+  "I have $50K USDC and 10,000 veSPECTRA. Find the best risk-adjusted fixed yield for
+  60-180 days. Check IBT health, quote my exact entry, and show who else is in the pool."
+
+  Curator:
+  "I'm building a USDC MetaVault on Base with $500K own capital, expecting $2M external.
+  Model the double-loop economics and compare Spectra vs Pendle LP allocation."
+
+  Investigator:
+  "Wallet 0xABC... is active on Spectra mainnet. Show me everything — portfolio, activity
+  across all pools, sequence analysis, and what strategy they're running."
+
+  Term structure:
+  "Show me the ETH yield curve across all chains. Where are the term premium anomalies?
+  Quote pool capacity at $200K for the top 3 mispricings."`,
 };
 
 const ALL_TOPIC_NAMES = Object.keys(TOPICS);
