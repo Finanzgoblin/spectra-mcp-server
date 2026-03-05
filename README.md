@@ -2,7 +2,7 @@
 
 Makes [Spectra Finance](https://spectra.finance) discoverable and usable by AI agents via the [Model Context Protocol](https://modelcontextprotocol.io).
 
-31 tools · 10 chains · read-only · on-chain Curve quoting · ERC-4626 health checks · yield curve term structure · historical eth_getLogs · cross-protocol Pendle comparison · Morpho supply-side visibility · Merkl campaign APR integration · zero web3 library dependencies
+33 tools · 10 chains · read-only · on-chain Curve quoting · ERC-4626 health checks · yield curve term structure · historical eth_getLogs · cross-protocol Pendle comparison · Morpho supply-side visibility · Morpho user positions & historical rates · Merkl campaign APR integration · zero web3 library dependencies
 
 ## What This Does
 
@@ -133,10 +133,12 @@ The observation coverage layer addresses a deeper problem: even perfect interpre
 | `get_pt_details` | Deep dive on a specific Principal Token -- full data including maturityValue, multipliers (points programs), tags, pool reserves, IBT APR composition, and baseIbt for wrapper tokens. |
 | `compare_yield` | Fixed (PT) vs. variable (IBT) yield comparison with spread mechanics and entry cost analysis. |
 | `get_looping_strategy` | Calculate leveraged yield via PT + Morpho looping with effective liquidation margins, borrow rate sensitivity (+1/2/3%), break-even period, and failure scenario modeling. Auto-fetches live Morpho rates when a matching market exists. |
-| `get_morpho_markets` | Find Morpho lending markets that accept Spectra PTs as collateral. Filter by chain or symbol. Shows reward incentives (supply/borrow APR per token). |
-| `get_morpho_rate` | Get live borrow rate, state, and supply-side context for a specific Morpho market. Includes PT spread analysis and top supplier identification. |
+| `get_morpho_markets` | Find Morpho lending markets that accept Spectra PTs as collateral. Filter by chain or symbol. Shows reward incentives, vault supplier count per market. Cross-references Spectra PT addresses. |
+| `get_morpho_rate` | Get live borrow rate, state, and supply-side context for a specific Morpho market. Includes PT spread analysis, top supplier identification, and vault allocation details (% of AUM, cap utilization). |
 | `get_morpho_market_suppliers` | Supply-side analysis for a Morpho market: top suppliers ranked by size, vault vs EOA/looper identification, concentration analysis, supply gap warnings. Reveals where lending liquidity comes from. |
-| `get_morpho_vaults` | List Morpho vaults on a chain with AUM, APY, fees, curator info, and per-market allocation breakdown. Discover which curated strategies fund PT looping markets. |
+| `get_morpho_vaults` | List Morpho vaults on a chain with enriched allocations: Spectra PT tagging, live borrow rates and utilization per allocation, cap utilization percentages. Parallel-fetches market rates and PT addresses for zero-latency enrichment. |
+| `get_morpho_positions` | Query a user's Morpho positions across markets and vaults on a chain (or all Morpho chains). Shows collateral, borrows, supply with USD values, vault deposits, health factors, looper detection, and position signals. |
+| `get_morpho_history` | Historical rates and growth for a specific Morpho market. Shows borrow/supply APY, utilization, and TVL trends with min/avg/max/current stats. Includes rate stability signals, spike detection, and supply/demand squeeze alerts. |
 | `get_protocol_stats` | SPECTRA tokenomics, emissions schedule, fee distribution, governance info. |
 | `get_supported_chains` | List available networks (10 chains). |
 | `get_portfolio` | Wallet positions across PT, YT, and LP with USD values, claimable yield, and Merkl rewards (SPECTRA gauge emissions + incentive programs). Rewards matched to specific pools via reason key parsing. |

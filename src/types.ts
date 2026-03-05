@@ -148,6 +148,7 @@ export interface MorphoMarket {
 
 export interface MorphoVaultAllocation {
   marketKey: string;
+  collateralAddress: string;
   collateralSymbol: string;
   loanSymbol: string;
   supplyAssetsUsd: number;
@@ -182,6 +183,92 @@ export interface MorphoMarketSupplier {
   vaultSymbol?: string;
   vaultTotalAssetsUsd?: number;
   vaultCurator?: string;
+}
+
+// =============================================================================
+// Morpho User Position & History Interfaces
+// =============================================================================
+
+export interface MorphoUserMarketPosition {
+  market: {
+    uniqueKey: string;
+    collateralAsset: MorphoAsset | null;
+    loanAsset: MorphoAsset;
+    lltv: string;
+    chain: { id: number; network: string };
+  };
+  supplyAssets: number;
+  supplyAssetsUsd: number;
+  borrowAssets: number;
+  borrowAssetsUsd: number;
+  collateralAssets: number;
+  collateralAssetsUsd: number;
+  isSpectraPt: boolean;
+  healthFactor?: number;
+}
+
+export interface MorphoUserVaultPosition {
+  vault: {
+    address: string;
+    name: string;
+    symbol: string;
+    asset: MorphoAsset;
+    state: {
+      totalAssetsUsd: number | null;
+      apy: number | null;
+      netApy: number | null;
+    } | null;
+  };
+  assetsUsd: number;
+  shares: number;
+}
+
+export interface MorphoUserPositions {
+  address: string;
+  chain: string;
+  chainId: number;
+  marketPositions: MorphoUserMarketPosition[];
+  vaultPositions: MorphoUserVaultPosition[];
+  totals: {
+    supplyUsd: number;
+    borrowUsd: number;
+    collateralUsd: number;
+    vaultUsd: number;
+    netUsd: number;
+  };
+}
+
+export interface MorphoHistoricalDataPoint {
+  timestamp: number;
+  borrowApy: number;
+  supplyApy: number;
+  utilization: number;
+  supplyAssetsUsd: number;
+  borrowAssetsUsd: number;
+}
+
+export interface MorphoRateStats {
+  min: number;
+  max: number;
+  avg: number;
+  current: number;
+  change: number;
+  trend: "up" | "down" | "stable";
+}
+
+export interface MorphoHistoricalAnalysis {
+  market: MorphoMarket;
+  chain: string;
+  period: string;
+  interval: string;
+  dataPoints: MorphoHistoricalDataPoint[];
+  stats: {
+    borrowApy: MorphoRateStats;
+    supplyApy: MorphoRateStats;
+    utilization: MorphoRateStats;
+    tvl: MorphoRateStats;
+  };
+  hints: string[];
 }
 
 // =============================================================================

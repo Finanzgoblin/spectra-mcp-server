@@ -185,7 +185,7 @@ async function testToolRegistration(client) {
   const tools = await client.listTools();
   const names = tools.map((t) => t.name);
 
-  assert(tools.length === 31, "exactly 31 tools registered", `got ${tools.length}: ${names.join(", ")}`);
+  assert(tools.length === 33, "exactly 33 tools registered", `got ${tools.length}: ${names.join(", ")}`);
 
   const expected = [
     "get_pt_details",
@@ -203,6 +203,8 @@ async function testToolRegistration(client) {
     "get_morpho_rate",
     "get_morpho_market_suppliers",
     "get_morpho_vaults",
+    "get_morpho_positions",
+    "get_morpho_history",
     "quote_trade",
     "simulate_portfolio_after_trade",
     "scan_opportunities",
