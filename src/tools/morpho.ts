@@ -1,13 +1,13 @@
 /**
- * Tools: get_morpho_markets, get_morpho_rate
+ * Tools: get_morpho_markets, get_morpho_rate, get_morpho_market_suppliers, get_morpho_vaults
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, MORPHO_CHAIN_IDS, resolveNetwork } from "../config.js";
 import type { MorphoMarket } from "../types.js";
-import { fetchMorpho, sanitizeGraphQL, MORPHO_MARKET_FIELDS, fetchSpectraPtAddresses } from "../api.js";
-import { formatPct, formatMorphoLltv, formatMorphoMarketSummary, formatMorphoMarketHints, parsePtResponse } from "../formatters.js";
+import { fetchMorpho, sanitizeGraphQL, MORPHO_MARKET_FIELDS, fetchSpectraPtAddresses, fetchMorphoMarketSuppliers, fetchMorphoVaults } from "../api.js";
+import { formatPct, formatMorphoLltv, formatMorphoMarketSummary, formatMorphoMarketHints, formatMorphoSupplierAnalysis, formatMorphoVaultSummary, parsePtResponse } from "../formatters.js";
 import { fetchSpectra } from "../api.js";
 
 export function register(server: McpServer): void {
@@ -239,15 +239,199 @@ Use get_looping_strategy with these rates to calculate leveraged yield projectio
           // Best-effort, don't block core output
         }
 
+        // Best-effort supply-side analysis
+        try {
+          const suppliers = await fetchMorphoMarketSuppliers(market_key, morphoChainId, 5);
+          if (suppliers.length > 0) {
+            lines.push(``);
+            lines.push(formatMorphoSupplierAnalysis(suppliers, market));
+          }
+        } catch {
+          // Best-effort, don't block core output
+        }
+
         lines.push(``);
         lines.push(`  For Looping:`);
         lines.push(`    Use morpho_ltv = ${lltv.toFixed(4)} and borrow_rate = ${formatPct(borrowApy * 100)}`);
         lines.push(`    in get_looping_strategy to calculate leveraged yield.`);
 
+        lines.push(``);
+        lines.push(`--- Next Steps ---`);
+        lines.push(`• Supply details: get_morpho_market_suppliers(chain="${chain}", market_key="${market_key}") for full supplier breakdown`);
+        lines.push(`• Vault discovery: get_morpho_vaults(chain="${chain}") to see all vaults on this chain`);
+        lines.push(`• Looping: get_looping_strategy(chain="${chain}", pt_address=PT_ADDRESS) to model leveraged yield`);
+
         const text = lines.join("\n");
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
         const text = `Error fetching Morpho rate: ${e.message}`;
+        return { content: [{ type: "text" as const, text }], isError: true };
+      }
+    }
+  );
+
+  // ===========================================================================
+  // get_morpho_market_suppliers
+  // ===========================================================================
+
+  server.tool(
+    "get_morpho_market_suppliers",
+    `Show who supplies lending liquidity to a specific Morpho market.
+Returns top suppliers ranked by supply size, identifies Morpho vaults vs EOAs/loopers,
+and provides concentration analysis.
+
+Essential for understanding supply-side dynamics:
+- Where does the lending liquidity come from?
+- Is it concentrated in one vault or diversified?
+- Are there supply-side reward incentives?
+- Is there enough available liquidity for looping?
+
+Use get_morpho_markets to find market keys first.
+Use get_morpho_vaults to discover all vaults on a chain.
+Use get_morpho_rate for borrow-side rate analysis.`,
+    {
+      chain: CHAIN_ENUM.describe("The blockchain network"),
+      market_key: z
+        .string()
+        .regex(/^0x[a-fA-F0-9]{64}$/, "Invalid Morpho market key — must be 0x followed by 64 hex characters")
+        .describe("The Morpho market unique key (0x + 64 hex chars). Use get_morpho_markets to find it."),
+      top_n: z
+        .number()
+        .min(1)
+        .max(50)
+        .default(10)
+        .describe("Number of top suppliers to return (default 10, max 50)"),
+    },
+    async ({ chain, market_key, top_n }) => {
+      try {
+        const network = resolveNetwork(chain);
+        const morphoChainId = MORPHO_CHAIN_IDS[network];
+        if (!morphoChainId) {
+          const text = `Morpho is not tracked for ${chain}. Supported: ${Object.keys(MORPHO_CHAIN_IDS).join(", ")}.`;
+          return { content: [{ type: "text" as const, text }], isError: true };
+        }
+
+        // Fetch market data and suppliers in parallel
+        const marketQuery = `{
+          marketByUniqueKey(uniqueKey: "${sanitizeGraphQL(market_key)}", chainId: ${morphoChainId}) {
+            ${MORPHO_MARKET_FIELDS}
+          }
+        }`;
+
+        const [marketData, suppliers] = await Promise.all([
+          fetchMorpho(marketQuery) as Promise<any>,
+          fetchMorphoMarketSuppliers(market_key, morphoChainId, top_n),
+        ]);
+
+        const market: MorphoMarket | null = marketData?.marketByUniqueKey;
+
+        if (!market) {
+          const text = `No Morpho market found for key ${market_key} on chain ${chain}. Verify the key and chain.`;
+          return { content: [{ type: "text" as const, text }], isError: true };
+        }
+
+        const analysis = formatMorphoSupplierAnalysis(suppliers, market);
+
+        const footer = [
+          ``,
+          `--- Next Steps ---`,
+          `• Vault details: get_morpho_vaults(chain="${chain}") to see all vaults and their allocations`,
+          `• Borrow rate: get_morpho_rate(chain="${chain}", market_key="${market_key}") for rate + spread analysis`,
+          `• Looping: get_looping_strategy(chain="${chain}", pt_address=PT_ADDRESS) to model leveraged yield`,
+        ].join("\n");
+
+        const text = analysis + footer;
+        return { content: [{ type: "text" as const, text }] };
+      } catch (e: any) {
+        const text = `Error fetching market suppliers: ${e.message}`;
+        return { content: [{ type: "text" as const, text }], isError: true };
+      }
+    }
+  );
+
+  // ===========================================================================
+  // get_morpho_vaults
+  // ===========================================================================
+
+  server.tool(
+    "get_morpho_vaults",
+    `List Morpho vaults on a chain — discover where supply-side liquidity lives.
+Returns vault details including AUM, APY, fees, curator info, and market allocations.
+
+Morpho vaults are curated lending strategies that allocate deposits across markets.
+They are the primary source of supply-side liquidity for PT looping markets.
+
+Use this to:
+- Find which vaults supply liquidity to PT markets
+- Compare vault APYs and fee structures
+- Understand the supply-side ecosystem on a chain
+
+Use get_morpho_market_suppliers to see who supplies a specific market.
+Use get_morpho_markets to find available PT lending markets.`,
+    {
+      chain: CHAIN_ENUM.describe("The blockchain network to query"),
+      asset_filter: z
+        .string()
+        .max(100)
+        .optional()
+        .describe("Filter by asset symbol (e.g., 'USDT', 'USDC'). Matches vault names/assets."),
+      min_tvl_usd: z
+        .number()
+        .default(0)
+        .describe("Minimum vault AUM in USD (default 0)"),
+      top_n: z
+        .number()
+        .min(1)
+        .max(50)
+        .default(20)
+        .describe("Number of vaults to return (default 20, max 50)"),
+    },
+    async ({ chain, asset_filter, min_tvl_usd, top_n }) => {
+      try {
+        const network = resolveNetwork(chain);
+        const morphoChainId = MORPHO_CHAIN_IDS[network];
+        if (!morphoChainId) {
+          const text = `Morpho is not tracked for ${chain}. Supported: ${Object.keys(MORPHO_CHAIN_IDS).join(", ")}.`;
+          return { content: [{ type: "text" as const, text }], isError: true };
+        }
+
+        const vaults = await fetchMorphoVaults(chain, {
+          assetFilter: asset_filter,
+          minTvlUsd: min_tvl_usd,
+          topN: top_n,
+        });
+
+        if (vaults.length === 0) {
+          const lines = [
+            `No Morpho vaults found on ${chain}${asset_filter ? ` matching "${asset_filter}"` : ""}.`,
+            ``,
+            `--- What This Means ---`,
+            `No curated lending vaults are currently deployed on ${chain}${asset_filter ? ` for "${asset_filter}"` : ""}.`,
+            ...(asset_filter ? [`• Try without filter: get_morpho_vaults(chain="${chain}") to see all vaults`] : []),
+            `• Supply-side liquidity may come from EOAs rather than vaults`,
+            `• Check specific markets: get_morpho_market_suppliers(chain="${chain}", market_key=KEY)`,
+          ];
+          const text = lines.join("\n");
+          return { content: [{ type: "text" as const, text }] };
+        }
+
+        const header = `== Morpho Vaults: ${chain}${asset_filter ? ` (filter: ${asset_filter})` : ""} ==\n` +
+          `  Found ${vaults.length} vault(s)\n`;
+
+        const summaries = vaults.map((v, i) => formatMorphoVaultSummary(v, i + 1));
+
+        const footer = [
+          ``,
+          `--- Next Steps ---`,
+          `• Market suppliers: get_morpho_market_suppliers(chain="${chain}", market_key=KEY) for per-market supplier breakdown`,
+          `• PT markets: get_morpho_markets(chain="${chain}") to see which PTs have lending markets`,
+          `• Looping: get_looping_strategy(chain="${chain}", pt_address=PT_ADDRESS) to model leveraged yield`,
+        ].join("\n");
+
+        const text = header + "\n" + summaries.join("\n\n") + "\n" + footer;
+        return { content: [{ type: "text" as const, text }] };
+      } catch (e: any) {
+        const text = `Error fetching Morpho vaults: ${e.message}`;
         return { content: [{ type: "text" as const, text }], isError: true };
       }
     }

@@ -107,6 +107,12 @@ export interface MorphoAsset {
   decimals?: number;
 }
 
+export interface MorphoMarketReward {
+  asset: { address: string; symbol: string };
+  supplyApr: number | null;
+  borrowApr: number | null;
+}
+
 export interface MorphoMarketState {
   borrowApy: number | null;
   supplyApy: number | null;
@@ -117,6 +123,7 @@ export interface MorphoMarketState {
   utilization: number | null;
   fee: number | null;
   timestamp: number | null;
+  rewards?: MorphoMarketReward[];
 }
 
 export interface MorphoWarning {
@@ -133,6 +140,48 @@ export interface MorphoMarket {
   morphoBlue: { chain: { id: number; network: string } };
   state: MorphoMarketState | null;
   warnings: MorphoWarning[];
+}
+
+// =============================================================================
+// Morpho Vault & Supply-Side Interfaces
+// =============================================================================
+
+export interface MorphoVaultAllocation {
+  marketKey: string;
+  collateralSymbol: string;
+  loanSymbol: string;
+  supplyAssetsUsd: number;
+  supplyCap: string | null;
+  supplyCapUsd: number | null;
+}
+
+export interface MorphoVault {
+  address: string;
+  name: string;
+  symbol: string;
+  listed: boolean;
+  asset: MorphoAsset;
+  chain: { id: number; network: string };
+  state: {
+    totalAssetsUsd: number | null;
+    apy: number | null;
+    netApy: number | null;
+    fee: number | null;
+    allocation: MorphoVaultAllocation[];
+  } | null;
+  curator?: string;
+}
+
+export interface MorphoMarketSupplier {
+  address: string;
+  supplyAssetsUsd: number;
+  borrowAssetsUsd: number;
+  collateralUsd: number;
+  isVault: boolean;
+  vaultName?: string;
+  vaultSymbol?: string;
+  vaultTotalAssetsUsd?: number;
+  vaultCurator?: string;
 }
 
 // =============================================================================
