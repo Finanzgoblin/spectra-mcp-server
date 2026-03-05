@@ -2867,6 +2867,9 @@ export function formatPendleMarketSummary(m: PendleMarket, chain: string): strin
   lines.push(`  Pool Liquidity: ${formatUsd(d.liquidity)}`);
   lines.push(`  24h Volume: ${formatUsd(d.tradingVolume)}`);
   lines.push(`  Fee Rate: ${formatPct(d.feeRate * 100)}`);
+  if (d.totalPt > 0 || d.totalSy > 0) {
+    lines.push(`  Pool Reserves: ${d.totalPt.toLocaleString("en-US", { maximumFractionDigits: 2 })} PT / ${d.totalSy.toLocaleString("en-US", { maximumFractionDigits: 2 })} SY`);
+  }
 
   return lines.join("\n");
 }
