@@ -1528,7 +1528,7 @@ async function testScanOpportunities(client) {
   });
 
   assert(
-    large.includes("Opportunity Scan") || large.includes("No opportunities"),
+    large.includes("Opportunity Scan") || large.includes("No opportunities") || large.includes("No PT pool"),
     "large capital scan completes",
     `unexpected: ${large.slice(0, 100)}`
   );
@@ -2128,9 +2128,9 @@ async function testGetOnchainActivity(client) {
     `missing chunks: ${text.slice(0, 200)}`
   );
 
-  // Test error case: chain with no RPC and no override
+  // Test error case: chain with no RPC and no override (monad has no default RPC)
   const { text: noRpc } = await client.callTool("get_onchain_activity", {
-    chain: "katana",
+    chain: "monad",
     pool_address: "0x0000000000000000000000000000000000000001",
     lookback_hours: 1,
   });

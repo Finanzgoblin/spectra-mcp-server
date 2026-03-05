@@ -134,14 +134,19 @@ export async function fetchMorpho(query: string): Promise<unknown> {
   return json.data;
 }
 
-// Standard GraphQL fragment for Morpho market fields we always need
+// Standard GraphQL fragment for Morpho market fields we always need.
+// Includes reallocatableLiquidityAssets for accurate available-liquidity display.
+// The Morpho GraphQL state.liquidityAssetsUsd only reflects direct supply, but
+// the Public Allocator can reallocate idle liquidity from other vault markets
+// on demand — the Morpho UI shows (direct + reallocatable) as "Total Market Size".
 export const MORPHO_MARKET_FIELDS = `
   uniqueKey
   lltv
   listed
   collateralAsset { address symbol name decimals }
-  loanAsset { address symbol name decimals }
-  morphoBlue { chain { id network } }
+  loanAsset { address symbol name decimals priceUsd }
+  morphoBlue { address chain { id network } }
+  reallocatableLiquidityAssets
   state {
     borrowApy
     supplyApy

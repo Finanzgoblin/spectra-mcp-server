@@ -218,6 +218,11 @@ Use get_looping_strategy with these rates to calculate leveraged yield projectio
         const query = `{
           marketByUniqueKey(uniqueKey: "${sanitizeGraphQL(market_key)}", chainId: ${morphoChainId}) {
             ${MORPHO_MARKET_FIELDS}
+            publicAllocatorSharedLiquidity {
+              vault { address name }
+              assets
+              withdrawMarket { uniqueKey loanAsset { symbol } collateralAsset { symbol } }
+            }
           }
         }`;
 

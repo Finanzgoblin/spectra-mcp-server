@@ -2,7 +2,7 @@
  * Data formatting helpers — USD, percentages, dates, balances, pool/position/Morpho summaries.
  */
 
-import type { SpectraPt, SpectraPool, SpectraMetavault, SpectraMetavaultPosition, MorphoMarket, MorphoVault, MorphoVaultAllocation, MorphoMarketSupplier, PendleMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavaultBridgeTx, MerklTokenReward, CrossProtocolMatch, CuratorOpportunity, MerklCampaign, MorphoUserPositions, MorphoHistoricalAnalysis, MorphoRateStats } from "./types.js";
+import type { SpectraPt, SpectraPool, SpectraMetavault, SpectraMetavaultPosition, MorphoMarket, MorphoVault, MorphoVaultAllocation, MorphoMarketSupplier, PendleMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavaultBridgeTx, MerklTokenReward, CrossProtocolMatch, CuratorOpportunity, MerklCampaign, MorphoUserPositions, MorphoHistoricalAnalysis, MorphoRateStats, MorphoPublicAllocatorLiquidity } from "./types.js";
 import { SUPPORTED_CHAINS } from "./config.js";
 
 // =============================================================================
@@ -529,6 +529,29 @@ export function formatMorphoLltv(raw: string | undefined | null): number {
   }
 }
 
+/**
+ * Compute the USD value of reallocatable liquidity from the Public Allocator.
+ * Uses the loan asset price to convert raw token amounts to USD.
+ * Returns 0 when no reallocatable liquidity is present.
+ */
+export function computeReallocatableUsd(m: MorphoMarket): number {
+  const raw = m.reallocatableLiquidityAssets;
+  if (!raw || raw === "0") return 0;
+  const loanDecimals = m.loanAsset?.decimals ?? 18;
+  const loanPrice = m.loanAsset?.priceUsd ?? 1;
+  return Number(BigInt(raw)) / (10 ** loanDecimals) * loanPrice;
+}
+
+/** Effective supply = direct market supply + reallocatable from Public Allocator. */
+export function getEffectiveSupplyUsd(m: MorphoMarket): number {
+  return (m.state?.supplyAssetsUsd || 0) + computeReallocatableUsd(m);
+}
+
+/** Effective liquidity = direct market liquidity + reallocatable from Public Allocator. */
+export function getEffectiveLiquidityUsd(m: MorphoMarket): number {
+  return (m.state?.liquidityAssetsUsd || 0) + computeReallocatableUsd(m);
+}
+
 export function formatMorphoMarketSummary(m: MorphoMarket, protocol?: string): string {
   const lltv = formatMorphoLltv(m.lltv);
   const s = m.state;
@@ -551,14 +574,32 @@ export function formatMorphoMarketSummary(m: MorphoMarket, protocol?: string): s
   );
 
   if (s) {
+    // Compute reallocatable liquidity in USD
+    const reallocatableRaw = m.reallocatableLiquidityAssets ? BigInt(m.reallocatableLiquidityAssets) : 0n;
+    const loanDecimals = m.loanAsset?.decimals ?? 18;
+    const loanPriceUsd = m.loanAsset?.priceUsd ?? 1;
+    const reallocatableUsd = reallocatableRaw > 0n
+      ? Number(reallocatableRaw) / (10 ** loanDecimals) * loanPriceUsd
+      : 0;
+    const directSupply = s.supplyAssetsUsd || 0;
+    const directLiquidity = s.liquidityAssetsUsd || 0;
+    const totalSupply = directSupply + reallocatableUsd;
+    const totalLiquidity = directLiquidity + reallocatableUsd;
+
     lines.push(``);
     lines.push(`  Current State:`);
     lines.push(`    Borrow APY: ${formatPct((s.borrowApy || 0) * 100)}`);
     lines.push(`    Supply APY: ${formatPct((s.supplyApy || 0) * 100)}`);
     lines.push(`    Utilization: ${formatPct((s.utilization || 0) * 100)}`);
-    lines.push(`    Total Supply: ${formatUsd(s.supplyAssetsUsd || 0)}`);
-    lines.push(`    Total Borrow: ${formatUsd(s.borrowAssetsUsd || 0)}`);
-    lines.push(`    Available Liquidity: ${formatUsd(s.liquidityAssetsUsd || 0)}`);
+    if (reallocatableUsd > 0) {
+      lines.push(`    Total Supply: ${formatUsd(totalSupply)} (direct ${formatUsd(directSupply)} + reallocatable ${formatUsd(reallocatableUsd)})`);
+      lines.push(`    Total Borrow: ${formatUsd(s.borrowAssetsUsd || 0)}`);
+      lines.push(`    Available Liquidity: ${formatUsd(totalLiquidity)} (direct ${formatUsd(directLiquidity)} + reallocatable ${formatUsd(reallocatableUsd)})`);
+    } else {
+      lines.push(`    Total Supply: ${formatUsd(directSupply)}`);
+      lines.push(`    Total Borrow: ${formatUsd(s.borrowAssetsUsd || 0)}`);
+      lines.push(`    Available Liquidity: ${formatUsd(directLiquidity)}`);
+    }
     lines.push(`    Collateral Deposited: ${formatUsd(s.collateralAssetsUsd || 0)}`);
     if ((s.fee ?? 0) > 0) lines.push(`    Protocol Fee: ${formatPct((s.fee ?? 0) * 100)}`);
 
@@ -573,6 +614,21 @@ export function formatMorphoMarketSummary(m: MorphoMarket, protocol?: string): s
         if (r.supplyApr != null && r.supplyApr > 0) parts.push(`Supply: +${formatPct(r.supplyApr * 100)}`);
         if (r.borrowApr != null && r.borrowApr > 0) parts.push(`Borrow: +${formatPct(r.borrowApr * 100)}`);
         if (parts.length > 0) lines.push(`    ${sym}: ${parts.join(" | ")}`);
+      }
+    }
+
+    // Public Allocator shared liquidity breakdown
+    if (m.publicAllocatorSharedLiquidity && m.publicAllocatorSharedLiquidity.length > 0) {
+      lines.push(``);
+      lines.push(`  Public Allocator (reallocatable from vaults):`);
+      for (const shared of m.publicAllocatorSharedLiquidity) {
+        const sharedAssets = BigInt(shared.assets);
+        const sharedUsd = Number(sharedAssets) / (10 ** loanDecimals) * loanPriceUsd;
+        const vaultLabel = shared.vault?.name || shared.vault?.address || "?";
+        const fromMarket = shared.withdrawMarket
+          ? `${shared.withdrawMarket.collateralAsset?.symbol || "idle"} / ${shared.withdrawMarket.loanAsset?.symbol || "?"}`
+          : "idle pool";
+        lines.push(`    ${vaultLabel}: ${formatUsd(sharedUsd)} (from ${fromMarket})`);
       }
     }
   }
@@ -627,8 +683,11 @@ export function formatMorphoSupplierAnalysis(
   market: MorphoMarket,
 ): string {
   const s = market.state;
-  const totalSupply = s?.supplyAssetsUsd || 0;
-  const available = s?.liquidityAssetsUsd || 0;
+  const directSupply = s?.supplyAssetsUsd || 0;
+  const directLiquidity = s?.liquidityAssetsUsd || 0;
+  const reallocatable = computeReallocatableUsd(market);
+  const totalSupply = directSupply + reallocatable;
+  const available = directLiquidity + reallocatable;
   const utilization = s?.utilization || 0;
   const supplyApy = s?.supplyApy || 0;
   const collateral = market.collateralAsset?.symbol || "?";
@@ -636,7 +695,12 @@ export function formatMorphoSupplierAnalysis(
 
   const lines: string[] = [];
   lines.push(`== Supply-Side Analysis: ${collateral} / ${loan} ==`);
-  lines.push(`  Total Supply: ${formatUsd(totalSupply)} | Available: ${formatUsd(available)} | Utilization: ${formatPct(utilization * 100)}`);
+  if (reallocatable > 0) {
+    lines.push(`  Total Supply: ${formatUsd(totalSupply)} (direct ${formatUsd(directSupply)} + reallocatable ${formatUsd(reallocatable)})`);
+    lines.push(`  Available: ${formatUsd(available)} (direct ${formatUsd(directLiquidity)} + reallocatable ${formatUsd(reallocatable)}) | Utilization: ${formatPct(utilization * 100)}`);
+  } else {
+    lines.push(`  Total Supply: ${formatUsd(totalSupply)} | Available: ${formatUsd(available)} | Utilization: ${formatPct(utilization * 100)}`);
+  }
   lines.push(`  Supply APY: ${formatPct(supplyApy * 100)}`);
 
   // Reward incentives on supply side
@@ -1884,7 +1948,7 @@ export function formatMorphoMarketHints(m: MorphoMarket): string[] {
 
   const borrowApy = (s.borrowApy || 0) * 100;
   const utilization = (s.utilization || 0) * 100;
-  const availableLiq = s.liquidityAssetsUsd || 0;
+  const availableLiq = getEffectiveLiquidityUsd(m);
 
   // Capacity warning
   if (availableLiq < 50000) {

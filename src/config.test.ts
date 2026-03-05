@@ -169,8 +169,14 @@ describe("resolveRpcUrlsWithFallbacks", () => {
     assert.equal(urls[0], "https://custom-rpc.example.com");
   });
 
-  it("returns empty array for chains without RPCs", () => {
+  it("returns primary RPC for katana", () => {
     const urls = resolveRpcUrlsWithFallbacks("katana");
+    assert.equal(urls.length, 1);
+    assert.equal(urls[0], CHAIN_RPC_URLS["katana"]);
+  });
+
+  it("returns empty array for chains without RPCs", () => {
+    const urls = resolveRpcUrlsWithFallbacks("monad");
     assert.equal(urls.length, 0);
   });
 
