@@ -2829,9 +2829,14 @@ export function formatPendleMarketCompact(m: PendleMarket, chain: string): strin
   const days = pendleDaysToMaturity(m.expiry);
   const impliedPct = formatPct(d.impliedApy * 100);
   const lpPct = formatPct(d.aggregatedApy * 100);
+  const varPct = formatPct(d.underlyingApy * 100);
   const tvl = formatUsd(d.totalTvl);
   const liq = formatUsd(d.liquidity);
-  return `${m.name} (${chain}) | Impl ${impliedPct} | LP ${lpPct} | TVL ${tvl} | Liq ${liq} | ${days}d | Market: ${m.address}`;
+  const prime = m.isPrime ? " ★" : "";
+  const boostSuffix = d.maxBoostedApy > d.aggregatedApy
+    ? ` (Boost ${formatPct(d.maxBoostedApy * 100)})`
+    : "";
+  return `${m.name} (${chain}) | Impl ${impliedPct} | LP ${lpPct}${boostSuffix} | Var ${varPct} | TVL ${tvl} | Liq ${liq} | ${days}d${prime} | Market: ${m.address}`;
 }
 
 /**
@@ -2844,6 +2849,10 @@ export function formatPendleMarketSummary(m: PendleMarket, chain: string): strin
   const lines: string[] = [];
 
   lines.push(`-- ${m.name} --`);
+  const tags: string[] = [];
+  if (m.isPrime) tags.push("★ Prime");
+  if (m.categoryIds?.length) tags.push(...m.categoryIds);
+  if (tags.length > 0) lines.push(`  Tags: ${tags.join(" | ")}`);
   lines.push(`  Chain: ${chain}`);
   lines.push(`  Market Address: ${m.address}`);
   lines.push(`  PT: ${m.pt}`);
@@ -2913,6 +2922,21 @@ export function formatPendleSpectraComparison(opts: {
   row("Implied APY (Fixed)",  formatPct(spectraImplied), formatPct(pendleImplied), formatPct(spectraImplied - pendleImplied));
   row("Variable APY",         formatPct(spectraVar),     formatPct(pendleVar),     formatPct(spectraVar - pendleVar));
   row("LP APY",               formatPct(spectraLp),      formatPct(pendleLp),      formatPct(spectraLp - pendleLp));
+
+  // LP APY breakdown
+  const spectraFees = spectraPool.lpApy?.details?.fees || 0;
+  const pendleFees = pd.swapFeeApy * 100;
+  row("  LP: Swap Fees",      formatPct(spectraFees),    formatPct(pendleFees),    formatPct(spectraFees - pendleFees));
+  const spectraRewards = Object.values(spectraPool.lpApy?.details?.rewards || {}).reduce((a, b) => a + b, 0)
+    + Object.values(spectraPool.lpApy?.details?.boostedRewards || {}).reduce((a, r) => a + r.min, 0);
+  const pendleIncentives = pd.pendleApy * 100;
+  row("  LP: Incentives",     `${formatPct(spectraRewards)} SPECTRA`, `${formatPct(pendleIncentives)} PENDLE`, formatPct(spectraRewards - pendleIncentives));
+  const spectraBoosted = spectraPool.lpApy?.boostedTotal || 0;
+  const pendleBoosted = pd.maxBoostedApy * 100;
+  if (spectraBoosted > 0 || pendleBoosted > 0) {
+    row("  Max Boosted LP",   formatPct(spectraBoosted), formatPct(pendleBoosted), formatPct(spectraBoosted - pendleBoosted));
+  }
+
   row("Pool Liquidity",       formatUsd(spectraLiq),     formatUsd(pendleLiq),     formatUsd(spectraLiq - pendleLiq));
   row("TVL",                  formatUsd(spectraTvl),     formatUsd(pendleTvl),     formatUsd(spectraTvl - pendleTvl));
   row("Days to Maturity",     `${spectraDays}d`,         `${pendleDays}d`,         `${spectraDays - pendleDays}d`);
@@ -3232,6 +3256,7 @@ export function formatCuratorOpportunity(opp: CuratorOpportunity, rank: number):
   if (opp.ptAddress) lines.push(`    PT: ${opp.ptAddress}`);
   if (opp.poolAddress) lines.push(`    Pool: ${opp.poolAddress}`);
   if (opp.pendleMarketAddress) lines.push(`    Pendle Market: ${opp.pendleMarketAddress}`);
+  if (opp.pendleSyAddress) lines.push(`    SY: ${opp.pendleSyAddress} (use for check_ibt_health)`);
 
   // Warnings
   if (opp.warnings.length > 0) {

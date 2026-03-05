@@ -497,8 +497,9 @@ export interface CuratorOpportunity {
   poolAddress?: string;        // Spectra Curve pool address
   pendleMarketAddress?: string; // Pendle market address
   pendlePtAddress?: string;    // Pendle PT address
+  pendleSyAddress?: string;    // Pendle SY address (for check_ibt_health)
 
-  // Spectra-specific enrichment
+  // Enrichment (populated for both Spectra and Pendle)
   looping?: ScanOpportunity["looping"];
   lpApyBreakdown?: ScanOpportunity["lpApyBreakdown"];
 
