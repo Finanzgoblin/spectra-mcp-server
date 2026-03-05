@@ -56,6 +56,7 @@ Use compare_yield for fixed-vs-variable rate analysis on the same PT.`,
         const ibt = pt.ibt;
         const ibtAddress = ibt?.address;
         const ibtDecimals = ibt?.decimals ?? pt.decimals ?? 18;
+        const underlyingDecimals = pt.underlying?.decimals ?? ibtDecimals;
         const ibtSymbol = ibt?.symbol || "IBT";
         const ibtProtocol = ibt?.protocol || "";
         const poolLiqUsd = pool?.liquidity?.usd || 0;
@@ -65,7 +66,7 @@ Use compare_yield for fixed-vs-variable rate analysis on the same PT.`,
         // ── Check 1: Conversion Rate (on-chain ERC-4626) ──
         const apiRate = ibt?.price?.underlying;
         if (ibtAddress) {
-          const onChainRate = await fetchIbtConversionRate(ibtAddress, ibtDecimals, chain);
+          const onChainRate = await fetchIbtConversionRate(ibtAddress, ibtDecimals, chain, underlyingDecimals);
           if (onChainRate !== null) {
             const rateLines: string[] = [`${onChainRate.toFixed(6)} underlying per IBT (on-chain)`];
 
