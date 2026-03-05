@@ -33,6 +33,9 @@
  *   - compare_pendle_spectra      -> Side-by-side Pendle vs Spectra yield comparison on overlapping chains
  *   - scan_curator_opportunities  -> Cross-protocol (Spectra + Pendle) capital-aware scanner for MetaVault curators
  *   - get_onchain_activity         -> Historical pool activity via eth_getLogs (when API data is incomplete)
+ *   - get_pool_capacity            -> Multi-size capacity curve for pool depth assessment
+ *   - check_ibt_health             -> Multi-signal IBT health assessment (ERC-4626, APR, liquidity)
+ *   - get_yield_curve              -> Term structure / yield curve for a given underlying across chains
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -58,6 +61,7 @@ import { register as registerCuratorScan } from "./tools/curator_scan.js";
 import { register as registerOnchain } from "./tools/onchain.js";
 import { register as registerCapacity } from "./tools/capacity.js";
 import { register as registerIbtHealth } from "./tools/ibt_health.js";
+import { register as registerYieldCurve } from "./tools/yield_curve.js";
 
 // =============================================================================
 // MCP Server Setup
@@ -87,6 +91,7 @@ registerCuratorScan(server);
 registerOnchain(server);
 registerCapacity(server);
 registerIbtHealth(server);
+registerYieldCurve(server);
 
 // =============================================================================
 // Resources: Protocol context for agents
