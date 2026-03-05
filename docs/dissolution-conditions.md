@@ -69,6 +69,45 @@ directly for strategy evaluation.
 Dissolution: When the Morpho API returns the PT's implied APY alongside
 the borrow rate, or when a unified "looping readiness" endpoint exists.
 
+### get_morpho_rate: Supply-side enrichment
+
+Surfaces top suppliers inline with rate data so agents see supply
+concentration alongside borrow rates. Uses best-effort enrichment
+(swallow errors) to avoid blocking core rate output.
+
+Dissolution: When the Morpho API returns supplier data directly in
+the market query response, or when a unified "market health" endpoint
+combines rate, spread, and supply-side metrics in a single call.
+
+### get_morpho_market_suppliers: Supplier identification via two-step query
+
+Two-step fetch: marketPositions (ranked by supply shares) then vault
+cross-reference (address_in query against vault registry). This is a
+workaround for the Morpho API not providing a "suppliers with vault
+metadata" endpoint. The [Looper] tag is inferred from position shape
+(collateral + borrows present), not confirmed — it uses "could be"
+language consistent with Open Emergence principles.
+
+Dissolution: When the Morpho API provides a dedicated supplier query
+that returns vault metadata, curator info, and position type
+classification in a single call. Also dissolves if `scan_opportunities`
+integrates supply-side analysis directly and agents stop calling
+this tool for individual market investigation.
+
+### get_morpho_vaults: Vault discovery via search query
+
+Lists vaults on a chain with allocation breakdown. Serves as the
+discovery layer for understanding where supply-side capital lives.
+The allocation array shows which markets a vault funds and at what
+capacity — but this is a snapshot, not a commitment. Vault curators
+can reallocate at any time.
+
+Dissolution: When the Morpho API provides vault data in a format
+that makes this tool redundant (e.g., vault allocations visible in
+market queries). Also dissolves if Morpho vaults become the default
+view in a portfolio tool that shows positions + supply sources
+together.
+
 ### get_portfolio: Portfolio signals (formatPortfolioHints)
 
 Dissolution: When Spectra adds a native portfolio analytics endpoint that

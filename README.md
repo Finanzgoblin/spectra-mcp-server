@@ -2,7 +2,7 @@
 
 Makes [Spectra Finance](https://spectra.finance) discoverable and usable by AI agents via the [Model Context Protocol](https://modelcontextprotocol.io).
 
-29 tools · 10 chains · read-only · on-chain Curve quoting · ERC-4626 health checks · yield curve term structure · historical eth_getLogs · cross-protocol Pendle comparison · zero web3 library dependencies
+31 tools · 10 chains · read-only · on-chain Curve quoting · ERC-4626 health checks · yield curve term structure · historical eth_getLogs · cross-protocol Pendle comparison · Morpho supply-side visibility · zero web3 library dependencies
 
 ## What This Does
 
@@ -22,7 +22,7 @@ Any AI agent (Claude, GPT, open-source) that supports MCP can now:
 - **Discover** live MetaVaults across all chains — curator info, TVL, APY, positions, epoch history
 - **Model** MetaVault "double loop" strategies for curators — vault compounding + Morpho leverage with curator economics, auto-populated from live API data or manual parameters
 - **Monitor** MetaVault operational health — curator dashboard with vault allocation per position, depositor flows, fee revenue, bridge activity, and actionable alerts
-- **Query** Morpho lending markets for PT collateral opportunities
+- **Query** Morpho lending markets for PT collateral opportunities, identify who supplies the lending liquidity, and discover vault allocations across markets
 - **Query** protocol stats, tokenomics, and governance data
 - **Compare** Spectra vs Pendle yield opportunities side-by-side with maturity-aware matching on overlapping chains
 - **Scan** both Spectra and Pendle for the best curator opportunities with capital-aware sizing and cross-protocol match tagging
@@ -57,7 +57,9 @@ Layer 3: Structured Output Hints (computed at runtime in tool output)
   → Position Shape analysis in portfolio: balance ratios (e.g., "YT/PT 4:1")
   → Portfolio Signals: concentration, maturity alerts, strategy shape across positions
   → Volume Signals: volume/liquidity ratio, buy/sell skew, trend detection
-  → Morpho Market Hints: capacity warnings, utilization alerts, spread analysis
+  → Morpho Market Hints: capacity warnings, utilization alerts, spread analysis, reward incentives
+  → Morpho Supply-Side Analysis: supplier identification (vault/EOA/looper), concentration metrics,
+    supply gap warnings — surfaces where lending liquidity comes from and whether it's sufficient
   → Competing Interpretation Branches (A/B/C) in activity analysis per-address:
     multiple explanations for the same observable pattern, presented with equal weight.
     The agent must bring external evidence to collapse branches — the tension IS the info.
@@ -128,8 +130,10 @@ The observation coverage layer addresses a deeper problem: even perfect interpre
 | `get_pt_details` | Deep dive on a specific Principal Token -- full data including maturityValue, multipliers (points programs), tags, pool reserves, IBT APR composition, and baseIbt for wrapper tokens. |
 | `compare_yield` | Fixed (PT) vs. variable (IBT) yield comparison with spread mechanics and entry cost analysis. |
 | `get_looping_strategy` | Calculate leveraged yield via PT + Morpho looping with effective liquidation margins, borrow rate sensitivity (+1/2/3%), break-even period, and failure scenario modeling. Auto-fetches live Morpho rates when a matching market exists. |
-| `get_morpho_markets` | Find Morpho lending markets that accept Spectra PTs as collateral. Filter by chain or symbol. |
-| `get_morpho_rate` | Get live borrow rate and state for a specific Morpho market. |
+| `get_morpho_markets` | Find Morpho lending markets that accept Spectra PTs as collateral. Filter by chain or symbol. Shows reward incentives (supply/borrow APR per token). |
+| `get_morpho_rate` | Get live borrow rate, state, and supply-side context for a specific Morpho market. Includes PT spread analysis and top supplier identification. |
+| `get_morpho_market_suppliers` | Supply-side analysis for a Morpho market: top suppliers ranked by size, vault vs EOA/looper identification, concentration analysis, supply gap warnings. Reveals where lending liquidity comes from. |
+| `get_morpho_vaults` | List Morpho vaults on a chain with AUM, APY, fees, curator info, and per-market allocation breakdown. Discover which curated strategies fund PT looping markets. |
 | `get_protocol_stats` | SPECTRA tokenomics, emissions schedule, fee distribution, governance info. |
 | `get_supported_chains` | List available networks (10 chains). |
 | `get_portfolio` | Wallet positions across PT, YT, and LP with USD values, claimable yield, and Merkl rewards (SPECTRA gauge emissions + incentive programs). Rewards matched to specific pools via reason key parsing. |
