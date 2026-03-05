@@ -1,13 +1,14 @@
 /**
- * Tools: get_morpho_markets, get_morpho_rate, get_morpho_market_suppliers, get_morpho_vaults
+ * Tools: get_morpho_markets, get_morpho_rate, get_morpho_market_suppliers, get_morpho_vaults,
+ *        get_morpho_positions, get_morpho_history
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { CHAIN_ENUM, MORPHO_CHAIN_IDS, resolveNetwork } from "../config.js";
-import type { MorphoMarket } from "../types.js";
-import { fetchMorpho, sanitizeGraphQL, MORPHO_MARKET_FIELDS, fetchSpectraPtAddresses, fetchMorphoMarketSuppliers, fetchMorphoVaults } from "../api.js";
-import { formatPct, formatMorphoLltv, formatMorphoMarketSummary, formatMorphoMarketHints, formatMorphoSupplierAnalysis, formatMorphoVaultSummary, parsePtResponse } from "../formatters.js";
+import { CHAIN_ENUM, EVM_ADDRESS, MORPHO_CHAIN_IDS, resolveNetwork } from "../config.js";
+import type { MorphoMarket, MorphoUserPositions, MorphoUserMarketPosition, MorphoUserVaultPosition, MorphoHistoricalAnalysis, MorphoHistoricalDataPoint, MorphoRateStats } from "../types.js";
+import { fetchMorpho, sanitizeGraphQL, MORPHO_MARKET_FIELDS, fetchSpectraPtAddresses, fetchMorphoMarketSuppliers, fetchMorphoVaults, fetchMorphoMarketRates, fetchMorphoUserPositions, fetchMorphoMarketHistory } from "../api.js";
+import { formatPct, formatUsd, formatMorphoLltv, formatMorphoMarketSummary, formatMorphoMarketHints, formatMorphoSupplierAnalysis, formatMorphoVaultSummary, formatMorphoVaultSummaryEnriched, formatMorphoUserPositions, formatMorphoHistoricalAnalysis, formatMorphoHistoryHints, parsePtResponse } from "../formatters.js";
 import { fetchSpectra } from "../api.js";
 
 export function register(server: McpServer): void {
@@ -124,13 +125,37 @@ Use scan_opportunities for automated cross-chain looping discovery.`,
           return { content: [{ type: "text" as const, text }] };
         }
 
-        // Cross-reference: tag each market as Spectra or Pendle/Other
+        // Best-effort: fetch vaults to cross-reference which markets have vault suppliers
+        const vaultsByMarket = new Map<string, string[]>();
+        try {
+          const networks = chain ? [resolveNetwork(chain)] : Object.keys(MORPHO_CHAIN_IDS);
+          const allVaults = (await Promise.all(
+            networks.map((net) => fetchMorphoVaults(net).catch(() => [])),
+          )).flat();
+          for (const v of allVaults) {
+            for (const a of v.state?.allocation || []) {
+              if (!a.marketKey) continue;
+              const key = a.marketKey.toLowerCase();
+              if (!vaultsByMarket.has(key)) vaultsByMarket.set(key, []);
+              vaultsByMarket.get(key)!.push(v.name);
+            }
+          }
+        } catch { /* best-effort */ }
+
+        // Cross-reference: tag each market as Spectra or Pendle/Other, add vault info
         const summaries = items.map((m) => {
           const collateralAddr = m.collateralAsset?.address?.toLowerCase() || "";
           const protocol = spectraPtAddrs.has(collateralAddr) ? "Spectra" : "Pendle/Other";
           const summary = formatMorphoMarketSummary(m, protocol);
           const hints = formatMorphoMarketHints(m);
-          return hints.length > 0 ? summary + "\n" + hints.join("\n") : summary;
+          const parts = [summary];
+          if (hints.length > 0) parts.push(hints.join("\n"));
+          // Add vault supplier info
+          const vaultNames = vaultsByMarket.get(m.uniqueKey?.toLowerCase() || "") || [];
+          if (vaultNames.length > 0) {
+            parts.push(`  Vault suppliers: ${vaultNames.length} (${vaultNames.slice(0, 3).join(", ")}${vaultNames.length > 3 ? ", ..." : ""})`);
+          }
+          return parts.join("\n");
         });
 
         const spectraCount = items.filter(
@@ -145,6 +170,7 @@ Use scan_opportunities for automated cross-chain looping discovery.`,
           `--- Next Steps ---`,
           `• Live borrow rate: get_morpho_rate(chain=CHAIN, market_key=MARKET_KEY) for current rate + PT spread analysis`,
           `• Looping projection: get_looping_strategy(chain=CHAIN, pt_address=PT_ADDRESS) to model leveraged yield`,
+          `• Rate history: get_morpho_history(chain=CHAIN, market_key=KEY) for historical rate trends`,
           `• Capital-aware scan: scan_opportunities(capital_usd=YOUR_AMOUNT, include_looping=true) for cross-chain looping ranking`,
         ].join("\n");
 
@@ -239,12 +265,38 @@ Use get_looping_strategy with these rates to calculate leveraged yield projectio
           // Best-effort, don't block core output
         }
 
-        // Best-effort supply-side analysis
+        // Best-effort supply-side analysis with vault cross-linking
         try {
-          const suppliers = await fetchMorphoMarketSuppliers(market_key, morphoChainId, 5);
+          const [suppliers, vaults] = await Promise.all([
+            fetchMorphoMarketSuppliers(market_key, morphoChainId, 5),
+            fetchMorphoVaults(chain).catch(() => []),
+          ]);
           if (suppliers.length > 0) {
             lines.push(``);
             lines.push(formatMorphoSupplierAnalysis(suppliers, market));
+
+            // Cross-link vault suppliers with their allocation details
+            const vaultSuppliers = suppliers.filter((s) => s.isVault);
+            if (vaultSuppliers.length > 0 && vaults.length > 0) {
+              const enriched: string[] = [];
+              for (const vs of vaultSuppliers) {
+                const vault = vaults.find((v) => v.address.toLowerCase() === vs.address.toLowerCase());
+                if (!vault) continue;
+                const alloc = (vault.state?.allocation || []).find((a) => a.marketKey.toLowerCase() === market_key.toLowerCase());
+                if (!alloc) continue;
+                const vaultAum = vault.state?.totalAssetsUsd || 0;
+                const allocPct = vaultAum > 0 ? (alloc.supplyAssetsUsd / vaultAum) * 100 : 0;
+                const cap = alloc.supplyCapUsd != null && alloc.supplyCapUsd > 0
+                  ? ` | Cap: ${formatUsd(alloc.supplyCapUsd)} (${formatPct((alloc.supplyAssetsUsd / alloc.supplyCapUsd) * 100)} used)`
+                  : " | No cap";
+                enriched.push(`    ${vault.name}: ${formatPct(allocPct)} of vault AUM (${formatUsd(alloc.supplyAssetsUsd)} / ${formatUsd(vaultAum)})${cap}`);
+              }
+              if (enriched.length > 0) {
+                lines.push(``);
+                lines.push(`  Vault Allocation Details:`);
+                lines.push(...enriched);
+              }
+            }
           }
         } catch {
           // Best-effort, don't block core output
@@ -259,6 +311,7 @@ Use get_looping_strategy with these rates to calculate leveraged yield projectio
         lines.push(`--- Next Steps ---`);
         lines.push(`• Supply details: get_morpho_market_suppliers(chain="${chain}", market_key="${market_key}") for full supplier breakdown`);
         lines.push(`• Vault discovery: get_morpho_vaults(chain="${chain}") to see all vaults on this chain`);
+        lines.push(`• Rate history: get_morpho_history(chain="${chain}", market_key="${market_key}") for historical rate trends`);
         lines.push(`• Looping: get_looping_strategy(chain="${chain}", pt_address=PT_ADDRESS) to model leveraged yield`);
 
         const text = lines.join("\n");
@@ -429,10 +482,30 @@ Use get_looping_strategy to model leveraged yield after identifying supply liqui
           return { content: [{ type: "text" as const, text }] };
         }
 
-        const header = `== Morpho Vaults: ${chain}${asset_filter ? ` (filter: ${asset_filter})` : ""} ==\n` +
-          `  Found ${vaults.length} vault(s)\n`;
+        // Collect all unique market keys across all vaults for batch rate fetching
+        const allMarketKeys = new Set<string>();
+        for (const v of vaults) {
+          for (const a of v.state?.allocation || []) {
+            if (a.marketKey) allMarketKeys.add(a.marketKey);
+          }
+        }
 
-        const summaries = vaults.map((v, i) => formatMorphoVaultSummary(v, i + 1));
+        // Parallel: fetch Spectra PT addresses + batch market rates
+        const [spectraPtAddrs, marketRates] = await Promise.all([
+          fetchSpectraPtAddresses().catch(() => new Set<string>()),
+          fetchMorphoMarketRates([...allMarketKeys], morphoChainId),
+        ]);
+
+        const spectraVaultCount = vaults.filter((v) =>
+          (v.state?.allocation || []).some((a) => spectraPtAddrs.has(a.collateralAddress || "")),
+        ).length;
+
+        const header = `== Morpho Vaults: ${chain}${asset_filter ? ` (filter: ${asset_filter})` : ""} ==\n` +
+          `  Found ${vaults.length} vault(s) (${spectraVaultCount} with Spectra PT allocations)\n`;
+
+        const summaries = vaults.map((v, i) =>
+          formatMorphoVaultSummaryEnriched(v, i + 1, marketRates, spectraPtAddrs),
+        );
 
         const footer = [
           ``,
@@ -440,12 +513,332 @@ Use get_looping_strategy to model leveraged yield after identifying supply liqui
           `• Market suppliers: get_morpho_market_suppliers(chain="${chain}", market_key=KEY) for per-market supplier breakdown`,
           `• PT markets: get_morpho_markets(chain="${chain}") to see which PTs have lending markets`,
           `• Looping: get_looping_strategy(chain="${chain}", pt_address=PT_ADDRESS) to model leveraged yield`,
+          `• Rate history: get_morpho_history(chain="${chain}", market_key=KEY) for historical rate trends`,
+          `• Positions: get_morpho_positions(address=ADDR, chain="${chain}") to check wallet holdings`,
         ].join("\n");
 
         const text = header + "\n" + summaries.join("\n\n") + "\n" + footer;
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
         const text = `Error fetching Morpho vaults: ${e.message}`;
+        return { content: [{ type: "text" as const, text }], isError: true };
+      }
+    }
+  );
+
+  // ===========================================================================
+  // get_morpho_positions
+  // ===========================================================================
+
+  server.tool(
+    "get_morpho_positions",
+    `Query a user's Morpho positions across all markets and vaults on a chain.
+Returns collateral, borrows, supply (with USD values), vault deposits, health factors,
+and position signals (looper detection, low health warnings).
+
+Useful for understanding what a wallet holds on Morpho: is it a looper? A supplier?
+A vault depositor? The position shape reveals the strategy.
+
+Protocol context:
+- Market positions show collateral, borrows, and supply separately. A position with
+  both collateral and borrows is likely a looper (leveraged strategy).
+- Health factor = (collateralUsd * LLTV) / borrowUsd — approximation using USD values.
+  Health < 1.0 means liquidatable. Health < 1.3 means dangerously close.
+- Vault positions show shares deposited in curated vaults (passive lending).
+- Net value = supply + collateral + vaults - borrows.
+
+Scans all Morpho chains by default (mainnet, base, arbitrum). Specify chain to narrow.
+
+Use get_morpho_markets to find available PT markets.
+Use get_morpho_rate for live borrow rate on a specific market.
+Use get_portfolio for Spectra protocol positions (PT, YT, LP).`,
+    {
+      address: z
+        .string()
+        .regex(/^0x[a-fA-F0-9]{40}$/, "Invalid address")
+        .describe("The wallet address (0x...)"),
+      chain: CHAIN_ENUM
+        .optional()
+        .describe("Specific chain to query. Omit to scan all Morpho chains."),
+    },
+    async ({ address, chain }) => {
+      try {
+        // Determine which chains to scan
+        let chainsToScan: Array<{ network: string; chainId: number }>;
+        if (chain) {
+          const network = resolveNetwork(chain);
+          const morphoId = MORPHO_CHAIN_IDS[network];
+          if (!morphoId) {
+            const text = `Morpho is not tracked for ${chain}. Supported: ${Object.keys(MORPHO_CHAIN_IDS).join(", ")}.`;
+            return { content: [{ type: "text" as const, text }], isError: true };
+          }
+          chainsToScan = [{ network, chainId: morphoId }];
+        } else {
+          chainsToScan = Object.entries(MORPHO_CHAIN_IDS).map(([network, chainId]) => ({ network, chainId }));
+        }
+
+        // Fetch Spectra PT addresses for tagging (best-effort)
+        const spectraPtAddrs = await fetchSpectraPtAddresses().catch(() => new Set<string>());
+
+        // Fetch positions across all chains in parallel
+        const results = await Promise.all(
+          chainsToScan.map(async ({ network, chainId }) => {
+            const raw = await fetchMorphoUserPositions(address, chainId);
+
+            // Process market positions
+            const marketPositions: MorphoUserMarketPosition[] = raw.marketPositions.map((p: any) => {
+              const collateralAddr = (p.market?.collateralAsset?.address || "").toLowerCase();
+              const isSpectraPt = spectraPtAddrs.has(collateralAddr);
+              const collateralUsd = p.collateralAssetsUsd || 0;
+              const borrowUsd = p.borrowAssetsUsd || 0;
+              const lltv = formatMorphoLltv(p.market?.lltv || "0");
+              const healthFactor = borrowUsd > 0.01 ? (collateralUsd * lltv) / borrowUsd : undefined;
+
+              return {
+                market: {
+                  uniqueKey: p.market?.uniqueKey || "",
+                  collateralAsset: p.market?.collateralAsset || null,
+                  loanAsset: p.market?.loanAsset || { address: "", symbol: "?", name: "?" },
+                  lltv: p.market?.lltv || "0",
+                  chain: p.market?.morphoBlue?.chain || { id: chainId, network },
+                },
+                supplyAssets: p.supplyAssets || 0,
+                supplyAssetsUsd: p.supplyAssetsUsd || 0,
+                borrowAssets: p.borrowAssets || 0,
+                borrowAssetsUsd: borrowUsd,
+                collateralAssets: p.collateralAssets || 0,
+                collateralAssetsUsd: collateralUsd,
+                isSpectraPt,
+                healthFactor,
+              } satisfies MorphoUserMarketPosition;
+            });
+
+            // Process vault positions
+            const vaultPositions: MorphoUserVaultPosition[] = raw.vaultPositions.map((p: any) => ({
+              vault: {
+                address: p.vault?.address || "",
+                name: p.vault?.name || "Unknown",
+                symbol: p.vault?.symbol || "?",
+                asset: p.vault?.asset || { address: "", symbol: "?", name: "?" },
+                state: p.vault?.state ? {
+                  totalAssetsUsd: p.vault.state.totalAssetsUsd || null,
+                  apy: p.vault.state.apy || null,
+                  netApy: p.vault.state.netApy || null,
+                } : null,
+              },
+              assetsUsd: p.assetsUsd || 0,
+              shares: p.shares || 0,
+            } satisfies MorphoUserVaultPosition));
+
+            // Compute totals
+            const supplyUsd = marketPositions.reduce((s, p) => s + p.supplyAssetsUsd, 0);
+            const borrowUsd = marketPositions.reduce((s, p) => s + p.borrowAssetsUsd, 0);
+            const collateralUsd = marketPositions.reduce((s, p) => s + p.collateralAssetsUsd, 0);
+            const vaultUsd = vaultPositions.reduce((s, p) => s + p.assetsUsd, 0);
+
+            return {
+              address,
+              chain: network,
+              chainId,
+              marketPositions,
+              vaultPositions,
+              totals: {
+                supplyUsd,
+                borrowUsd,
+                collateralUsd,
+                vaultUsd,
+                netUsd: supplyUsd + collateralUsd + vaultUsd - borrowUsd,
+              },
+            } satisfies MorphoUserPositions;
+          }),
+        );
+
+        // Filter to chains with actual positions
+        const active = results.filter(
+          (r) =>
+            r.marketPositions.some((p) => p.supplyAssetsUsd > 0.01 || p.borrowAssetsUsd > 0.01 || p.collateralAssetsUsd > 0.01) ||
+            r.vaultPositions.some((p) => p.assetsUsd > 0.01),
+        );
+
+        if (active.length === 0) {
+          const scope = chain || "any Morpho chain";
+          const text = [
+            `No active Morpho positions found for ${address} on ${scope}.`,
+            ``,
+            `--- What This Means ---`,
+            `This address has no supply, borrow, collateral, or vault positions on Morpho.`,
+            `• Check Spectra positions: get_portfolio(address="${address}")`,
+            `• Morpho chains scanned: ${chainsToScan.map((c) => c.network).join(", ")}`,
+          ].join("\n");
+          return { content: [{ type: "text" as const, text }] };
+        }
+
+        const sections = active.map((pos) => formatMorphoUserPositions(pos));
+
+        // Cross-chain totals if multi-chain
+        const lines: string[] = [];
+        if (active.length > 1) {
+          const totalNet = active.reduce((s, r) => s + r.totals.netUsd, 0);
+          const totalBorrow = active.reduce((s, r) => s + r.totals.borrowUsd, 0);
+          const totalSupply = active.reduce((s, r) => s + r.totals.supplyUsd, 0);
+          const totalCollateral = active.reduce((s, r) => s + r.totals.collateralUsd, 0);
+          const totalVault = active.reduce((s, r) => s + r.totals.vaultUsd, 0);
+          lines.push(`== Cross-Chain Totals ==`);
+          lines.push(`  Net Value: ${formatUsd(totalNet)} (Supply: ${formatUsd(totalSupply)} + Collateral: ${formatUsd(totalCollateral)} + Vaults: ${formatUsd(totalVault)} - Borrow: ${formatUsd(totalBorrow)})`);
+          lines.push(`  Chains: ${active.map((r) => r.chain).join(", ")}`);
+          lines.push(``);
+        }
+
+        lines.push(...sections);
+
+        lines.push(``);
+        lines.push(`--- Next Steps ---`);
+        lines.push(`• Spectra positions: get_portfolio(address="${address}") for PT/YT/LP holdings`);
+        lines.push(`• Market details: get_morpho_rate(chain=CHAIN, market_key=KEY) for rate + spread analysis`);
+        lines.push(`• Vault details: get_morpho_vaults(chain=CHAIN) to see vault allocations and APY`);
+
+        const text = lines.join("\n");
+        return { content: [{ type: "text" as const, text }] };
+      } catch (e: any) {
+        const text = `Error fetching Morpho positions: ${e.message}`;
+        return { content: [{ type: "text" as const, text }], isError: true };
+      }
+    }
+  );
+
+  // ===========================================================================
+  // get_morpho_history
+  // ===========================================================================
+
+  server.tool(
+    "get_morpho_history",
+    `Historical rates and growth for a specific Morpho market.
+Shows borrow APY, supply APY, utilization, and TVL trends over time with
+min/avg/max/current stats and directional signals.
+
+Useful for assessing rate stability before entering a looping position.
+A market with stable, predictable borrow rates is safer for leveraged strategies
+than one with frequent spikes.
+
+Output includes signals: rate spikes, stability assessments, utilization warnings,
+TVL decline alerts, and supply/demand squeeze detection.
+
+Parameters:
+- period: 7d (hourly), 30d (daily), 90d (daily), 1y (weekly)
+- interval: auto-selected based on period, or override manually
+
+Use get_morpho_rate for current live rates.
+Use get_morpho_markets to discover market keys.
+Use get_looping_strategy to model leveraged yield after confirming rate stability.`,
+    {
+      chain: CHAIN_ENUM.describe("The blockchain network"),
+      market_key: z
+        .string()
+        .regex(/^0x[a-fA-F0-9]{64}$/, "Invalid Morpho market key")
+        .describe("The Morpho market unique key (0x + 64 hex chars). Use get_morpho_markets to find it."),
+      period: z
+        .enum(["7d", "30d", "90d", "1y"])
+        .default("30d")
+        .describe("Time period: 7d (hourly data), 30d (daily), 90d (daily), 1y (weekly). Default 30d."),
+      interval: z
+        .enum(["HOUR", "DAY", "WEEK", "MONTH"])
+        .optional()
+        .describe("Override auto-selected interval. Auto: 7d→HOUR, 30d→DAY, 90d→DAY, 1y→WEEK."),
+    },
+    async ({ chain, market_key, period, interval: intervalOverride }) => {
+      try {
+        const network = resolveNetwork(chain);
+        const morphoChainId = MORPHO_CHAIN_IDS[network];
+        if (!morphoChainId) {
+          const text = `Morpho is not tracked for ${chain}. Supported: ${Object.keys(MORPHO_CHAIN_IDS).join(", ")}.`;
+          return { content: [{ type: "text" as const, text }], isError: true };
+        }
+
+        // Determine time range and interval
+        const now = Math.floor(Date.now() / 1000);
+        const periodMap: Record<string, { seconds: number; defaultInterval: string }> = {
+          "7d": { seconds: 7 * 86400, defaultInterval: "HOUR" },
+          "30d": { seconds: 30 * 86400, defaultInterval: "DAY" },
+          "90d": { seconds: 90 * 86400, defaultInterval: "DAY" },
+          "1y": { seconds: 365 * 86400, defaultInterval: "WEEK" },
+        };
+        const cfg = periodMap[period] || periodMap["30d"];
+        const startTimestamp = now - cfg.seconds;
+        const interval = intervalOverride || cfg.defaultInterval;
+
+        const { market, history } = await fetchMorphoMarketHistory(
+          market_key,
+          morphoChainId,
+          startTimestamp,
+          now,
+          interval,
+        );
+
+        if (!market) {
+          const text = `No Morpho market found for key ${market_key} on chain ${chain}. Verify the key and chain.`;
+          return { content: [{ type: "text" as const, text }], isError: true };
+        }
+
+        if (history.length === 0) {
+          const text = [
+            `No historical data available for this market (${period}, ${interval} interval).`,
+            `The market may be too new or the API may not have data for this period.`,
+            ``,
+            `--- Try ---`,
+            `• Shorter period: get_morpho_history(chain="${chain}", market_key="${market_key}", period="7d")`,
+            `• Current state: get_morpho_rate(chain="${chain}", market_key="${market_key}")`,
+          ].join("\n");
+          return { content: [{ type: "text" as const, text }] };
+        }
+
+        // Compute stats for each metric
+        function computeStats(values: number[]): MorphoRateStats {
+          if (values.length === 0) return { min: 0, max: 0, avg: 0, current: 0, change: 0, trend: "stable" as const };
+          const min = Math.min(...values);
+          const max = Math.max(...values);
+          const avg = values.reduce((s, v) => s + v, 0) / values.length;
+          const current = values[values.length - 1];
+          // Trend: compare last 3 avg vs first 3 avg
+          const headSlice = values.slice(0, Math.min(3, values.length));
+          const tailSlice = values.slice(-Math.min(3, values.length));
+          const headAvg = headSlice.reduce((s, v) => s + v, 0) / headSlice.length;
+          const tailAvg = tailSlice.reduce((s, v) => s + v, 0) / tailSlice.length;
+          const change = headAvg > 0 ? (tailAvg - headAvg) / headAvg : 0;
+          const trend = change > 0.1 ? "up" as const : change < -0.1 ? "down" as const : "stable" as const;
+          return { min, max, avg, current, change, trend };
+        }
+
+        const analysis: MorphoHistoricalAnalysis = {
+          market: market as MorphoMarket,
+          chain: network,
+          period,
+          interval,
+          dataPoints: history,
+          stats: {
+            borrowApy: computeStats(history.map((h) => h.borrowApy)),
+            supplyApy: computeStats(history.map((h) => h.supplyApy)),
+            utilization: computeStats(history.map((h) => h.utilization)),
+            tvl: computeStats(history.map((h) => h.supplyAssetsUsd)),
+          },
+          hints: [],
+        };
+
+        // Compute hints
+        analysis.hints = formatMorphoHistoryHints(analysis);
+
+        const output = formatMorphoHistoricalAnalysis(analysis);
+
+        const lines = [output];
+        lines.push(``);
+        lines.push(`--- Next Steps ---`);
+        lines.push(`• Live rate: get_morpho_rate(chain="${chain}", market_key="${market_key}") for current state`);
+        lines.push(`• Looping: get_looping_strategy(chain="${chain}", pt_address=PT_ADDRESS) to model leveraged yield`);
+        lines.push(`• Suppliers: get_morpho_market_suppliers(chain="${chain}", market_key="${market_key}") for supply-side analysis`);
+
+        const text = lines.join("\n");
+        return { content: [{ type: "text" as const, text }] };
+      } catch (e: any) {
+        const text = `Error fetching Morpho history: ${e.message}`;
         return { content: [{ type: "text" as const, text }], isError: true };
       }
     }

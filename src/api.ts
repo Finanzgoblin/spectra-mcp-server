@@ -17,7 +17,7 @@ import {
   CHAIN_RPC_URLS,
   MAX_LOG_BLOCK_RANGE,
 } from "./config.js";
-import type { MorphoMarket, MorphoMarketSupplier, MorphoVault, MorphoVaultAllocation, SpectraPt, SpectraPool, SpectraMetavault, PendleMarket, RawPoolOpportunity, ChainScanResult, MerklTokenReward, MerklChainRewards, MerklCampaign } from "./types.js";
+import type { MorphoMarket, MorphoMarketSupplier, MorphoVault, MorphoVaultAllocation, MorphoHistoricalDataPoint, SpectraPt, SpectraPool, SpectraMetavault, PendleMarket, RawPoolOpportunity, ChainScanResult, MerklTokenReward, MerklChainRewards, MerklCampaign } from "./types.js";
 
 // =============================================================================
 // Retry Logic
@@ -458,7 +458,7 @@ const MORPHO_VAULT_FIELDS = `
     netApy
     fee
     allocation {
-      market { uniqueKey loanAsset { symbol } collateralAsset { symbol } }
+      market { uniqueKey loanAsset { symbol } collateralAsset { address symbol } }
       supplyAssetsUsd
       supplyCap
       supplyCapUsd
@@ -506,6 +506,7 @@ export async function fetchMorphoVaults(
       const curatorName = v.metadata?.curators?.[0]?.name;
       const allocations: MorphoVaultAllocation[] = (v.state?.allocation || []).map((a: any) => ({
         marketKey: a.market?.uniqueKey || "",
+        collateralAddress: (a.market?.collateralAsset?.address || "").toLowerCase(),
         collateralSymbol: a.market?.collateralAsset?.symbol || "?",
         loanSymbol: a.market?.loanAsset?.symbol || "?",
         supplyAssetsUsd: a.supplyAssetsUsd || 0,
@@ -533,6 +534,193 @@ export async function fetchMorphoVaults(
   } catch (err) {
     console.error(`Morpho vault fetch failed for ${chain}:`, err instanceof Error ? err.message : err);
     return [];
+  }
+}
+
+// =============================================================================
+// Morpho Batch Market Rates
+// =============================================================================
+
+/**
+ * Batch-fetch live rates for multiple Morpho markets in a single GraphQL query.
+ * Uses aliased fields (m0, m1, ...) to avoid N+1 round trips. Max 50 markets.
+ */
+export async function fetchMorphoMarketRates(
+  marketKeys: string[],
+  chainId: number,
+): Promise<Map<string, { borrowApy: number; supplyApy: number; utilization: number; supplyAssetsUsd: number }>> {
+  const result = new Map<string, { borrowApy: number; supplyApy: number; utilization: number; supplyAssetsUsd: number }>();
+  if (marketKeys.length === 0) return result;
+
+  try {
+    const capped = marketKeys.slice(0, 50);
+    const aliases = capped.map((key, i) =>
+      `m${i}: marketByUniqueKey(uniqueKey: "${sanitizeGraphQL(key)}", chainId: ${chainId}) {
+        uniqueKey
+        state { borrowApy supplyApy utilization supplyAssetsUsd }
+      }`
+    );
+    const query = `{ ${aliases.join("\n")} }`;
+    const data = (await fetchMorpho(query)) as any;
+    for (let i = 0; i < capped.length; i++) {
+      const m = data?.[`m${i}`];
+      if (m?.state) {
+        result.set(m.uniqueKey || capped[i], {
+          borrowApy: m.state.borrowApy || 0,
+          supplyApy: m.state.supplyApy || 0,
+          utilization: m.state.utilization || 0,
+          supplyAssetsUsd: m.state.supplyAssetsUsd || 0,
+        });
+      }
+    }
+  } catch (err) {
+    console.error("Morpho batch rate fetch failed:", err instanceof Error ? err.message : err);
+  }
+  return result;
+}
+
+// =============================================================================
+// Morpho User Positions
+// =============================================================================
+
+/**
+ * Fetch a user's Morpho market + vault positions on a specific chain.
+ */
+export async function fetchMorphoUserPositions(
+  userAddress: string,
+  chainId: number,
+): Promise<{ marketPositions: any[]; vaultPositions: any[] }> {
+  try {
+    const addr = sanitizeGraphQL(userAddress);
+    const query = `{
+      userByAddress(address: "${addr}", chainId: ${chainId}) {
+        address
+        marketPositions {
+          market {
+            uniqueKey
+            lltv
+            collateralAsset { address symbol name decimals }
+            loanAsset { address symbol name decimals }
+            morphoBlue { chain { id network } }
+          }
+          supplyAssets
+          supplyAssetsUsd
+          borrowAssets
+          borrowAssetsUsd
+          collateralAssets
+          collateralAssetsUsd
+        }
+        vaultPositions {
+          vault {
+            address
+            name
+            symbol
+            asset { address symbol decimals }
+            state { totalAssetsUsd apy netApy }
+          }
+          assetsUsd
+          shares
+        }
+      }
+    }`;
+    const data = (await fetchMorpho(query)) as any;
+    return {
+      marketPositions: data?.userByAddress?.marketPositions || [],
+      vaultPositions: data?.userByAddress?.vaultPositions || [],
+    };
+  } catch (err) {
+    console.error(`Morpho user positions fetch failed for ${userAddress}:`, err instanceof Error ? err.message : err);
+    return { marketPositions: [], vaultPositions: [] };
+  }
+}
+
+// =============================================================================
+// Morpho Market History
+// =============================================================================
+
+/**
+ * Fetch historical rate data for a Morpho market using historicalState.
+ */
+export async function fetchMorphoMarketHistory(
+  marketKey: string,
+  chainId: number,
+  startTimestamp: number,
+  endTimestamp: number,
+  interval: string,
+): Promise<{ market: any; history: MorphoHistoricalDataPoint[] }> {
+  try {
+    const key = sanitizeGraphQL(marketKey);
+    const query = `{
+      marketByUniqueKey(uniqueKey: "${key}", chainId: ${chainId}) {
+        ${MORPHO_MARKET_FIELDS}
+        historicalState {
+          borrowApy(options: { startTimestamp: ${startTimestamp}, endTimestamp: ${endTimestamp}, interval: ${interval} }) {
+            x
+            y
+          }
+          supplyApy(options: { startTimestamp: ${startTimestamp}, endTimestamp: ${endTimestamp}, interval: ${interval} }) {
+            x
+            y
+          }
+          utilization(options: { startTimestamp: ${startTimestamp}, endTimestamp: ${endTimestamp}, interval: ${interval} }) {
+            x
+            y
+          }
+          supplyAssetsUsd(options: { startTimestamp: ${startTimestamp}, endTimestamp: ${endTimestamp}, interval: ${interval} }) {
+            x
+            y
+          }
+          borrowAssetsUsd(options: { startTimestamp: ${startTimestamp}, endTimestamp: ${endTimestamp}, interval: ${interval} }) {
+            x
+            y
+          }
+        }
+      }
+    }`;
+    const data = (await fetchMorpho(query)) as any;
+    const mkt = data?.marketByUniqueKey;
+    if (!mkt) return { market: null, history: [] };
+
+    const hs = mkt.historicalState;
+    const borrowApyArr: Array<{ x: number; y: number }> = hs?.borrowApy || [];
+    const supplyApyArr: Array<{ x: number; y: number }> = hs?.supplyApy || [];
+    const utilizationArr: Array<{ x: number; y: number }> = hs?.utilization || [];
+    const supplyUsdArr: Array<{ x: number; y: number }> = hs?.supplyAssetsUsd || [];
+    const borrowUsdArr: Array<{ x: number; y: number }> = hs?.borrowAssetsUsd || [];
+
+    // Merge time series by timestamp
+    const timestamps = new Set<number>();
+    for (const arr of [borrowApyArr, supplyApyArr, utilizationArr, supplyUsdArr, borrowUsdArr]) {
+      for (const p of arr) timestamps.add(p.x);
+    }
+    const sorted = [...timestamps].sort((a, b) => a - b);
+
+    const makeMap = (arr: Array<{ x: number; y: number }>) => {
+      const m = new Map<number, number>();
+      for (const p of arr) m.set(p.x, p.y ?? 0);
+      return m;
+    };
+    const bApy = makeMap(borrowApyArr);
+    const sApy = makeMap(supplyApyArr);
+    const util = makeMap(utilizationArr);
+    const sUsd = makeMap(supplyUsdArr);
+    const bUsd = makeMap(borrowUsdArr);
+
+    const history: MorphoHistoricalDataPoint[] = sorted.map((ts) => ({
+      timestamp: ts,
+      borrowApy: bApy.get(ts) ?? 0,
+      supplyApy: sApy.get(ts) ?? 0,
+      utilization: util.get(ts) ?? 0,
+      supplyAssetsUsd: sUsd.get(ts) ?? 0,
+      borrowAssetsUsd: bUsd.get(ts) ?? 0,
+    }));
+
+    // Strip historicalState from market to avoid bloating downstream
+    const { historicalState: _hs, ...marketData } = mkt;
+    return { market: marketData, history };
+  } catch (err) {
+    console.error(`Morpho market history fetch failed for ${marketKey}:`, err instanceof Error ? err.message : err);
+    return { market: null, history: [] };
   }
 }
 

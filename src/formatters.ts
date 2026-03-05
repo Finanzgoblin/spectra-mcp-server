@@ -2,7 +2,7 @@
  * Data formatting helpers — USD, percentages, dates, balances, pool/position/Morpho summaries.
  */
 
-import type { SpectraPt, SpectraPool, SpectraMetavault, SpectraMetavaultPosition, MorphoMarket, PendleMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavaultBridgeTx, MerklTokenReward, CrossProtocolMatch, CuratorOpportunity, MerklCampaign } from "./types.js";
+import type { SpectraPt, SpectraPool, SpectraMetavault, SpectraMetavaultPosition, MorphoMarket, MorphoVault, MorphoVaultAllocation, MorphoMarketSupplier, PendleMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavaultBridgeTx, MerklTokenReward, CrossProtocolMatch, CuratorOpportunity, MerklCampaign, MorphoUserPositions, MorphoHistoricalAnalysis, MorphoRateStats } from "./types.js";
 import { SUPPORTED_CHAINS } from "./config.js";
 
 // =============================================================================
@@ -592,8 +592,6 @@ export function formatMorphoMarketSummary(m: MorphoMarket, protocol?: string): s
 // Morpho Vault & Supply-Side Formatting
 // =============================================================================
 
-import type { MorphoVault, MorphoMarketSupplier } from "./types.js";
-
 /** Format a single Morpho vault with its allocations. */
 export function formatMorphoVaultSummary(v: MorphoVault, rank?: number): string {
   const lines: string[] = [];
@@ -685,6 +683,215 @@ export function formatMorphoSupplierAnalysis(
 
   if (available < 10000) {
     lines.push(`  Supply Gap: Only ${formatUsd(available)} available — looping at scale needs more supply-side liquidity.`);
+  }
+
+  return lines.join("\n");
+}
+
+// =============================================================================
+// Morpho Vault Enriched Allocation
+// =============================================================================
+
+/** Format a single vault allocation with optional live rates and Spectra PT tagging. */
+export function formatMorphoVaultAllocationEnriched(
+  alloc: MorphoVaultAllocation,
+  marketRate?: { borrowApy: number; supplyApy: number; utilization: number; supplyAssetsUsd?: number },
+  isSpectraPt?: boolean,
+): string {
+  const tag = isSpectraPt ? "[Spectra PT] " : "";
+  const cap = alloc.supplyCapUsd != null && alloc.supplyCapUsd > 0
+    ? ` | Cap: ${formatUsd(alloc.supplyCapUsd)} (${formatPct((alloc.supplyAssetsUsd / alloc.supplyCapUsd) * 100)} used)`
+    : "";
+  const rates = marketRate
+    ? ` | Borrow: ${formatPct(marketRate.borrowApy * 100)} | Util: ${formatPct(marketRate.utilization * 100)}`
+    : "";
+  return `    ${tag}${alloc.collateralSymbol}/${alloc.loanSymbol}: ${formatUsd(alloc.supplyAssetsUsd)}${cap}${rates} | Key: ${alloc.marketKey.slice(0, 10)}...`;
+}
+
+/** Format a full vault with enriched allocations. */
+export function formatMorphoVaultSummaryEnriched(
+  v: MorphoVault,
+  rank: number | undefined,
+  marketRates: Map<string, { borrowApy: number; supplyApy: number; utilization: number; supplyAssetsUsd?: number }>,
+  spectraPtAddrs: Set<string>,
+): string {
+  const lines: string[] = [];
+  const prefix = rank != null ? `#${rank} ` : "";
+  const curator = v.curator ? ` | Curator: ${v.curator}` : "";
+  const aum = v.state?.totalAssetsUsd ? formatUsd(v.state.totalAssetsUsd) : "?";
+  const apy = v.state?.apy != null ? formatPct(v.state.apy * 100) : "?";
+  const netApy = v.state?.netApy != null ? formatPct(v.state.netApy * 100) : null;
+  const fee = v.state?.fee != null && v.state.fee > 0 ? ` | Fee: ${formatPct(v.state.fee * 100)}` : "";
+
+  lines.push(`${prefix}${v.name} (${v.symbol})`);
+  lines.push(`  Address: ${v.address}`);
+  lines.push(`  Asset: ${v.asset?.symbol || "?"} | AUM: ${aum} | APY: ${apy}${netApy ? ` (net ${netApy})` : ""}${fee}${curator}`);
+  lines.push(`  Listed: ${v.listed ? "Yes" : "No"}`);
+
+  const allocs = v.state?.allocation || [];
+  if (allocs.length > 0) {
+    const spectraCount = allocs.filter((a) => spectraPtAddrs.has(a.collateralAddress || "")).length;
+    lines.push(`  Allocations: ${allocs.length} market(s)${spectraCount > 0 ? ` (${spectraCount} Spectra PT)` : ""}`);
+    for (const a of allocs) {
+      const isSpectra = spectraPtAddrs.has(a.collateralAddress || "");
+      const rate = marketRates.get(a.marketKey);
+      lines.push(formatMorphoVaultAllocationEnriched(a, rate, isSpectra));
+    }
+  } else {
+    lines.push(`  Allocations: none (idle vault)`);
+  }
+
+  return lines.join("\n");
+}
+
+// =============================================================================
+// Morpho User Positions Formatter
+// =============================================================================
+
+/** Format a user's Morpho positions across markets and vaults. */
+export function formatMorphoUserPositions(positions: MorphoUserPositions): string {
+  const lines: string[] = [];
+  const t = positions.totals;
+
+  lines.push(`== Morpho Positions: ${positions.chain} ==`);
+  lines.push(`  Address: ${positions.address}`);
+  lines.push(`  Net Value: ${formatUsd(t.netUsd)} (Supply: ${formatUsd(t.supplyUsd)} + Collateral: ${formatUsd(t.collateralUsd)} + Vaults: ${formatUsd(t.vaultUsd)} - Borrow: ${formatUsd(t.borrowUsd)})`);
+
+  // Market positions
+  const mktPositions = positions.marketPositions.filter(
+    (p) => p.supplyAssetsUsd > 0.01 || p.borrowAssetsUsd > 0.01 || p.collateralAssetsUsd > 0.01,
+  );
+  if (mktPositions.length > 0) {
+    lines.push(``);
+    lines.push(`  Market Positions: ${mktPositions.length}`);
+    for (let i = 0; i < mktPositions.length; i++) {
+      const p = mktPositions[i];
+      const collSym = p.market.collateralAsset?.symbol || "?";
+      const loanSym = p.market.loanAsset?.symbol || "?";
+      const tag = p.isSpectraPt ? "[Spectra PT] " : "";
+
+      const parts: string[] = [];
+      if (p.collateralAssetsUsd > 0.01) parts.push(`Collateral: ${formatUsd(p.collateralAssetsUsd)}`);
+      if (p.borrowAssetsUsd > 0.01) parts.push(`Borrow: ${formatUsd(p.borrowAssetsUsd)}`);
+      if (p.supplyAssetsUsd > 0.01) parts.push(`Supply: ${formatUsd(p.supplyAssetsUsd)}`);
+      if (p.healthFactor != null) parts.push(`Health: ${p.healthFactor.toFixed(2)}`);
+
+      lines.push(`    #${i + 1} ${tag}${collSym} / ${loanSym} -- ${parts.join(" | ")}`);
+      lines.push(`       Market: ${p.market.uniqueKey.slice(0, 10)}... | LLTV: ${formatPct(formatMorphoLltv(p.market.lltv) * 100)}`);
+    }
+  }
+
+  // Vault positions
+  const vaultPositions = positions.vaultPositions.filter((p) => p.assetsUsd > 0.01);
+  if (vaultPositions.length > 0) {
+    lines.push(``);
+    lines.push(`  Vault Positions: ${vaultPositions.length}`);
+    for (let i = 0; i < vaultPositions.length; i++) {
+      const p = vaultPositions[i];
+      const netApy = p.vault.state?.netApy != null ? ` | Vault APY: ${formatPct(p.vault.state.netApy * 100)} (net)` : "";
+      lines.push(`    #${i + 1} ${p.vault.name} -- ${formatUsd(p.assetsUsd)}${netApy}`);
+      lines.push(`       Vault: ${p.vault.address}`);
+    }
+  }
+
+  // Signals
+  const signals: string[] = [];
+  for (const p of mktPositions) {
+    if (p.collateralAssetsUsd > 0.01 && p.borrowAssetsUsd > 0.01) {
+      const collSym = p.market.collateralAsset?.symbol || "?";
+      signals.push(`Looper detected: ${collSym} position has collateral (${formatUsd(p.collateralAssetsUsd)}) and borrow (${formatUsd(p.borrowAssetsUsd)}) — likely looping strategy`);
+    }
+    if (p.healthFactor != null && p.healthFactor < 1.3 && p.healthFactor > 0) {
+      signals.push(`Health factor ${p.healthFactor.toFixed(2)} is close to liquidation — monitor for rate changes`);
+    }
+  }
+  if (signals.length > 0) {
+    lines.push(``);
+    lines.push(`  Position Signals:`);
+    for (const s of signals) lines.push(`    - ${s}`);
+  }
+
+  if (mktPositions.length === 0 && vaultPositions.length === 0) {
+    lines.push(``);
+    lines.push(`  No active Morpho positions on ${positions.chain}.`);
+  }
+
+  return lines.join("\n");
+}
+
+// =============================================================================
+// Morpho Historical Analysis Formatter
+// =============================================================================
+
+function formatRateStats(label: string, stats: MorphoRateStats, isPercent: boolean): string[] {
+  const fmt = isPercent ? (v: number) => formatPct(v * 100) : (v: number) => formatUsd(v);
+  const changeFmt = isPercent
+    ? `${stats.change >= 0 ? "+" : ""}${(stats.change * 100).toFixed(2)}pp`
+    : `${stats.change >= 0 ? "+" : ""}${((stats.change) * 100).toFixed(1)}%`;
+  const trend = stats.trend.toUpperCase();
+  return [
+    `  ${label}: ${fmt(stats.current)} (${changeFmt}, ${trend})`,
+    `    Min: ${fmt(stats.min)} | Avg: ${fmt(stats.avg)} | Max: ${fmt(stats.max)}`,
+  ];
+}
+
+/** Compute Layer 3 hints from historical analysis. */
+export function formatMorphoHistoryHints(analysis: MorphoHistoricalAnalysis): string[] {
+  const hints: string[] = [];
+  const { borrowApy, supplyApy, utilization, tvl } = analysis.stats;
+
+  // Rate spike detection
+  if (borrowApy.max > 0 && borrowApy.current > borrowApy.avg * 1.5) {
+    hints.push(`Borrow rate spiked to ${formatPct(borrowApy.current * 100)} (avg ${formatPct(borrowApy.avg * 100)}) — looping cost is elevated`);
+  }
+
+  // Rate stability
+  if (borrowApy.max > 0 && borrowApy.min > 0) {
+    const range = borrowApy.max - borrowApy.min;
+    if (range < borrowApy.avg * 0.2) {
+      hints.push(`Borrow rate stable over ${analysis.period} (${formatPct(borrowApy.min * 100)}-${formatPct(borrowApy.max * 100)}) — favorable for looping`);
+    }
+  }
+
+  // Utilization warning
+  if (utilization.avg > 0.85 && utilization.trend === "up") {
+    hints.push(`Utilization >85% and trending UP — supply may be tight, expect rate spikes`);
+  }
+
+  // TVL decline
+  if (tvl.current > 0 && tvl.change < -0.2) {
+    hints.push(`TVL declined ${((tvl.change) * 100).toFixed(1)}% — suppliers withdrawing, rates likely to increase`);
+  }
+
+  // Supply/demand divergence
+  if (tvl.trend === "down" && borrowApy.trend === "up") {
+    hints.push(`Supply declining while borrow rates rising — supply/demand squeeze in progress`);
+  }
+
+  return hints;
+}
+
+/** Format full historical analysis output. */
+export function formatMorphoHistoricalAnalysis(analysis: MorphoHistoricalAnalysis): string {
+  const lines: string[] = [];
+  const m = analysis.market;
+  const collSym = m?.collateralAsset?.symbol || "?";
+  const loanSym = m?.loanAsset?.symbol || "?";
+
+  lines.push(`== Morpho History: ${collSym} / ${loanSym} (${analysis.chain}) ==`);
+  lines.push(`  Market: ${m?.uniqueKey || "?"}`);
+  lines.push(`  Period: ${analysis.period} | Interval: ${analysis.interval} | Data points: ${analysis.dataPoints.length}`);
+  lines.push(``);
+
+  lines.push(...formatRateStats("Borrow APY", analysis.stats.borrowApy, true));
+  lines.push(...formatRateStats("Supply APY", analysis.stats.supplyApy, true));
+  lines.push(...formatRateStats("Utilization", analysis.stats.utilization, true));
+  lines.push(...formatRateStats("TVL (Supply)", analysis.stats.tvl, false));
+
+  if (analysis.hints.length > 0) {
+    lines.push(``);
+    lines.push(`  Signals:`);
+    for (const h of analysis.hints) lines.push(`    - ${h}`);
   }
 
   return lines.join("\n");
