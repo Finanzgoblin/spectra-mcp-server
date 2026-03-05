@@ -625,19 +625,27 @@ const ERC4626_SELECTORS = {
  * A rate below 1.0 may indicate the IBT has lost value (e.g., bad debt, hack, depeg).
  *
  * Best-effort — returns null if the chain has no RPC or the call reverts.
+ *
+ * IMPORTANT: ibtDecimals encodes the input (1 full IBT = 10^ibtDecimals).
+ * underlyingDecimals decodes the output (convertToAssets returns in underlying's
+ * decimal space). These can differ — e.g., an 18-decimal IBT wrapping 6-decimal USDC.
+ * If underlyingDecimals is not provided, falls back to ibtDecimals (same-decimal case).
  */
 export async function fetchIbtConversionRate(
   ibtAddress: string,
-  decimals: number,
+  ibtDecimals: number,
   chainSlug: string,
+  underlyingDecimals?: number,
 ): Promise<number | null> {
   const network = resolveNetwork(chainSlug);
   const rpcUrl = CHAIN_RPC_URLS[network];
   if (!rpcUrl) return null;
 
+  const outDecimals = underlyingDecimals ?? ibtDecimals;
+
   try {
-    // Encode: convertToAssets(10^decimals) — "how much underlying does 1 full IBT token equal?"
-    const oneToken = (10n ** BigInt(decimals)).toString(16).padStart(64, "0");
+    // Encode: convertToAssets(10^ibtDecimals) — "how much underlying does 1 full IBT token equal?"
+    const oneToken = (10n ** BigInt(ibtDecimals)).toString(16).padStart(64, "0");
     const calldata = ERC4626_SELECTORS.convertToAssets + oneToken;
 
     const res = await fetchWithRetry(() =>
@@ -672,7 +680,8 @@ export async function fetchIbtConversionRate(
     if (!hex || hex === "0x" || hex === "0x0") return null;
 
     const raw = BigInt(hex);
-    const divisor = 10n ** BigInt(decimals);
+    // Divide by underlying decimals — convertToAssets returns in underlying's decimal space
+    const divisor = 10n ** BigInt(outDecimals);
     const intPart = raw / divisor;
     const fracPart = raw % divisor;
     return Number(intPart) + Number(fracPart) / Number(divisor);
