@@ -198,8 +198,32 @@ export const CHAIN_RPC_URLS: Partial<Record<string, string>> = {
   sonic:     "https://rpc.soniclabs.com",
   bsc:       "https://bsc-dataseed1.binance.org",
   flare:     "https://flare-api.flare.network/ext/C/rpc",
-  // katana and monad: no well-known public RPCs; these chains will return "unknown"
+  katana:    "https://rpc.katana.network",
+  // monad: no well-known public RPC; will return "unknown"
 };
+
+// =============================================================================
+// Morpho Blue On-Chain Constants
+// =============================================================================
+
+// Morpho Blue contract — the address varies per chain despite CREATE2 origins.
+// Standard address on mainnet/base/arbitrum: 0xBBBBBBBBbb9cC5e90e3b3Af64bdAF62C37EEFFCb
+// Katana: 0xD50F2DffFd62f94Ee4AEd9ca05C61d0753268aBc
+// The correct per-chain address is available from the Morpho GraphQL API via morphoBlue { address }.
+// market(bytes32 id) returns (totalSupplyAssets, totalSupplyShares, totalBorrowAssets,
+//                              totalBorrowShares, lastUpdate, fee) — all uint128.
+export const MORPHO_BLUE = {
+  // Per-chain addresses — the GraphQL API's morphoBlue.address field is the authority.
+  addresses: {
+    mainnet:  "0xBBBBBBBBbb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+    base:     "0xBBBBBBBBbb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+    arbitrum: "0xBBBBBBBBbb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+    katana:   "0xD50F2DffFd62f94Ee4AEd9ca05C61d0753268aBc",
+  } as Record<string, string>,
+  selectors: {
+    market: "0x5c60e39a", // keccak256("market(bytes32)")[:4] — verified on mainnet + katana
+  },
+} as const;
 
 // Fallback RPCs — tried when the primary RPC fails. Order matters (first fallback tried first).
 export const CHAIN_RPC_FALLBACKS: Partial<Record<string, string[]>> = {

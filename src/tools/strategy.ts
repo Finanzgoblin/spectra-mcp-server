@@ -35,6 +35,7 @@ import {
   formatMetavaultScanSection,
   extractLpApyBreakdown,
   computeSpectraBoost,
+  getEffectiveLiquidityUsd,
 } from "../formatters.js";
 import type { BoostInfo } from "../formatters.js";
 
@@ -303,7 +304,7 @@ Use model_metavault_strategy to model MetaVault looping economics.`,
               const opp = opportunities[entry.idx];
               const lltv = formatMorphoLltv(market.lltv);
               const borrowRatePct = (market.state?.borrowApy || 0) * 100;
-              const morphoLiqUsd = market.state?.liquidityAssetsUsd || 0;
+              const morphoLiqUsd = getEffectiveLiquidityUsd(market);
 
               if (lltv <= 0) continue;
 

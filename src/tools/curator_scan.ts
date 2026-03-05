@@ -39,6 +39,7 @@ import {
   computeSpectraBoost,
   formatCuratorScanResults,
   formatCuratorOpportunityCompact,
+  getEffectiveLiquidityUsd,
 } from "../formatters.js";
 import type { BoostInfo } from "../formatters.js";
 
@@ -405,7 +406,7 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
                 const lltv = formatMorphoLltv(market.lltv);
                 const borrowRatePct = (market.state?.borrowApy || 0) * 100;
                 const supplyApyPct = (market.state?.supplyApy || 0) * 100;
-                const availableLiquidityUsd = market.state?.liquidityAssetsUsd || 0;
+                const availableLiquidityUsd = getEffectiveLiquidityUsd(market);
                 const utilization = market.state?.utilization || 0;
 
                 // Populate morpho block for all markets (even if lltv is bad)
