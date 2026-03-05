@@ -65,6 +65,13 @@ Use compare_yield for fixed-vs-variable rate analysis on the same PT.`,
         const ibtSymbol = ibt?.symbol || "IBT";
         const ibtProtocol = ibt?.protocol || "";
         const poolLiqUsd = pool?.liquidity?.usd || 0;
+        // Detect Spectra wrapper tokens (sw- prefix). For wrappers, on-chain
+        // convertToAssets measures wrapper→baseIBT, NOT wrapper→underlying.
+        // API ibt.price.underlying measures the full chain (wrapper→baseIBT→underlying).
+        // Divergence and sub-1.0 rates are architecturally expected for wrappers.
+        const isWrapper = !!(pt.baseIbt?.address);
+        const baseIbtAddress = pt.baseIbt?.address;
+        const baseIbtSymbol = pt.baseIbt?.symbol || "";
 
         const checks: HealthCheck[] = [];
 
@@ -75,7 +82,17 @@ Use compare_yield for fixed-vs-variable rate analysis on the same PT.`,
           if (onChainRate !== null) {
             const rateLines: string[] = [`${onChainRate.toFixed(6)} underlying per IBT (on-chain)`];
 
-            if (apiRate != null && apiRate > 0) {
+            if (isWrapper) {
+              // Wrapper token: on-chain and API measure different conversion paths
+              rateLines.push(`sw- wrapper detected — on-chain rate is ${ibtSymbol}→${baseIbtSymbol || "baseIBT"}, not ${ibtSymbol}→underlying`);
+              if (apiRate != null) {
+                rateLines.push(`API rate ${apiRate.toFixed(6)} measures full chain (${ibtSymbol}→underlying) — divergence expected`);
+              }
+              if (baseIbtAddress) {
+                rateLines.push(`To verify full conversion: read convertToAssets on baseIBT ${baseIbtAddress}`);
+              }
+              checks.push({ name: "Conversion Rate", signal: "ok", lines: rateLines });
+            } else if (apiRate != null && apiRate > 0) {
               const divergence = Math.abs(onChainRate - apiRate) / apiRate * 100;
               rateLines.push(`API reports ${apiRate.toFixed(6)} — divergence ${formatPct(divergence)}`);
 
@@ -92,7 +109,16 @@ Use compare_yield for fixed-vs-variable rate analysis on the same PT.`,
             }
 
             // Rate direction check
-            if (onChainRate < 1.0) {
+            if (onChainRate < 1.0 && isWrapper) {
+              checks.push({
+                name: "Rate Direction",
+                signal: "ok",
+                lines: [
+                  `${onChainRate.toFixed(6)} — below 1.0 (normal for sw- wrapper tokens)`,
+                  `Wrapper rate measures ${ibtSymbol}→${baseIbtSymbol || "baseIBT"} exchange ratio, not value loss`,
+                ],
+              });
+            } else if (onChainRate < 1.0) {
               checks.push({
                 name: "Rate Direction",
                 signal: "warning",
