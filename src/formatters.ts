@@ -512,6 +512,20 @@ export function formatMorphoMarketSummary(m: MorphoMarket, protocol?: string): s
     lines.push(`    Available Liquidity: ${formatUsd(s.liquidityAssetsUsd || 0)}`);
     lines.push(`    Collateral Deposited: ${formatUsd(s.collateralAssetsUsd || 0)}`);
     if ((s.fee ?? 0) > 0) lines.push(`    Protocol Fee: ${formatPct((s.fee ?? 0) * 100)}`);
+
+    // Reward incentives (supply-side and borrow-side)
+    const rewards = (s as any).rewards;
+    if (rewards && Array.isArray(rewards) && rewards.length > 0) {
+      lines.push(``);
+      lines.push(`  Rewards:`);
+      for (const r of rewards) {
+        const sym = r.asset?.symbol || "?";
+        const parts: string[] = [];
+        if (r.supplyApr != null && r.supplyApr > 0) parts.push(`Supply: +${formatPct(r.supplyApr * 100)}`);
+        if (r.borrowApr != null && r.borrowApr > 0) parts.push(`Borrow: +${formatPct(r.borrowApr * 100)}`);
+        if (parts.length > 0) lines.push(`    ${sym}: ${parts.join(" | ")}`);
+      }
+    }
   }
 
   if (m.warnings && m.warnings.length > 0) {
@@ -520,6 +534,108 @@ export function formatMorphoMarketSummary(m: MorphoMarket, protocol?: string): s
     for (const w of m.warnings) {
       lines.push(`    [${w.level}] ${w.type}`);
     }
+  }
+
+  return lines.join("\n");
+}
+
+// =============================================================================
+// Morpho Vault & Supply-Side Formatting
+// =============================================================================
+
+import type { MorphoVault, MorphoMarketSupplier } from "./types.js";
+
+/** Format a single Morpho vault with its allocations. */
+export function formatMorphoVaultSummary(v: MorphoVault, rank?: number): string {
+  const lines: string[] = [];
+  const prefix = rank != null ? `#${rank} ` : "";
+  const curator = v.curator ? ` | Curator: ${v.curator}` : "";
+  const aum = v.state?.totalAssetsUsd ? formatUsd(v.state.totalAssetsUsd) : "?";
+  const apy = v.state?.apy != null ? formatPct(v.state.apy * 100) : "?";
+  const netApy = v.state?.netApy != null ? formatPct(v.state.netApy * 100) : null;
+  const fee = v.state?.fee != null && v.state.fee > 0 ? ` | Fee: ${formatPct(v.state.fee * 100)}` : "";
+
+  lines.push(`${prefix}${v.name} (${v.symbol})`);
+  lines.push(`  Address: ${v.address}`);
+  lines.push(`  Asset: ${v.asset?.symbol || "?"} | AUM: ${aum} | APY: ${apy}${netApy ? ` (net ${netApy})` : ""}${fee}${curator}`);
+  lines.push(`  Listed: ${v.listed ? "Yes" : "No"}`);
+
+  const allocs = v.state?.allocation || [];
+  if (allocs.length > 0) {
+    lines.push(`  Allocations: ${allocs.length} market(s)`);
+    for (const a of allocs) {
+      const cap = a.supplyCapUsd != null ? ` | Cap: ${formatUsd(a.supplyCapUsd)}` : "";
+      lines.push(`    ${a.collateralSymbol}/${a.loanSymbol}: ${formatUsd(a.supplyAssetsUsd)}${cap} | Key: ${a.marketKey.slice(0, 10)}...`);
+    }
+  } else {
+    lines.push(`  Allocations: none (idle vault)`);
+  }
+
+  return lines.join("\n");
+}
+
+/** Format supply-side analysis for a Morpho market. */
+export function formatMorphoSupplierAnalysis(
+  suppliers: MorphoMarketSupplier[],
+  market: MorphoMarket,
+): string {
+  const s = market.state;
+  const totalSupply = s?.supplyAssetsUsd || 0;
+  const available = s?.liquidityAssetsUsd || 0;
+  const utilization = s?.utilization || 0;
+  const supplyApy = s?.supplyApy || 0;
+  const collateral = market.collateralAsset?.symbol || "?";
+  const loan = market.loanAsset?.symbol || "?";
+
+  const lines: string[] = [];
+  lines.push(`== Supply-Side Analysis: ${collateral} / ${loan} ==`);
+  lines.push(`  Total Supply: ${formatUsd(totalSupply)} | Available: ${formatUsd(available)} | Utilization: ${formatPct(utilization * 100)}`);
+  lines.push(`  Supply APY: ${formatPct(supplyApy * 100)}`);
+
+  // Reward incentives on supply side
+  const rewards = (s as any)?.rewards;
+  if (rewards && Array.isArray(rewards)) {
+    const supplyRewards = rewards.filter((r: any) => r.supplyApr != null && r.supplyApr > 0);
+    if (supplyRewards.length > 0) {
+      const parts = supplyRewards.map((r: any) => `+${formatPct(r.supplyApr * 100)} ${r.asset?.symbol || "?"}`);
+      lines.push(`  Supply Rewards: ${parts.join(", ")}`);
+    }
+  }
+
+  lines.push(``);
+
+  if (suppliers.length === 0) {
+    lines.push(`  No supply-side positions found.`);
+    return lines.join("\n");
+  }
+
+  lines.push(`  Top Suppliers:`);
+  for (let i = 0; i < suppliers.length; i++) {
+    const sup = suppliers[i];
+    const pct = totalSupply > 0 ? (sup.supplyAssetsUsd / totalSupply) * 100 : 0;
+    const addrShort = `${sup.address.slice(0, 6)}...${sup.address.slice(-4)}`;
+
+    if (sup.isVault) {
+      lines.push(`    #${i + 1} [Vault] ${sup.vaultName || "Unknown"} (${addrShort}) — ${formatUsd(sup.supplyAssetsUsd)} (${formatPct(pct)})`);
+      const parts: string[] = [];
+      if (sup.vaultTotalAssetsUsd) parts.push(`AUM: ${formatUsd(sup.vaultTotalAssetsUsd)}`);
+      if (sup.vaultCurator) parts.push(`Curator: ${sup.vaultCurator}`);
+      if (parts.length > 0) lines.push(`       ${parts.join(" | ")}`);
+    } else {
+      const role = sup.collateralUsd > 0 && sup.borrowAssetsUsd > 0
+        ? "[Looper]" : "[EOA]";
+      lines.push(`    #${i + 1} ${role} ${addrShort} — ${formatUsd(sup.supplyAssetsUsd)} (${formatPct(pct)})`);
+    }
+  }
+
+  // Concentration analysis
+  lines.push(``);
+  const topPct = totalSupply > 0 ? (suppliers[0].supplyAssetsUsd / totalSupply) * 100 : 0;
+  const concentration = topPct >= 80 ? "VERY HIGH" : topPct >= 50 ? "HIGH" : topPct >= 30 ? "MODERATE" : "LOW";
+  lines.push(`  Concentration: ${concentration} — top supplier controls ${formatPct(topPct)}`);
+
+  if (available < 10000) {
+    lines.push(`  Supply Gap: Only ${formatUsd(available)} available — looping at scale needs more supply-side liquidity.`);
   }
 
   return lines.join("\n");
