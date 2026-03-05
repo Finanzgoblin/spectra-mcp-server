@@ -490,7 +490,7 @@ export function formatMorphoMarketSummary(m: MorphoMarket, protocol?: string): s
 
   const lines = [
     `-- ${collateral} / ${loan} --`,
-    `  Morpho Market: ${m.uniqueKey.slice(0, 14)}...${m.uniqueKey.slice(-6)}`,
+    `  Morpho Market: ${m.uniqueKey}`,
     `  Chain: ${chain} (${chainId})`,
   ];
   if (protocol) lines.push(`  Protocol: ${protocol}`);
