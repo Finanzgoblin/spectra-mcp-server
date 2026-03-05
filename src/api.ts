@@ -381,6 +381,69 @@ export async function fetchMorphoMarketSuppliers(
   }
 }
 
+/**
+ * Fetch all Morpho-related addresses a user interacts with on a chain.
+ * Used by get_portfolio to match Merkl rewards against Morpho positions.
+ * Returns a Set of lowercased addresses: vault addresses, loan asset addresses,
+ * collateral asset addresses, Morpho Blue contract address.
+ * Best-effort — returns empty set on error.
+ */
+export async function fetchMorphoUserAddresses(
+  userAddress: string,
+  chainId: number,
+): Promise<Set<string>> {
+  const addresses = new Set<string>();
+  try {
+    const query = `{
+      vaultPositions(
+        where: {
+          userAddress_in: ["${sanitizeGraphQL(userAddress)}"]
+          chainId_in: [${chainId}]
+        }
+        first: 50
+      ) {
+        items {
+          vault { address }
+        }
+      }
+      marketPositions(
+        where: {
+          userAddress_in: ["${sanitizeGraphQL(userAddress)}"]
+          chainId_in: [${chainId}]
+        }
+        first: 50
+      ) {
+        items {
+          market {
+            loanAsset { address }
+            collateralAsset { address }
+            morphoBlue { address }
+          }
+        }
+      }
+    }`;
+
+    const data = await fetchMorpho(query) as any;
+
+    // Extract vault addresses
+    for (const vp of data?.vaultPositions?.items || []) {
+      const addr = vp?.vault?.address;
+      if (addr) addresses.add(addr.toLowerCase());
+    }
+
+    // Extract market-related addresses
+    for (const mp of data?.marketPositions?.items || []) {
+      const m = mp?.market;
+      if (m?.loanAsset?.address) addresses.add(m.loanAsset.address.toLowerCase());
+      if (m?.collateralAsset?.address) addresses.add(m.collateralAsset.address.toLowerCase());
+      if (m?.morphoBlue?.address) addresses.add(m.morphoBlue.address.toLowerCase());
+    }
+  } catch (err) {
+    console.error(`Morpho user address lookup failed for ${userAddress}:`, err instanceof Error ? err.message : err);
+  }
+  return addresses;
+}
+
 /** GraphQL fields for Morpho vault queries. */
 const MORPHO_VAULT_FIELDS = `
   address

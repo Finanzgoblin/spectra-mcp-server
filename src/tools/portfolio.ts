@@ -5,7 +5,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { CHAIN_ENUM, EVM_ADDRESS, API_NETWORKS, SUPPORTED_CHAINS, resolveNetwork } from "../config.js";
 import type { SpectraPt, MerklTokenReward, MerklChainRewards } from "../types.js";
-import { fetchSpectra, findMorphoMarketsForPts, fetchMerkl, parseMerklRewards } from "../api.js";
+import { fetchSpectra, findMorphoMarketsForPts, fetchMerkl, parseMerklRewards, fetchMorphoUserAddresses } from "../api.js";
 import { formatUsd, formatPositionSummary, formatPortfolioHints, formatMerklRewards, formatUnmatchedMerklRewards, daysToMaturity, formatBalance } from "../formatters.js";
 import type { SpectraPool } from "../types.js";
 
@@ -52,8 +52,8 @@ Protocol context:
         const failedChains: string[] = [];
         const merklFailedChains: string[] = [];
 
-        // Fire portfolio + Merkl fetches in parallel (no added latency)
-        const [portfolioResults, merklSettled] = await Promise.all([
+        // Fire portfolio + Merkl + Morpho address fetches in parallel (no added latency)
+        const [portfolioResults, merklSettled, morphoAddressResults] = await Promise.all([
           Promise.allSettled(
             networks.map(async (net): Promise<Position[]> => {
               const raw = await fetchSpectra(`/${net}/portfolio/${address}`) as any;
@@ -67,6 +67,14 @@ Protocol context:
               if (!chainInfo) return { chain: net, raw: {} };
               const raw = await fetchMerkl(address, chainInfo.id);
               return { chain: net, raw };
+            })
+          ),
+          // Fetch Morpho addresses for Merkl matching (best-effort, swallow errors)
+          Promise.allSettled(
+            networks.map(async (net): Promise<Set<string>> => {
+              const chainInfo = SUPPORTED_CHAINS[net];
+              if (!chainInfo) return new Set<string>();
+              return fetchMorphoUserAddresses(address, chainInfo.id);
             })
           ),
         ]);
@@ -85,11 +93,19 @@ Protocol context:
           ? `\nNote: ${failedChains.length} chain(s) failed to respond (${failedChains.join(", ")}). Results may be partial.\n`
           : "";
 
-        // Build set of known pool addresses for Merkl matching
+        // Build set of known addresses for Merkl matching (Spectra pools + Morpho positions)
         const knownPoolAddresses = new Set<string>();
         for (const { pos } of allPositions) {
           for (const pool of pos.pools || []) {
             if (pool.address) knownPoolAddresses.add(pool.address.toLowerCase());
+          }
+        }
+        // Add Morpho vault/market addresses so Merkl rewards from Morpho campaigns match
+        for (const result of morphoAddressResults) {
+          if (result.status === "fulfilled") {
+            for (const addr of result.value) {
+              knownPoolAddresses.add(addr);
+            }
           }
         }
 

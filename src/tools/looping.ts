@@ -115,7 +115,7 @@ discover the best looping opportunities across all chains with capital-aware siz
         // Show Morpho source
         if (morphoDetected) {
           const mk = morphoMarket!.uniqueKey;
-          lines.push(`  Morpho Market: ${mk.slice(0, 14)}...${mk.slice(-6)} (auto-detected)`);
+          lines.push(`  Morpho Market: ${mk} (auto-detected)`);
           lines.push(`    Collateral: ${morphoMarket!.collateralAsset?.symbol || "?"}`);
           lines.push(`    Loan: ${morphoMarket!.loanAsset?.symbol || "?"}`);
           lines.push(`    Utilization: ${formatPct((morphoMarket!.state?.utilization || 0) * 100)}`);
