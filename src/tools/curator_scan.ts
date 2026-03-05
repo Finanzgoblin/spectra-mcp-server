@@ -242,11 +242,29 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
           if (effectiveApy < 0) warnings.push("Negative effective APY");
 
           const bestIsLp = lpApy > effectiveApy;
+
+          // Parse clean underlying symbol from Pendle market name (strip date suffix like "-26MAR2026")
+          const pendleUnderlying = market.name.replace(/-\d{1,2}[A-Z]{3}\d{4}$/, "");
+
+          // Build LP APY breakdown from Pendle market details
+          const swapFeeApyPct = (market.details.swapFeeApy || 0) * 100;
+          const pendleIncentivePct = (market.details.pendleApy || 0) * 100;
+          const maxBoostedPct = (market.details.maxBoostedApy || 0) * 100;
+          const pendleLpBreakdown: CuratorOpportunity["lpApyBreakdown"] = {
+            fees: swapFeeApyPct,
+            pt: 0,
+            ibt: 0,
+            rewards: pendleIncentivePct > 0 ? { PENDLE: pendleIncentivePct } : {},
+            boostedRewards: maxBoostedPct > lpApy
+              ? { PENDLE: { min: pendleIncentivePct, max: maxBoostedPct } }
+              : {},
+          };
+
           opportunities.push({
             protocol: "pendle",
             chain,
             name: market.name,
-            underlying: market.name, // Pendle name includes underlying info
+            underlying: pendleUnderlying,
             maturityTimestamp: maturityTs,
             daysToMaturity: days,
             impliedApy,
@@ -261,6 +279,8 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
             bestStrategy: bestIsLp ? "lp" : "pt_spot",
             pendleMarketAddress: market.address,
             pendlePtAddress: market.pt,
+            pendleSyAddress: market.sy,
+            lpApyBreakdown: pendleLpBreakdown,
             warnings,
           });
         }
