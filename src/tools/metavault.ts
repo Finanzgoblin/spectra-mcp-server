@@ -39,7 +39,7 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavault } from "../types.js";
+import type { MetavaultLoopRow, MetavaultCuratorEconomics, MetavaultPerformanceMetrics, SpectraMetavault, SpectraMetavaultEpoch } from "../types.js";
 import { CHAIN_ENUM, EVM_ADDRESS } from "../config.js";
 import { fetchMetavaults, scanAllMetavaults, fetchChainPoolAddresses } from "../api.js";
 import {
@@ -81,6 +81,124 @@ function findOptimal(rows: MetavaultLoopRow[]): { loop: number; netApy: number; 
     if (row.netApy > best.netApy) best = row;
   }
   return { loop: best.loop, netApy: best.netApy, leverage: best.leverage };
+}
+
+// ─── Performance metrics computation ────────────────────────────────────────
+
+function computePerformanceMetrics(
+  epochs: SpectraMetavaultEpoch[],
+  riskFreeRatePct: number = 5,
+): MetavaultPerformanceMetrics | null {
+  if (!epochs || epochs.length < 2) return null;
+
+  const sorted = [...epochs].sort((a, b) => a.timestamp - b.timestamp);
+  const rates = sorted.map((e) => Number(e.rate) / 1e6);
+  const timestamps = sorted.map((e) => e.timestamp);
+
+  const firstRate = rates[0];
+  const lastRate = rates[rates.length - 1];
+  const startDate = formatDate(timestamps[0]);
+  const endDate = formatDate(timestamps[timestamps.length - 1]);
+  const totalDays = (timestamps[timestamps.length - 1] - timestamps[0]) / 86400;
+
+  if (totalDays <= 0 || firstRate <= 0) return null;
+
+  const annualizedReturnPct = (lastRate / firstRate - 1) * (365 / totalDays) * 100;
+
+  // Max drawdown
+  let peak = rates[0];
+  let maxDrawdownPct = 0;
+  let drawdownStartIdx: number | null = null;
+  let drawdownEndIdx: number | null = null;
+  let currentPeakIdx = 0;
+
+  for (let i = 1; i < rates.length; i++) {
+    if (rates[i] > peak) {
+      peak = rates[i];
+      currentPeakIdx = i;
+    }
+    const drawdown = (rates[i] - peak) / peak * 100;
+    if (drawdown < maxDrawdownPct) {
+      maxDrawdownPct = drawdown;
+      drawdownStartIdx = currentPeakIdx;
+      drawdownEndIdx = i;
+    }
+  }
+
+  const drawdownStartDate = drawdownStartIdx !== null ? formatDate(timestamps[drawdownStartIdx]) : null;
+  const drawdownEndDate = drawdownEndIdx !== null ? formatDate(timestamps[drawdownEndIdx]) : null;
+
+  // Volatility
+  const epochReturns: number[] = [];
+  let totalEpochDays = 0;
+  for (let i = 1; i < rates.length; i++) {
+    if (rates[i - 1] > 0) {
+      epochReturns.push((rates[i] - rates[i - 1]) / rates[i - 1]);
+    }
+    totalEpochDays += (timestamps[i] - timestamps[i - 1]) / 86400;
+  }
+
+  let volatilityAnnualizedPct = 0;
+  let sharpeRatio: number | null = null;
+
+  if (epochReturns.length >= 2) {
+    const avgEpochDays = totalEpochDays / epochReturns.length;
+    const mean = epochReturns.reduce((s, r) => s + r, 0) / epochReturns.length;
+    const variance = epochReturns.reduce((s, r) => s + (r - mean) ** 2, 0) / (epochReturns.length - 1);
+    const stdDev = Math.sqrt(variance);
+    const annualizationFactor = avgEpochDays > 0 ? Math.sqrt(365 / avgEpochDays) : 0;
+    volatilityAnnualizedPct = stdDev * annualizationFactor * 100;
+
+    if (volatilityAnnualizedPct > 0) {
+      sharpeRatio = (annualizedReturnPct - riskFreeRatePct) / volatilityAnnualizedPct;
+    }
+  }
+
+  return {
+    startDate,
+    endDate,
+    totalDays: Math.round(totalDays),
+    epochCount: sorted.length,
+    annualizedReturnPct,
+    maxDrawdownPct,
+    drawdownStartDate,
+    drawdownEndDate,
+    volatilityAnnualizedPct,
+    sharpeRatio,
+    riskFreeRatePct,
+  };
+}
+
+function formatPerformanceMetrics(metrics: MetavaultPerformanceMetrics): string {
+  const lines: string[] = [];
+  lines.push(`--- Performance (since inception) ---`);
+  lines.push(`  Period: ${metrics.startDate} to ${metrics.endDate} (${metrics.totalDays} days, ${metrics.epochCount} epochs)`);
+  lines.push(`  Time-Weighted Return: ${formatPct(metrics.annualizedReturnPct)} annualized`);
+
+  if (metrics.maxDrawdownPct < 0 && metrics.drawdownStartDate && metrics.drawdownEndDate) {
+    lines.push(`  Max Drawdown: ${formatPct(metrics.maxDrawdownPct)} (${metrics.drawdownStartDate} to ${metrics.drawdownEndDate})`);
+  } else {
+    lines.push(`  Max Drawdown: none`);
+  }
+
+  lines.push(`  Volatility: ${formatPct(metrics.volatilityAnnualizedPct)} annualized`);
+
+  if (metrics.sharpeRatio !== null) {
+    lines.push(`  Sharpe Ratio: ${metrics.sharpeRatio.toFixed(1)} (vs ${formatPct(metrics.riskFreeRatePct)} risk-free proxy)`);
+  } else {
+    lines.push(`  Sharpe Ratio: N/A (insufficient volatility data)`);
+  }
+
+  lines.push(``);
+  lines.push(`  Considerations:`);
+  lines.push(`  - Returns are in underlying terms (not USD) — denomination asset price changes are excluded`);
+  lines.push(`  - Performance based on ${metrics.epochCount} epoch snapshots — granularity is limited by epoch frequency`);
+  lines.push(`  - Max drawdown measures share rate decline, which can reflect LP impermanent loss or pool rebalancing`);
+  if (metrics.totalDays < 90) {
+    lines.push(`  - Short track record (${metrics.totalDays} days) — insufficient for robust statistical inference`);
+  }
+
+  return lines.join("\n");
 }
 
 export function register(server: McpServer): void {
@@ -730,7 +848,21 @@ Use get_address_activity on the curator's EOA for cross-pool curator activity.`,
           estimatedAnnualFeeRevenueUsd,
         };
 
-        const text = formatCuratorDashboard(dashOpts);
+        let text = formatCuratorDashboard(dashOpts);
+
+        // Append performance metrics if enough epoch data
+        const perfMetrics = computePerformanceMetrics(mv.epochs || []);
+        if (perfMetrics) {
+          const perfText = formatPerformanceMetrics(perfMetrics);
+          const nextStepsMarker = "--- Next Steps ---";
+          const nextStepsIdx = text.indexOf(nextStepsMarker);
+          if (nextStepsIdx >= 0) {
+            text = text.slice(0, nextStepsIdx) + perfText + "\n\n" + text.slice(nextStepsIdx);
+          } else {
+            text += "\n" + perfText;
+          }
+        }
+
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
         const text = `Error building curator dashboard: ${e.message}`;

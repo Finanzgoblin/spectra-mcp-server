@@ -64,6 +64,8 @@ import { register as registerIbtHealth } from "./tools/ibt_health.js";
 import { register as registerYieldCurve } from "./tools/yield_curve.js";
 import { register as registerRiskMonitor } from "./tools/risk_monitor.js";
 import { register as registerStressTest } from "./tools/stress_test.js";
+import { register as registerRollover } from "./tools/rollover.js";
+import { register as registerCuratorPortfolio } from "./tools/curator_portfolio.js";
 
 // =============================================================================
 // MCP Server Setup
@@ -96,6 +98,8 @@ registerIbtHealth(server);
 registerYieldCurve(server);
 registerRiskMonitor(server);
 registerStressTest(server);
+registerRollover(server);
+registerCuratorPortfolio(server);
 
 // =============================================================================
 // Resources: Protocol context for agents
