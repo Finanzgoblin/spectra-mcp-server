@@ -1,15 +1,17 @@
 # Architect Brief: MetaVault Curator Risk Management Layer
 
-**Date:** 2026-03-06
+**Date:** 2026-03-06 (Updated: 2026-03-06)
 **From:** Strategy Review
 **To:** Engineering Architect
 **Context:** Building a curator-as-a-service business on Spectra MetaVaults. The MCP server tooling handles deal origination and modeling well. This document specifies the **post-deployment risk management layer** that needs to be built.
+
+> **Status:** All P0, P1, and P2 items have been **shipped**. See implementation notes below each section.
 
 ---
 
 ## Current Architecture (What Exists)
 
-The Spectra MCP server is a TypeScript MCP (Model Context Protocol) server exposing ~25 tools to an LLM agent. Tools are registered in `src/tools/*.ts`, share helpers via `src/api.ts` (API calls), `src/formatters.ts` (output formatting), `src/config.ts` (chain config), and `src/types.ts` (type definitions).
+The Spectra MCP server is a TypeScript MCP (Model Context Protocol) server exposing 37 tools to an LLM agent. Tools are registered in `src/tools/*.ts`, share helpers via `src/api.ts` (API calls), `src/formatters.ts` (output formatting), `src/config.ts` (chain config), and `src/types.ts` (type definitions).
 
 ### Existing Curator-Specific Tools
 
@@ -19,6 +21,10 @@ The Spectra MCP server is a TypeScript MCP (Model Context Protocol) server expos
 | `model_metavault_strategy` | `src/tools/metavault.ts` | Modeling: double-loop economics (MV share looping + dual Morpho markets) |
 | `get_curator_dashboard` | `src/tools/metavault.ts` | Monitoring: vault health, position maturity, epoch flows, action items |
 | `scan_curator_opportunities` | `src/tools/curator_scan.ts` | Sourcing: cross-protocol Spectra + Pendle scanner with Morpho looping |
+| `curator_risk_monitor` | `src/tools/risk_monitor.ts` | Risk: liquidation distance, health factor, borrow rate drift, alert levels |
+| `stress_test_vault` | `src/tools/stress_test.ts` | Risk: withdrawal liquidity waterfall, market stress simulation |
+| `plan_rollover` | `src/tools/rollover.ts` | Ops: expiring position rollover planner with cross-protocol candidates |
+| `curator_portfolio` | `src/tools/curator_portfolio.ts` | Business: multi-vault aggregation, AUM, blended APY, concentration |
 
 ### Supporting Tools (Curator-Relevant)
 
@@ -77,7 +83,9 @@ Seven new capabilities, ordered by priority. P0 items should block scaling exter
 
 ---
 
-### P0-A: Liquidation Distance Monitor
+### P0-A: Liquidation Distance Monitor — ✅ SHIPPED
+
+> **Implemented as:** `curator_risk_monitor` in `src/tools/risk_monitor.ts`
 
 **Problem:** The curator runs leveraged Morpho positions (PT collateral + MV share collateral). Current tools show health factor as a snapshot but don't compute liquidation price, distance-to-liquidation, or rate-driven margin erosion.
 
@@ -139,7 +147,9 @@ Seven new capabilities, ordered by priority. P0 items should block scaling exter
 
 ---
 
-### P0-B: Withdrawal Stress Test
+### P0-B: Withdrawal Stress Test — ✅ SHIPPED
+
+> **Implemented as:** `stress_test_vault` in `src/tools/stress_test.ts`
 
 **Problem:** MetaVaults use [ERC-7540](https://eips.ethereum.org/EIPS/eip-7540) async redemptions. Depositors request redemption in one epoch; the curator must fulfill it by the next. If the vault can't generate liquidity fast enough, redemptions fail and depositors are trapped. This is the exact scenario that [killed Stream Finance in 2025](https://www.cryptopolitan.com/risk-curators-took-off-in-2025-but-led-to-recent-defi-lending-vault-troubles/) and caused [Gauntlet to pause withdrawals on a Compound vault](https://chorus.one/reports-research/defi-curators-in-2025-navigating-chaos-building-resilience).
 
@@ -204,7 +214,9 @@ Seven new capabilities, ordered by priority. P0 items should block scaling exter
 
 ---
 
-### P1-A: Position Rollover Planner
+### P1-A: Position Rollover Planner — ✅ SHIPPED
+
+> **Implemented as:** `plan_rollover` in `src/tools/rollover.ts`
 
 **Problem:** When a MetaVault position approaches maturity, the curator must: (1) identify the next pool, (2) estimate transition costs, (3) time the entry, (4) execute the rollover. The dashboard warns about expiry but doesn't help with steps 1-3.
 
@@ -273,7 +285,9 @@ Seven new capabilities, ordered by priority. P0 items should block scaling exter
 
 ---
 
-### P2-A: Multi-Vault Curator Portfolio
+### P2-A: Multi-Vault Curator Portfolio — ✅ SHIPPED
+
+> **Implemented as:** `curator_portfolio` in `src/tools/curator_portfolio.ts`
 
 **Problem:** A curator-as-a-service manages multiple MetaVaults. No aggregate view exists.
 
@@ -369,13 +383,13 @@ All new tools should:
 - Use `Promise.allSettled` for parallel fetches with best-effort semantics
 - Add TypeScript interfaces to `src/types.ts`
 
-### 3. New Files to Create
+### 3. New Files Created ✅
 
 ```
-src/tools/risk_monitor.ts    — P0-A: curator_risk_monitor
-src/tools/stress_test.ts     — P0-B: stress_test_vault
-src/tools/rollover.ts        — P1-A: plan_rollover
-src/tools/curator_portfolio.ts — P2-A: curator_portfolio
+src/tools/risk_monitor.ts    — P0-A: curator_risk_monitor ✅
+src/tools/stress_test.ts     — P0-B: stress_test_vault ✅
+src/tools/rollover.ts        — P1-A: plan_rollover ✅
+src/tools/curator_portfolio.ts — P2-A: curator_portfolio ✅
 ```
 
 P1-B (borrow rate risk) and P2-B (performance metrics) extend existing tools rather than creating new files.
@@ -502,14 +516,14 @@ Our P0-A (liquidation monitoring) addresses failure mode 1. Our P0-B (withdrawal
 
 ## Estimated Timeline
 
-| Phase | Items | Effort | Dependency |
-|-------|-------|--------|------------|
-| Phase 1 (P0) | Liquidation monitor + Stress test | ~5-7 days | None — can start immediately |
-| Phase 2 (P1) | Rollover planner + Rate risk | ~3-5 days | Benefits from P0 patterns |
-| Phase 3 (P2) | Portfolio view + Performance metrics | ~3 days | Dashboard logic stable |
-| Phase 4 (P3) | Gas cost estimation | ~0.5 days | Trivial add-on |
+| Phase | Items | Effort | Status |
+|-------|-------|--------|--------|
+| Phase 1 (P0) | Liquidation monitor + Stress test | ~5-7 days | ✅ Shipped |
+| Phase 2 (P1) | Rollover planner + Rate risk | ~3-5 days | ✅ Shipped |
+| Phase 3 (P2) | Portfolio view + Performance metrics | ~3 days | ✅ Shipped (portfolio view) |
+| Phase 4 (P3) | Gas cost estimation | ~0.5 days | Open |
 
-**Total: ~12-16 days of engineering work**, mostly additive (new files, new tool registrations) with minimal changes to existing code.
+**Remaining:** P1-B (borrow rate risk analyzer — extends existing tools), P2-B (historical performance metrics), P3 (gas cost estimation).
 
 ---
 

@@ -36,6 +36,10 @@
  *   - get_pool_capacity            -> Multi-size capacity curve for pool depth assessment
  *   - check_ibt_health             -> Multi-signal IBT health assessment (ERC-4626, APR, liquidity)
  *   - get_yield_curve              -> Term structure / yield curve for a given underlying across chains
+ *   - curator_risk_monitor         -> Liquidation risk monitor for curator Morpho positions
+ *   - stress_test_vault            -> Withdrawal stress test for MetaVaults (liquidity waterfall)
+ *   - plan_rollover                -> Position rollover planner for expiring MetaVault positions
+ *   - curator_portfolio            -> Multi-vault curator portfolio aggregation
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";

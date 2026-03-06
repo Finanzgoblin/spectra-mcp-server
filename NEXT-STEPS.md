@@ -1,31 +1,56 @@
-# Next Steps: Cross-Protocol Curator Tooling (Phase 3)
+# Next Steps: Spectra MCP Server
 
-## What Was Completed (Phase 1)
+## What Has Been Shipped
+
+### Pendle Integration (Phases 1-2)
 
 Phase 1 shipped the cross-protocol scanner and maturity matching infrastructure:
 
-- **`scan_curator_opportunities`** — New tool in `src/tools/curator_scan.ts`. Scans both Spectra and Pendle in parallel with capital-aware metrics (price impact, effective APY, Morpho looping for Spectra PTs). Tags cross-protocol matches by normalized underlying + maturity proximity.
-- **Maturity-aware matching** — `normalizeUnderlyingSymbol()` and `matchByAssetAndMaturity()` in `src/formatters.ts`. Handles wstETH↔stETH, USDC.e↔USDC, WETH↔ETH variants. Match quality: exact (≤7d), close (≤30d), loose (≤90d).
-- **Upgraded `compare_pendle_spectra`** — Now uses maturity-aware matching with configurable `maturity_tolerance_days` parameter. Shows match quality and maturity gap per pair.
-- **Protocol context** — `workflow_routing` in `src/tools/context.ts` updated with cross-protocol curator workflows and four-tool discovery taxonomy.
-- **Tests** — 15 new unit tests (normalizeUnderlyingSymbol + matchByAssetAndMaturity), 7 new integration tests for the scanner.
+- **`list_pendle_markets`** — List active Pendle markets on any chain or all Pendle chains.
+- **`compare_pendle_spectra`** — Side-by-side yield comparison with maturity-aware matching.
+- **`scan_curator_opportunities`** — Cross-protocol (Spectra + Pendle) capital-aware scanner.
+- **Maturity-aware matching** — `normalizeUnderlyingSymbol()` and `matchByAssetAndMaturity()` in `src/formatters.ts`.
+- **Blended allocation in `model_metavault_strategy`** — `pendle_allocation_pct` and `pendle_lp_apy` params.
+- **Protocol tags in `get_curator_dashboard`** — `[Spectra]`/`[Pendle]`/`[Unknown]` position tags.
 
-## What Was Completed (Phase 2)
+### Curator Risk Management Layer (P0 + P1 + P2)
 
-Phase 2 shipped blended MetaVault modeling, dashboard protocol tags, and cross-protocol discovery pointers:
+All items from the ARCHITECT-BRIEF have been shipped:
 
-- **Blended allocation in `model_metavault_strategy`** — Two new params: `pendle_allocation_pct` (0-100, default 0) and `pendle_lp_apy`. When allocation > 0, computes blended base APY and shows an "Allocation Model" section with Spectra/Pendle split and manual rollover warnings. Zero allocation = identical to pre-Phase-2 behavior.
-- **Protocol tags in `get_curator_dashboard`** — Positions tagged `[Spectra]`/`[Pendle]`/`[Unknown]` with heuristic detection (lpt data = Spectra, symbol-based fallback for Pendle). Pendle positions approaching maturity (≤30d) generate `[PENDLE ROLLOVER]` action items. Graceful: all current API positions are Spectra, so tags are ready when Pendle data arrives.
-- **Cross-protocol pointer in `scan_opportunities`** — Next Steps section now includes `scan_curator_opportunities` pointer, teaching agents the cross-protocol tool exists.
-- **Cross-protocol pointers in `model_metavault_strategy` and `get_curator_dashboard`** — Both tools' Next Steps sections now reference `scan_curator_opportunities`.
-- **Tests** — 6 new unit tests (formatMetavaultStrategy blended + formatCuratorDashboard protocol tags), 14 new integration tests. All 186 unit and 405 integration tests pass.
+- **`curator_risk_monitor`** (`src/tools/risk_monitor.ts`) — Liquidation distance monitoring, health factor, borrow rate drift, alert levels (ok/watch/warning/critical). Scans all Morpho-capable chains.
+- **`stress_test_vault`** (`src/tools/stress_test.ts`) — Withdrawal stress test with liquidity waterfall (idle → maturing → LP removal → PT sale). Market stress mode (2x impact). Maximum safe redemption calculation.
+- **`plan_rollover`** (`src/tools/rollover.ts`) — Position rollover planner for expiring MetaVault positions. Scans Spectra + Pendle for candidates, computes entry impact, yield gap, overlap windows.
+- **`curator_portfolio`** (`src/tools/curator_portfolio.ts`) — Multi-vault portfolio aggregation. Discovery mode (by curator address) or explicit mode. Total AUM, blended APY, fee revenue projection, concentration analysis.
 
-## Phase 3: Pendle Morpho Looping (Defer Until Confirmed Demand)
+## What Remains Open
+
+### Pendle Phase 3: Pendle Morpho Looping (Defer Until Confirmed Demand)
 
 **Only implement when confirmed Morpho markets exist for Pendle PTs.** Changes:
 - `src/api.ts` — Add `findMorphoMarketsForPendlePts()`
 - `src/tools/curator_scan.ts` — Include Pendle PTs in Morpho batch lookups
-- `src/tools/looping.ts` — Add optional `protocol` parameter to `get_looping_strategy`; when `protocol="pendle"`, fetch PT data from Pendle API (math is identical, only data source changes)
+- `src/tools/looping.ts` — Add optional `protocol` parameter to `get_looping_strategy`
+
+### P1-B: Borrow Rate Risk Analyzer
+
+Extend `get_morpho_history` or `model_metavault_strategy` with probabilistic risk assessment:
+- Historical borrow rate volatility (std dev)
+- Probability of break-even being hit (normal approximation)
+- "Safe loop count" that survives 95th percentile rate scenario
+
+### P2-B: Historical Performance Metrics
+
+Add performance reporting to `get_curator_dashboard`:
+- Time-weighted return from share price history
+- Max drawdown from share price series
+- Sharpe-like ratio vs Morpho USDC supply benchmark
+
+### P3: Gas Cost Estimation
+
+Add `gas_estimate` section to `get_looping_strategy` and `model_metavault_strategy`:
+- Estimate gas per loop iteration (~500-600K gas)
+- Fetch current gas price via RPC
+- Show total gas cost as % of annual yield
 
 ## Verification Checklist
 

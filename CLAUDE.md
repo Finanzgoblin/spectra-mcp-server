@@ -32,6 +32,10 @@
 - `src/tools/capacity.ts` — `get_pool_capacity` (multi-size quote ladder, sweet spot / exhaustion detection)
 - `src/tools/ibt_health.ts` — `check_ibt_health` (ERC-4626 conversion rate, APR composition, pool balance, verdict; supports direct ibt_address param for Pendle SY or any ERC-4626 vault)
 - `src/tools/yield_curve.ts` — `get_yield_curve` (term structure for a given underlying across all chains)
+- `src/tools/risk_monitor.ts` — `curator_risk_monitor` (liquidation distance, health factor, borrow rate drift, alert levels)
+- `src/tools/stress_test.ts` — `stress_test_vault` (withdrawal liquidity waterfall, market stress simulation)
+- `src/tools/rollover.ts` — `plan_rollover` (expiring position rollover planner with cross-protocol candidates)
+- `src/tools/curator_portfolio.ts` — `curator_portfolio` (multi-vault aggregation, AUM, blended APY, concentration)
 
 ## Router-Mediated Transactions & eth_getLogs
 Most user interactions go through the **Spectra Router** (flash-mints, flash-redeems, batched mint+LP). The Router is `msg.sender` on underlying contracts, so event `topics[1]` stores the Router address, NOT the user. This is a fundamental EVM constraint, not a bug.
