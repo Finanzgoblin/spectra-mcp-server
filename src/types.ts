@@ -854,6 +854,85 @@ export interface StressTestResult {
 }
 
 // =============================================================================
+// Curator Portfolio Interfaces
+// =============================================================================
+
+/** Summary of a single vault within a curator's portfolio. */
+export interface CuratorVaultSummary {
+  chain: string;
+  name: string;
+  symbol: string;
+  address: string;          // MetaVault address
+  underlyingSymbol: string;
+  tvlUsd: number;
+  liveApyTotal: number;
+  liveApyBase: number | null;
+  positionCount: number;
+  actionItems: string[];    // expiring positions, idle capital, etc.
+}
+
+/** Aggregate portfolio view across all curator vaults. */
+export interface CuratorPortfolioSummary {
+  curatorAddress: string | null;
+  totalAumUsd: number;
+  blendedApyPct: number;
+  projectedAnnualFeeRevenueUsd: number;
+  curatorFeePct: number;
+  concentrationByUnderlying: Record<string, number>;  // symbol -> % of AUM
+  concentrationByChain: Record<string, number>;        // chain -> % of AUM
+  vaultCount: number;
+  totalPositions: number;
+  actionItems: string[];
+  vaults: CuratorVaultSummary[];
+}
+
+// =============================================================================
+// Performance Metrics Interfaces
+// =============================================================================
+
+/** Historical performance metrics computed from MetaVault epoch data. */
+export interface MetavaultPerformanceMetrics {
+  startDate: string;
+  endDate: string;
+  totalDays: number;
+  epochCount: number;
+  annualizedReturnPct: number;
+  maxDrawdownPct: number;
+  drawdownStartDate: string | null;
+  drawdownEndDate: string | null;
+  volatilityAnnualizedPct: number;
+  sharpeRatio: number | null;       // null if volatility is 0
+  riskFreeRatePct: number;
+}
+
+// =============================================================================
+// Rollover Planner Interfaces
+// =============================================================================
+
+/** A candidate pool/market for rolling over an expiring MetaVault position. */
+export interface RolloverCandidate {
+  protocol: "spectra" | "pendle";
+  chain: string;
+  name: string;
+  ptAddress: string;
+  poolAddress: string | null;
+  impliedApy: number;
+  lpApy: number;
+  effectiveApy: number;         // implied APY minus annualized entry cost
+  entryImpactPct: number;       // price impact at position's capital size
+  daysToMaturity: number;
+  maturityTimestamp: number;
+  tvlUsd: number;
+  poolLiquidityUsd: number;
+  yieldGapDays: number;         // days of zero yield during transition
+  overlapDays: number | null;   // days of double capital if entering before old matures
+  loopingAvailable: boolean;
+  loopingNetApy: number | null;
+  loopingLoops: number | null;
+  warnings: string[];
+}
+
+// =============================================================================
 // Internal Interfaces
 // =============================================================================
 
