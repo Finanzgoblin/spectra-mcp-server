@@ -158,10 +158,12 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
           if (chainId && !allChainIds.has(chain)) allChainIds.set(chain, chainId);
         }
         const curatorMerklMaps = new Map<string, Map<string, MerklCampaign[]>>();
+        let merklAvailable = true;
         const curatorMerklResults = await Promise.allSettled(
           [...allChainIds.entries()].map(async ([net, chainId]) => {
-            const map = await fetchMerklCampaigns(chainId).catch(() => new Map<string, MerklCampaign[]>());
-            return { net, map };
+            const result = await fetchMerklCampaigns(chainId).catch(() => ({ campaigns: new Map<string, MerklCampaign[]>(), available: false }));
+            if (!result.available) merklAvailable = false;
+            return { net, map: result.campaigns };
           })
         );
         for (const r of curatorMerklResults) {
@@ -618,7 +620,7 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
           return { content: [{ type: "text" as const, text: lines.join("\n") + warningsSuffix }] };
         }
 
-        const text = formatCuratorScanResults(
+        let text = formatCuratorScanResults(
           topOpps,
           capital_usd,
           max_price_impact_pct,
@@ -626,6 +628,10 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
           failedChains,
           compact,
         );
+
+        if (!merklAvailable) {
+          text += `\nNote: Merkl incentive data unavailable — external campaign APR may be missing from results above.\n`;
+        }
 
         return { content: [{ type: "text" as const, text: text + warningsSuffix }] };
       } catch (e: any) {
