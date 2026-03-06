@@ -1,7 +1,7 @@
 # DeFi Curator Strategy Review — Spectra MCP Server
 
 **Date:** 2026-03-06
-**Scope:** Full codebase review of all 18 tool modules, core infrastructure, types, formatters, config, and test coverage.
+**Scope:** Full codebase review of all 22 tool modules, core infrastructure, types, formatters, config, and test coverage.
 
 ---
 
