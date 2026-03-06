@@ -127,11 +127,13 @@ Use scan_opportunities for automated cross-chain looping discovery.`,
 
         // Best-effort: fetch vaults to cross-reference which markets have vault suppliers
         const vaultsByMarket = new Map<string, string[]>();
+        let vaultDataAvailable = true;
         try {
           const networks = chain ? [resolveNetwork(chain)] : Object.keys(MORPHO_CHAIN_IDS);
           const allVaults = (await Promise.all(
             networks.map((net) => fetchMorphoVaults(net).catch(() => [])),
           )).flat();
+          if (allVaults.length === 0) vaultDataAvailable = false;
           for (const v of allVaults) {
             for (const a of v.state?.allocation || []) {
               if (!a.marketKey) continue;
@@ -140,7 +142,7 @@ Use scan_opportunities for automated cross-chain looping discovery.`,
               vaultsByMarket.get(key)!.push(v.name);
             }
           }
-        } catch { /* best-effort */ }
+        } catch { vaultDataAvailable = false; }
 
         // Cross-reference: tag each market as Spectra or Pendle/Other, add vault info
         const summaries = items.map((m) => {
@@ -174,7 +176,10 @@ Use scan_opportunities for automated cross-chain looping discovery.`,
           `• Capital-aware scan: scan_opportunities(capital_usd=YOUR_AMOUNT, include_looping=true) for cross-chain looping ranking`,
         ].join("\n");
 
-        const text = header + "\n" + summaries.join("\n\n") + footer;
+        let text = header + "\n" + summaries.join("\n\n") + footer;
+        if (!vaultDataAvailable) {
+          text += `\nNote: Vault supplier data unavailable — vault cross-reference may be incomplete.`;
+        }
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
         const text = `Error fetching Morpho markets: ${e.message}`;
@@ -246,6 +251,7 @@ Use get_looping_strategy with these rates to calculate leveraged yield projectio
         // Layer 3: Best-effort PT spread analysis
         // Dissolution condition: Dissolves when the Morpho API itself returns
         // the PT's implied APY or a unified "looping readiness" endpoint exists.
+        let ptSpreadAvailable = false;
         try {
           const ptAddress = market.collateralAsset?.address;
           if (ptAddress) {
@@ -253,6 +259,7 @@ Use get_looping_strategy with these rates to calculate leveraged yield projectio
             const pt = ptData ? parsePtResponse(ptData) : null;
             const impliedApy = pt?.pools?.[0]?.impliedApy;
             if (impliedApy !== undefined && impliedApy > 0) {
+              ptSpreadAvailable = true;
               const spread = impliedApy - borrowApy * 100;
               lines.push(``);
               lines.push(`  PT Spread Analysis:`);
@@ -271,12 +278,14 @@ Use get_looping_strategy with these rates to calculate leveraged yield projectio
         }
 
         // Best-effort supply-side analysis with vault cross-linking
+        let supplierDataAvailable = false;
         try {
           const [suppliers, vaults] = await Promise.all([
             fetchMorphoMarketSuppliers(market_key, morphoChainId, 5),
             fetchMorphoVaults(chain).catch(() => []),
           ]);
           if (suppliers.length > 0) {
+            supplierDataAvailable = true;
             lines.push(``);
             lines.push(formatMorphoSupplierAnalysis(suppliers, market));
 
@@ -305,6 +314,15 @@ Use get_looping_strategy with these rates to calculate leveraged yield projectio
           }
         } catch {
           // Best-effort, don't block core output
+        }
+
+        // Data availability notes
+        const unavailable: string[] = [];
+        if (!ptSpreadAvailable) unavailable.push("PT spread analysis");
+        if (!supplierDataAvailable) unavailable.push("supply-side analysis");
+        if (unavailable.length > 0) {
+          lines.push(``);
+          lines.push(`  Note: ${unavailable.join(" and ")} unavailable — Spectra/Morpho enrichment API may be down.`);
         }
 
         lines.push(``);

@@ -167,10 +167,12 @@ Use model_metavault_strategy to model MetaVault looping economics.`,
           if (info && !uniqueChainIds.has(net)) uniqueChainIds.set(net, info.id);
         }
         const merklMaps = new Map<string, Map<string, MerklCampaign[]>>();
+        let merklAvailable = true;
         const merklResults = await Promise.allSettled(
           [...uniqueChainIds.entries()].map(async ([net, chainId]) => {
-            const map = await fetchMerklCampaigns(chainId).catch(() => new Map<string, MerklCampaign[]>());
-            return { net, map };
+            const result = await fetchMerklCampaigns(chainId).catch(() => ({ campaigns: new Map<string, MerklCampaign[]>(), available: false }));
+            if (!result.available) merklAvailable = false;
+            return { net, map: result.campaigns };
           })
         );
         for (const r of merklResults) {
@@ -428,6 +430,7 @@ Use model_metavault_strategy to model MetaVault looping economics.`,
           if (asset_filter) lines.push(`  Asset: ${asset_filter}`);
           lines.push(`  Results: ${topOpps.length} | Max Impact: ${formatPct(max_price_impact_pct)}`);
           if (failedChains.length > 0) lines.push(`  Failed: ${failedChains.join(", ")}`);
+          if (!merklAvailable) lines.push(`  Note: Merkl incentive data unavailable — external campaign APR may be missing`);
           lines.push(``);
           for (let i = 0; i < topOpps.length; i++) {
             lines.push(formatScanOpportunityCompact(topOpps[i], i + 1));
@@ -444,6 +447,10 @@ Use model_metavault_strategy to model MetaVault looping economics.`,
           ve_spectra_balance,
           topBoostInfos,
         );
+        }
+
+        if (!merklAvailable) {
+          text += `\nNote: Merkl incentive data unavailable — external campaign APR may be missing from results above.\n`;
         }
 
         // ================================================================
