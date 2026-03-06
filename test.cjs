@@ -2210,7 +2210,20 @@ async function testGetExpiringPools(client) {
     assert(text.includes("IBT:"), "has IBT info", "missing IBT info");
     assert(text.includes("Chain ID:"), "has chain ID", "missing chain ID");
     assert(text.includes("Action Items"), "has action items section", "missing action items");
-    assert(text.includes("Successor Pool Planning"), "has successor planning section", "missing successor section");
+    assert(text.includes("Successor Pool Status"), "has successor status section", "missing successor section");
+    // Successor cross-reference: each pool should show Successor: YES or Successor: NONE
+    assert(text.includes("Successor:"), "has per-pool successor status", "missing successor line");
+    assert(
+      text.includes("Successor: YES") || text.includes("Successor: NONE"),
+      "successor line has YES or NONE",
+      "unexpected successor format"
+    );
+    // Successor planning section should categorize by needs-creation vs already-deployed
+    assert(
+      text.includes("Needs successor pool") || text.includes("Successor already deployed"),
+      "has successor categorization",
+      "missing successor categorization"
+    );
   }
 
   // Compact mode
@@ -2224,6 +2237,7 @@ async function testGetExpiringPools(client) {
   );
   if (compact.includes("Expiring Pools")) {
     assert(compact.includes("Urgency"), "compact has table header", "missing table header");
+    assert(compact.includes("Succ"), "compact has successor column", "missing successor column in compact");
   }
 
   // Very short threshold — should return empty or very few

@@ -35,6 +35,17 @@ interface ExpiringPool {
   poolAddress: string;
 }
 
+/** A non-expiring pool that shares the same IBT as an expiring pool */
+interface SuccessorPool {
+  name: string;
+  chain: string;
+  ptAddress: string;
+  maturityDate: string;
+  daysLeft: number;
+  impliedApy: number;
+  tvlUsd: number;
+}
+
 function urgencyLabel(days: number): string {
   if (days <= 7) return "CRITICAL";
   if (days <= 14) return "WARNING";
@@ -61,6 +72,10 @@ grouped by urgency level. Designed for operators who need lead time to:
 
 Each result includes the PT address, IBT address, chain ID, underlying asset,
 TVL, and current implied APY — everything needed to plan the successor pool.
+
+Automatically cross-references each expiring pool's IBT against all active pools
+to flag whether a successor pool (same IBT, later maturity) already exists or
+needs to be created.
 
 Urgency levels:
   CRITICAL (≤7 days): Immediate action required
@@ -144,6 +159,42 @@ Use list_pools to check if a successor pool has already been created.`,
         // Sort by days remaining (most urgent first)
         expiring.sort((a, b) => a.daysLeft - b.daysLeft);
 
+        // Build IBT → successor pools map (same IBT, later maturity, not itself expiring)
+        // Key: lowercase IBT address + ":" + chain
+        const expiringPtSet = new Set(expiring.map((p) => p.ptAddress.toLowerCase()));
+        const ibtSuccessors = new Map<string, SuccessorPool[]>();
+
+        for (const opp of opportunities) {
+          const ibtAddr = opp.pt.ibt?.address?.toLowerCase();
+          if (!ibtAddr) continue;
+          // Skip pools that are themselves expiring
+          if (expiringPtSet.has(opp.pt.address.toLowerCase())) continue;
+
+          const key = `${ibtAddr}:${opp.chain}`;
+          if (!ibtSuccessors.has(key)) ibtSuccessors.set(key, []);
+          const days = daysToMaturity(opp.pt.maturity);
+          ibtSuccessors.get(key)!.push({
+            name: opp.pt.name,
+            chain: opp.chain,
+            ptAddress: opp.pt.address,
+            maturityDate: formatDate(opp.pt.maturity),
+            daysLeft: days,
+            impliedApy: opp.pool.impliedApy || 0,
+            tvlUsd: opp.pt.tvl?.usd || 0,
+          });
+        }
+        // Sort each group by maturity (nearest first)
+        for (const succs of ibtSuccessors.values()) {
+          succs.sort((a, b) => a.daysLeft - b.daysLeft);
+        }
+
+        // Helper to look up successors for an expiring pool
+        function getSuccessors(p: ExpiringPool): SuccessorPool[] {
+          if (!p.ibtAddress) return [];
+          const key = `${p.ibtAddress.toLowerCase()}:${p.chain}`;
+          return ibtSuccessors.get(key) || [];
+        }
+
         // Build output
         const lines: string[] = [];
 
@@ -191,7 +242,7 @@ Use list_pools to check if a successor pool has already been created.`,
 
         if (compact) {
           const hdr =
-            "Urgency  | Days | Maturity   | Impl. APY |       TVL | Chain    | Underlying | IBT             | PT Address";
+            "Urgency  | Days | Maturity   | Impl. APY |       TVL | Chain    | Underlying | IBT             | Succ | PT Address";
           lines.push(hdr);
           lines.push("─".repeat(hdr.length));
 
@@ -203,10 +254,12 @@ Use list_pools to check if a successor pool has already been created.`,
             const ch = p.chain.padEnd(8);
             const ul = p.underlyingSymbol.padEnd(10);
             const ibt = p.ibtSymbol.slice(0, 15).padEnd(15);
+            const succs = getSuccessors(p);
+            const succFlag = succs.length > 0 ? ` YES` : `  NO`;
             const addr =
               p.ptAddress.slice(0, 6) + "..." + p.ptAddress.slice(-4);
             lines.push(
-              `${urg} | ${days} | ${p.maturityDate} | ${apy} | ${tvl} | ${ch} | ${ul} | ${ibt} | ${addr}`
+              `${urg} | ${days} | ${p.maturityDate} | ${apy} | ${tvl} | ${ch} | ${ul} | ${ibt} | ${succFlag} | ${addr}`
             );
           }
         } else {
@@ -238,6 +291,24 @@ Use list_pools to check if a successor pool has already been created.`,
               lines.push(`  PT Address: ${p.ptAddress}`);
               lines.push(`  Pool Address: ${p.poolAddress || "n/a"}`);
               lines.push(`  Chain ID: ${p.chainId}`);
+
+              // Successor pool status
+              const succs = getSuccessors(p);
+              if (succs.length > 0) {
+                const s = succs[0]; // nearest successor
+                lines.push(
+                  `  Successor: YES — ${s.name} maturing ${s.maturityDate} (${s.daysLeft}d), APY ${formatPct(s.impliedApy)}, TVL ${formatUsd(s.tvlUsd)}`
+                );
+                if (succs.length > 1) {
+                  lines.push(
+                    `             +${succs.length - 1} more pool${succs.length - 1 === 1 ? "" : "s"} with same IBT`
+                  );
+                }
+              } else {
+                lines.push(
+                  `  Successor: NONE — no active pool found with same IBT (${p.ibtSymbol}). Needs creation.`
+                );
+              }
               lines.push("");
             }
           }
@@ -262,22 +333,47 @@ Use list_pools to check if a successor pool has already been created.`,
           );
         }
 
-        // Group unique underlyings for successor pool planning
-        const underlyings = new Map<string, ExpiringPool[]>();
+        // Group by IBT for successor pool planning
+        const byIbt = new Map<string, ExpiringPool[]>();
         for (const p of expiring) {
-          const key = `${p.underlyingSymbol}:${p.chain}`;
-          if (!underlyings.has(key)) underlyings.set(key, []);
-          underlyings.get(key)!.push(p);
+          const key = p.ibtAddress
+            ? `${p.ibtAddress.toLowerCase()}:${p.chain}`
+            : `unknown:${p.chain}:${p.underlyingSymbol}`;
+          if (!byIbt.has(key)) byIbt.set(key, []);
+          byIbt.get(key)!.push(p);
         }
-        if (underlyings.size > 0) {
+        if (byIbt.size > 0) {
           lines.push("");
-          lines.push("── Successor Pool Planning ──");
-          for (const [key, pools] of underlyings) {
-            const [sym, ch] = key.split(":");
+          lines.push("── Successor Pool Status ──");
+
+          const needsCreation: string[] = [];
+          const hasSuccessor: string[] = [];
+
+          for (const [, pools] of byIbt) {
             const earliest = pools[0];
-            lines.push(
-              `• ${sym} on ${ch}: ${pools.length} expiring pool${pools.length === 1 ? "" : "s"}, earliest ${earliest.maturityDate} (${earliest.daysLeft}d) — IBT: ${earliest.ibtSymbol} (${earliest.ibtAddress})`
-            );
+            const succs = getSuccessors(earliest);
+
+            if (succs.length > 0) {
+              const s = succs[0];
+              hasSuccessor.push(
+                `• ${earliest.ibtSymbol} on ${earliest.chain}: ${pools.length} expiring pool${pools.length === 1 ? "" : "s"} — successor exists: ${s.name} (${s.maturityDate}, ${s.daysLeft}d, APY ${formatPct(s.impliedApy)})`
+              );
+            } else {
+              needsCreation.push(
+                `• ${earliest.ibtSymbol} on ${earliest.chain}: ${pools.length} expiring pool${pools.length === 1 ? "" : "s"}, earliest ${earliest.maturityDate} (${earliest.daysLeft}d) — NO SUCCESSOR, needs creation (IBT: ${earliest.ibtAddress})`
+              );
+            }
+          }
+
+          if (needsCreation.length > 0) {
+            lines.push("");
+            lines.push(`Needs successor pool (${needsCreation.length}):`);
+            lines.push(...needsCreation);
+          }
+          if (hasSuccessor.length > 0) {
+            lines.push("");
+            lines.push(`Successor already deployed (${hasSuccessor.length}):`);
+            lines.push(...hasSuccessor);
           }
         }
 
