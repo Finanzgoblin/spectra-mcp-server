@@ -231,3 +231,48 @@ The tool assumes the curator will create this market, but once live, monitoring 
 **For running it as a business: 6/10.** The tooling supports the *investment* side but not the *business* side (performance reporting, multi-vault aggregation, depositor communication).
 
 The P0 gaps (liquidation monitoring + withdrawal stress testing) should be addressed before scaling external deposits. Everything else can be built incrementally as the business grows.
+
+---
+
+## References & Risk Frameworks
+
+### Industry Risk Frameworks
+- [Institutionalizing Risk Curation in Decentralized Credit](https://arxiv.org/html/2512.11976v1) — Academic paper on formalizing curator risk management in DeFi lending
+- [DeFi Curators in 2025: Navigating Chaos, Building Resilience](https://chorus.one/reports-research/defi-curators-in-2025-navigating-chaos-building-resilience) — Post-mortem of 2025 curator failures (Stream Finance collapse, Gauntlet vault pause, Balancer exploit cascade)
+- [Risk Curators Took Off in 2025 but Led to DeFi Lending Vault Troubles](https://www.cryptopolitan.com/risk-curators-took-off-in-2025-but-led-to-recent-defi-lending-vault-troubles/) — Analysis of systemic risks in the $7B curator market
+- [Gauntlet VaultBook: Curation Methodology and Risk Factor Overview](https://vaultbook.gauntlet.xyz/morpho-vaults/curation-methodology-and-risk-factor-overview) — Gauntlet's public risk framework for Morpho vault curation (Prime/Core/Frontier tiers, agent-based simulation methodology)
+- [Gauntlet VaultBook: Risk Exposure](https://vaultbook.gauntlet.xyz/vaults/morpho-vaults/vault-curation-considerations-a-deeper-dive/risk-exposure) — Insolvency modeling under stress (target: <10bps insolvent debt under extreme scenarios)
+- [Gauntlet VaultBook: Automated Risk Management Solutions](https://vaultbook.gauntlet.xyz/vaults/morpho-vaults/curation-methodology-and-risk-factor-overview/automated-risk-management-solutions) — Automated monitoring and reallocation methodology
+- [Steakhouse Financial: DeFi's Powerhouse Risk Curator](https://blog.summer.fi/meet-the-yield-sources-steakhouse-defis-powerhouse-risk-curator/) — Steakhouse's 5-dimensional risk framework (credit, operational, governance, technical, liquidity)
+- [IOSG: Who Is the "New Species" Curator Bridging the Gap?](https://www.techflowpost.com/en-US/article/30440) — Curator market landscape and risk/reward spectrum analysis
+
+### Morpho Liquidation & Pre-Liquidation Mechanics
+- [Morpho Docs: Liquidation](https://docs.morpho.org/learn/concepts/liquidation/) — Core liquidation mechanics (no close factor, LIF formula, bad debt socialization)
+- [Morpho Docs: Pre-Liquidation (Auto-Deleverage)](https://docs.morpho.org/build/borrow/concepts/preliquidation) — Opt-in partial liquidation mechanism (preLLTV/preLCF/preLIF parameters)
+- [Introducing Pre-Liquidations: Enhanced Loan Management on Morpho](https://morpho.org/blog/introducing-pre-liquidations-enhanced-loan-management-on-morpho/) — Design rationale and borrower benefits
+- [Morpho Blue Liquidation Bot (GitHub)](https://github.com/morpho-org/morpho-blue-liquidation-bot) — Reference liquidation bot with PT token swap support
+- [Morpho Pre-Liquidation Contract (GitHub)](https://github.com/morpho-org/pre-liquidation) — Audited contract implementation (Spearbit + ABDK)
+- [Morpho Docs: Risk & Security](https://docs.morpho.org/learn/resources/risks) — Oracle risk, market isolation, bad debt handling
+- [Morpho Blue Whitepaper](https://resources.cryptocompare.com/asset-management/17952/1732199021661.pdf) — Formal specification of lending mechanics
+- [Behind Morpho's Leverage Crisis](https://www.panewslab.com/en/articles/300d4af9-ec86-4a93-8826-6a99d9c4ad8c) — Analysis of incomplete decentralization risks in Morpho curator model
+- [Morpho Curator Tool Suite](https://docs.morpho.org/curate/tool-suite/) — Official curator tooling documentation
+
+### ERC-7540 (Async Vault Standard)
+- [ERC-7540 Specification](https://eips.ethereum.org/EIPS/eip-7540) — The standard MetaVaults implement for async deposit/redemption
+- [ERC-7540 Discussion (Ethereum Magicians)](https://ethereum-magicians.org/t/eip-7540-asynchronous-erc-4626-tokenized-vaults/16153) — Design decisions and implementation considerations
+- [ERC-7540 vs ERC-4626: Async Settlement for RWA Vaults](https://www.zealynx.io/blogs/erc-7540-asynchronous-settlement) — Comparison and risk implications (unbacked token issuance, settlement reverts)
+- [QuillAudits: ERC-7540 Asynchronous Vaults](https://www.quillaudits.com/research/rwa-development/relevant-standards/erc-7540-async-erc-4626-tokenized) — Audit perspective on request lifecycle and edge cases
+
+### Spectra Protocol Documentation
+- [Spectra Curator Docs: Whitelisted Actions](https://curator.docs.spectra.finance/technical/whitelisted-actions) — Technical curator operations (SAFE transactions, role-based access)
+- [Spectra Docs: Overview](https://docs.spectra.finance/) — Core protocol documentation
+- [Spectra Docs: Principal & Yield Token](https://docs.spectra.finance/core-concepts/principal-and-yield-token) — PT/YT mechanics
+- [Spectra MetaVaults App](https://app.spectra.finance/metavaults) — Live MetaVault discovery
+- [Spectra: MetaVaults — Bringing Curators to the Yield Tokenization Sector](https://paragraph.com/@spectra/metavaults-bringing-curators-to-the-yield-tokenization-sector) — MetaVault design rationale and curator role definition
+- [Spectra Core (GitHub)](https://github.com/perspectivefi/spectra-core) — Smart contract source code
+- [Spectra Developer Docs: Tokenizing Yield](https://dev.spectra.finance/guides/tokenizing-yield) — Technical integration guide
+
+### Market Context
+- [Morpho Complete Review for 2026](https://stablecoininsider.org/morpho-complete-review-for-2026/) — Current state of Morpho ecosystem including Apollo partnership
+- [DeFi Yield Competition: Pendle and Rising Star Spectra](https://www.panewslab.com/en/articles/702hzjqg) — Competitive landscape analysis (looping flywheel comparison)
+- [Gauntlet: Introducing the VaultBook](https://www.gauntlet.xyz/resources/introducing-the-gauntlet-vaultbook-demystifying-vault-curation) — Industry benchmark for curator transparency
