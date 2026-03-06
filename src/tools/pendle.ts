@@ -137,13 +137,15 @@ Use scan_opportunities for Spectra-native opportunity ranking.`,
         // Fetch Merkl campaigns for chains present in results (best-effort, parallel)
         const uniqueChains = [...new Set(capped.map(({ chain: c }) => c))];
         const merklMaps = new Map<string, Map<string, MerklCampaign[]>>();
+        let merklAvailable = true;
         if (!compact) {
           const merklResults = await Promise.allSettled(
             uniqueChains.map(async (c) => {
               const chainId = PENDLE_CHAIN_IDS[c];
               if (!chainId) return { chain: c, map: new Map<string, MerklCampaign[]>() };
-              const map = await fetchMerklCampaigns(chainId).catch(() => new Map<string, MerklCampaign[]>());
-              return { chain: c, map };
+              const result = await fetchMerklCampaigns(chainId).catch(() => ({ campaigns: new Map<string, MerklCampaign[]>(), available: false }));
+              if (!result.available) merklAvailable = false;
+              return { chain: c, map: result.campaigns };
             })
           );
           for (const r of merklResults) {
@@ -175,6 +177,9 @@ Use scan_opportunities for Spectra-native opportunity ranking.`,
         const footer: string[] = [`\n`];
         if (failedChains.length > 0) {
           footer.push(`  Failed chains: ${failedChains.join(", ")}`);
+        }
+        if (!merklAvailable && !compact) {
+          footer.push(`  Note: Merkl incentive data unavailable — external campaign APR may be missing`);
         }
         footer.push(`--- Chain Coverage ---`);
         footer.push(`  Spectra + Pendle overlap: ${spectraOverlap.join(", ")}`);

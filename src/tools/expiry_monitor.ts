@@ -16,17 +16,26 @@ import { scanAllChainPools, fetchSpectra } from "../api.js";
 import { formatDate, daysToMaturity, formatPct, formatUsd } from "../formatters.js";
 import type { RawPoolOpportunity } from "../types.js";
 
+/** Result from the governance API — distinguishes "no gauges" from "API unavailable" */
+interface GaugeResult {
+  addrs: Set<string>;
+  available: boolean;
+}
+
 /** Fetch pool addresses that have gauges from the governance API */
-async function fetchGaugePoolAddresses(): Promise<Set<string>> {
+async function fetchGaugePoolAddresses(): Promise<GaugeResult> {
   try {
-    const data = (await fetchSpectra("/governance/voting-incentives")) as any[];
+    const data = await fetchSpectra("/governance/voting-incentives");
+    if (!Array.isArray(data)) {
+      return { addrs: new Set(), available: false };
+    }
     const addrs = new Set<string>();
     for (const entry of data) {
       if (entry.address) addrs.add(entry.address.toLowerCase());
     }
-    return addrs;
+    return { addrs, available: true };
   } catch {
-    return new Set(); // best-effort — don't block on gauge fetch failure
+    return { addrs: new Set(), available: false }; // best-effort — don't block on gauge fetch failure
   }
 }
 
@@ -59,7 +68,7 @@ interface SuccessorPool {
   daysLeft: number;
   impliedApy: number;
   tvlUsd: number;
-  hasGauge: boolean;
+  hasGauge: boolean | null; // null = unknown (gauge API unavailable)
 }
 
 /** Readiness assessment for a pool's transition state */
@@ -100,10 +109,15 @@ function assessReadiness(
 
   // Has successor — check gauge
   const s = succs[0];
-  if (!s.hasGauge) {
+  if (s.hasGauge === false) {
     level = p.daysLeft <= 14 ? "WARNING" : "CAUTION";
     messages.push(
       `Successor ${s.name} exists but has no gauge — needs governance proposal`
+    );
+  } else if (s.hasGauge === null) {
+    // Gauge API unavailable — don't penalize, but note the uncertainty
+    messages.push(
+      `Successor ${s.name} — gauge status unknown (governance API unavailable), verify manually`
     );
   }
 
@@ -196,11 +210,12 @@ Use list_pools to check if a successor pool has already been created.`,
     async ({ threshold_days, chain, min_tvl_usd, compact }) => {
       try {
         // Scan all chains + fetch gauge list in parallel
-        const [{ opportunities, failedChains }, gaugePoolAddrs] =
+        const [{ opportunities, failedChains }, gaugeResult] =
           await Promise.all([
             scanAllChainPools({ min_tvl_usd: 0, min_liquidity_usd: 0 }),
             fetchGaugePoolAddresses(),
           ]);
+        const { addrs: gaugePoolAddrs, available: gaugeApiAvailable } = gaugeResult;
 
         // Filter to expiring pools within threshold
         const expiring: ExpiringPool[] = [];
@@ -263,7 +278,7 @@ Use list_pools to check if a successor pool has already been created.`,
             daysLeft: daysToMaturity(opp.pt.maturity),
             impliedApy: opp.pool.impliedApy || 0,
             tvlUsd: opp.pt.tvl?.usd || 0,
-            hasGauge: gaugePoolAddrs.has(poolAddr),
+            hasGauge: gaugeApiAvailable ? gaugePoolAddrs.has(poolAddr) : null,
           });
         }
         for (const succs of ibtSuccessors.values()) {
@@ -337,7 +352,7 @@ Use list_pools to check if a successor pool has already been created.`,
         if (okCount > 0) rdParts.push(`${okCount} OK`);
         lines.push(`Readiness: ${rdParts.join("  |  ")}`);
         lines.push(
-          `Gauges:    ${gaugePoolAddrs.size > 0 ? `${gaugePoolAddrs.size} gauged pools in governance` : "governance API unavailable — gauge status unknown"}`
+          `Gauges:    ${gaugeApiAvailable ? `${gaugePoolAddrs.size} gauged pools in governance` : "governance API unavailable — gauge status unknown"}`
         );
         lines.push("");
 
@@ -368,9 +383,11 @@ Use list_pools to check if a successor pool has already been created.`,
             const gauge =
               succs.length === 0
                 ? " n/a "
-                : succs[0].hasGauge
+                : succs[0].hasGauge === true
                   ? " YES "
-                  : "  NO ";
+                  : succs[0].hasGauge === false
+                    ? "  NO "
+                    : "  ?  ";
             lines.push(
               `${urg} | ${days} | ${rdy} | ${ch} | ${ibt} | ${tvl} | ${succ} | ${gauge} | ${p.maturityDate}`
             );
@@ -420,7 +437,7 @@ Use list_pools to check if a successor pool has already been created.`,
               const succs = getSuccessors(p);
               if (succs.length > 0) {
                 const s = succs[0];
-                const gaugeStr = s.hasGauge ? "gauge: YES" : "gauge: NO";
+                const gaugeStr = s.hasGauge === true ? "gauge: YES" : s.hasGauge === false ? "gauge: NO" : "gauge: ?";
                 lines.push(
                   `    Successor: ${s.name}`
                 );
@@ -460,7 +477,11 @@ Use list_pools to check if a successor pool has already been created.`,
         );
         const needsGauge = expiring.filter((p) => {
           const s = getSuccessors(p);
-          return s.length > 0 && !s[0].hasGauge;
+          return s.length > 0 && s[0].hasGauge === false;
+        });
+        const unknownGauge = expiring.filter((p) => {
+          const s = getSuccessors(p);
+          return s.length > 0 && s[0].hasGauge === null;
         });
         const ready = expiring.filter((p) => {
           const r = poolReadiness.get(p.ptAddress)!;
@@ -485,6 +506,19 @@ Use list_pools to check if a successor pool has already been created.`,
             `Submit gauge proposal (${needsGauge.length}):`
           );
           for (const p of needsGauge) {
+            const s = getSuccessors(p)[0];
+            lines.push(
+              `  • ${s.name} on ${p.chain} — pool: ${s.poolAddress}`
+            );
+          }
+        }
+
+        if (unknownGauge.length > 0) {
+          lines.push("");
+          lines.push(
+            `Verify gauge status (${unknownGauge.length}) — governance API unavailable:`
+          );
+          for (const p of unknownGauge) {
             const s = getSuccessors(p)[0];
             lines.push(
               `  • ${s.name} on ${p.chain} — pool: ${s.poolAddress}`
