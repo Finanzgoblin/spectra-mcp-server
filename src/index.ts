@@ -40,6 +40,7 @@
  *   - stress_test_vault            -> Withdrawal stress test for MetaVaults (liquidity waterfall)
  *   - plan_rollover                -> Position rollover planner for expiring MetaVault positions
  *   - curator_portfolio            -> Multi-vault curator portfolio aggregation
+ *   - get_expiring_pools           -> Scan all chains for pools approaching maturity (operator alerts)
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -70,6 +71,7 @@ import { register as registerRiskMonitor } from "./tools/risk_monitor.js";
 import { register as registerStressTest } from "./tools/stress_test.js";
 import { register as registerRollover } from "./tools/rollover.js";
 import { register as registerCuratorPortfolio } from "./tools/curator_portfolio.js";
+import { register as registerExpiryMonitor } from "./tools/expiry_monitor.js";
 
 // =============================================================================
 // MCP Server Setup
@@ -104,6 +106,7 @@ registerRiskMonitor(server);
 registerStressTest(server);
 registerRollover(server);
 registerCuratorPortfolio(server);
+registerExpiryMonitor(server);
 
 // =============================================================================
 // Resources: Protocol context for agents
