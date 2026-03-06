@@ -285,7 +285,7 @@ Use stress_test_vault for withdrawal simulation on a specific vault.`,
           }
         } else if (curator_address) {
           // ── Discovery mode: scan all chains for curator match ──
-          const { metavaults, failedChains } = await scanAllMetavaults();
+          const { metavaults } = await scanAllMetavaults();
 
           const curatorLower = curator_address.toLowerCase();
           for (const { metavault, chain } of metavaults) {
@@ -296,15 +296,6 @@ Use stress_test_vault for withdrawal simulation on a specific vault.`,
             if (match) {
               vaultSummaries.push(summarizeVault(metavault, chain));
             }
-          }
-
-          if (vaultSummaries.length === 0 && failedChains.length > 0) {
-            const text = [
-              `No MetaVaults found for curator ${curator_address}.`,
-              `Note: ${failedChains.length} chain(s) failed to respond: ${failedChains.join(", ")}.`,
-              `The curator may have vaults on those chains. Try again later or use metavault_addresses for explicit lookup.`,
-            ].join("\n");
-            return { content: [{ type: "text" as const, text }] };
           }
 
           if (vaultSummaries.length === 0) {

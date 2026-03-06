@@ -249,17 +249,26 @@ Use compare_yield for fixed-vs-variable rate analysis on the same PT.`,
           const ptReserve = formatBalance(pool.ptAmount, ptDec);
 
           if (ibtReserve > 0 && ptReserve > 0) {
-            const ratio = ibtReserve / ptReserve;
+            const ratio = ptReserve / ibtReserve;
             const ratioStr = ratio >= 1
               ? `${ratio.toFixed(1)}:1`
               : `1:${(1 / ratio).toFixed(1)}`;
 
-            if (ratio > 4 || ratio < 0.25) {
+            if (ratio > 20 || ratio < 0.05) {
+              checks.push({
+                name: "Pool Balance",
+                signal: "warning",
+                lines: [
+                  `PT:IBT ratio ${ratioStr} — severely imbalanced pool reserves — one side nearly depleted`,
+                  `Reserves: ${ibtReserve.toLocaleString("en-US", { maximumFractionDigits: 2 })} IBT / ${ptReserve.toLocaleString("en-US", { maximumFractionDigits: 2 })} PT`,
+                ],
+              });
+            } else if (ratio > 4 || ratio < 0.25) {
               checks.push({
                 name: "Pool Balance",
                 signal: "caution",
                 lines: [
-                  `IBT/PT ratio ${ratioStr} — pool imbalanced`,
+                  `PT:IBT ratio ${ratioStr} — pool imbalanced`,
                   `Reserves: ${ibtReserve.toLocaleString("en-US", { maximumFractionDigits: 2 })} IBT / ${ptReserve.toLocaleString("en-US", { maximumFractionDigits: 2 })} PT`,
                 ],
               });
@@ -267,7 +276,7 @@ Use compare_yield for fixed-vs-variable rate analysis on the same PT.`,
               checks.push({
                 name: "Pool Balance",
                 signal: "ok",
-                lines: [`IBT/PT ratio ${ratioStr} (within normal range)`],
+                lines: [`PT:IBT ratio ${ratioStr} (within normal range)`],
               });
             }
           }

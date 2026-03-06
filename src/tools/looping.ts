@@ -85,10 +85,10 @@ discover the best looping opportunities across all chains with capital-aware siz
         .describe("Maximum number of loop iterations to calculate (default 5)"),
     },
     async ({ chain, pt_address, morpho_ltv, borrow_rate, max_loops }) => {
-      // Note: capital_usd is not a tool param — we use pool liquidity to estimate
-      // cumulative entry impact as a fraction, which is capital-independent for the
-      // relative cost column. The absolute cost depends on capital, but the
-      // annualized drag as % APY is what matters for the optimal loop decision.
+      // Note: capital_usd is not a tool param. Entry cost IS proportional to capital
+      // (estimatePriceImpact = capital / (2 * poolLiq)). We use a $10K reference to
+      // illustrate the cost column. Users with larger capital should verify with
+      // quote_trade() or scan_opportunities(capital_usd=...) for accurate sizing.
       try {
         const network = resolveNetwork(chain);
         const data = await fetchSpectra(`/${network}/pt/${pt_address}`) as any;
@@ -118,9 +118,23 @@ discover the best looping opportunities across all chains with capital-aware siz
           : PROTOCOL_CONSTANTS.loopingDefaults.borrowRatePct);
 
         const baseApy = pool.impliedApy || 0;
-        const ptDiscount = 1 - (pool.ptPrice?.underlying || 1);
+        const ptPriceUnderlying = pool.ptPrice?.underlying || 1;
+        const ptDiscount = 1 - ptPriceUnderlying;
         const maturityDays = daysToMaturity(pt.maturity);
         const poolLiqUsd = pool.liquidity?.usd || 0;
+
+        // H2: Guard against PT trading at premium (discount goes negative)
+        if (ptPriceUnderlying >= 1) {
+          const text = [
+            `PT ${pt.name} is trading at or above underlying (price: ${ptPriceUnderlying.toFixed(4)}).`,
+            `Looping requires PT at a discount to generate fixed yield.`,
+            `At premium, the "fixed yield" is negative — you'd pay more for PT than you receive at maturity.`,
+            ``,
+            `This can happen near/post maturity or during temporary market dislocations.`,
+            `Consider: compare_yield(chain="${chain}", pt_address="${pt_address}") to check current rates.`,
+          ].join("\n");
+          return { content: [{ type: "text" as const, text }] };
+        }
 
         // Calculate looping returns
         const lines: string[] = [
@@ -228,14 +242,22 @@ discover the best looping opportunities across all chains with capital-aware siz
           }
         }
 
-        // Find optimal loop count (highest net APY)
+        // Find optimal loop count: highest net APY minus annualized entry cost
+        // H1: Entry cost is factored into the optimization objective, not just displayed
         let bestNet = baseApy;
         let bestLoop = 0;
         for (let i = 1; i <= max_loops; i++) {
           const lev = cumulativeLeverageAtLoop(effectiveLtv, i);
           const net = baseApy * lev - effectiveBorrowRate * (lev - 1);
-          if (net > bestNet) {
-            bestNet = net;
+          // Subtract annualized entry drag at reference capital
+          let effectiveNet = net;
+          if (hasLiq && maturityDays > 0) {
+            const { totalImpactPct } = estimateLoopingEntryCost(refCapital, poolLiqUsd, effectiveLtv, i);
+            const annualizedDrag = totalImpactPct * (365 / maturityDays);
+            effectiveNet = net - annualizedDrag;
+          }
+          if (effectiveNet > bestNet) {
+            bestNet = effectiveNet;
             bestLoop = i;
           }
         }

@@ -46,8 +46,11 @@ export async function tryOnChainQuote(
   const dyRaw = await fetchCurveGetDy(poolAddress, i, j, dx, chain);
   if (dyRaw === null || dyRaw <= 0n) return null;
 
-  // Convert raw output back to human-readable
-  const expectedOut = Number(dyRaw) / 10 ** outputDecimals;
+  // Convert raw output back to human-readable (BigInt-safe to avoid precision loss for large values)
+  const divisor = 10n ** BigInt(outputDecimals);
+  const wholePart = dyRaw / divisor;
+  const fracPart = dyRaw % divisor;
+  const expectedOut = Number(wholePart) + Number(fracPart) / Number(divisor);
   if (expectedOut <= 0 || !Number.isFinite(expectedOut)) return null;
 
   const effectiveRate = expectedOut / amount;

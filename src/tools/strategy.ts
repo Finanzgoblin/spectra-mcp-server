@@ -154,7 +154,7 @@ Use model_metavault_strategy to model MetaVault looping economics.`,
           scanAllChainPools({ min_tvl_usd, min_liquidity_usd, asset_filter }),
           include_metavaults
             ? scanAllMetavaults()
-            : Promise.resolve({ metavaults: [] as Array<{ metavault: any; chain: string }>, failedChains: [] as string[] }),
+            : Promise.resolve({ metavaults: [] as Array<{ metavault: any; chain: string }> }),
         ]);
 
         const { opportunities: rawOpps, failedChains } = poolResult;
@@ -186,83 +186,89 @@ Use model_metavault_strategy to model MetaVault looping economics.`,
         const boostInfoPerOpp: (BoostInfo | undefined)[] = []; // parallel to opportunities
 
         for (const { pt, pool, chain } of rawOpps) {
-          const impliedApy = pool.impliedApy || 0;
-          const variableApr = pt.ibt?.apr?.total || 0;
-          const poolLiqUsd = pool.liquidity?.usd || 0;
-          const tvlUsd = pt.tvl?.usd || 0;
-          const maturityTs = pt.maturity;
-          const days = daysToMaturity(maturityTs);
+          try {
+            const impliedApy = pool.impliedApy || 0;
+            const variableApr = pt.ibt?.apr?.total || 0;
+            const poolLiqUsd = pool.liquidity?.usd || 0;
+            const tvlUsd = pt.tvl?.usd || 0;
+            const maturityTs = pt.maturity;
+            const days = daysToMaturity(maturityTs);
 
-          // Price impact at agent's capital size
-          const impactFrac = estimatePriceImpact(capital_usd, poolLiqUsd);
-          const impactPct = impactFrac * 100;
+            // Price impact at agent's capital size
+            const impactFrac = estimatePriceImpact(capital_usd, poolLiqUsd);
+            const impactPct = impactFrac * 100;
 
-          // Filter by max price impact
-          if (impactFrac > maxImpactFrac) continue;
+            // Filter by max price impact
+            if (impactFrac > maxImpactFrac) continue;
 
-          // Effective APY: base APY minus entry cost amortized over holding period
-          // Entry cost (fraction) annualized: impactFrac * (365 / days) * 100 (as %)
-          const annualizedEntryCost = days > 0
-            ? impactFrac * (365 / days) * 100
-            : impactFrac * 100;
-          const effectiveApy = impliedApy - annualizedEntryCost;
+            // Effective APY: base APY minus entry cost amortized over holding period
+            // Entry cost (fraction) annualized: impactFrac * (365 / days) * 100 (as %)
+            const annualizedEntryCost = days > 0
+              ? impactFrac * (365 / days) * 100
+              : impactFrac * 100;
+            const effectiveApy = impliedApy - annualizedEntryCost;
 
-          // Capacity: max capital where impact < threshold
-          // impactFrac = capital / (2 * poolLiq) => capital = threshold * 2 * poolLiq
-          const capacityUsd = maxImpactFrac * 2 * poolLiqUsd;
+            // Capacity: max capital where impact < threshold
+            // impactFrac = capital / (2 * poolLiq) => capital = threshold * 2 * poolLiq
+            const capacityUsd = maxImpactFrac * 2 * poolLiqUsd;
 
-          // Warnings
-          const warnings: string[] = [];
-          if (days < 14) warnings.push("Very short maturity (<14 days)");
-          else if (days < 30) warnings.push("Short maturity (<30 days)");
-          if (poolLiqUsd < 50000) warnings.push("Low pool liquidity (<$50K)");
-          if (impactPct > 2) warnings.push(`Significant entry impact (${formatPct(impactPct)})`);
-          if (tvlUsd < 50000) warnings.push("Low TVL (<$50K)");
-          if (effectiveApy < 0) warnings.push("Effective APY negative after entry cost");
+            // Warnings
+            const warnings: string[] = [];
+            if (days < 14) warnings.push("Very short maturity (<14 days)");
+            else if (days < 30) warnings.push("Short maturity (<30 days)");
+            if (poolLiqUsd < 50000) warnings.push("Low pool liquidity (<$50K)");
+            if (impactPct > 2) warnings.push(`Significant entry impact (${formatPct(impactPct)})`);
+            if (tvlUsd < 50000) warnings.push("Low TVL (<$50K)");
+            if (effectiveApy < 0) warnings.push("Effective APY negative after entry cost");
 
-          // Extract LP APY with gauge emissions (computed from real boost formula)
-          let boostInfo: BoostInfo | undefined;
-          if (ve_spectra_balance !== undefined && ve_spectra_balance > 0 && veTotalSupply !== null) {
-            boostInfo = computeSpectraBoost(ve_spectra_balance, veTotalSupply, tvlUsd, capital_usd);
+            // Extract LP APY with gauge emissions (computed from real boost formula)
+            let boostInfo: BoostInfo | undefined;
+            if (ve_spectra_balance !== undefined && ve_spectra_balance > 0 && veTotalSupply !== null) {
+              boostInfo = computeSpectraBoost(ve_spectra_balance, veTotalSupply, tvlUsd, capital_usd);
+            }
+            const lpData = extractLpApyBreakdown(pool, boostInfo?.boostFraction ?? 0);
+
+            // Look up Merkl campaigns for this pool
+            const network = resolveNetwork(chain);
+            const merklMap = merklMaps.get(network) || new Map();
+            const lookupAddrs = [pt.address, pool.address, pt.ibt?.address].filter(Boolean) as string[];
+            const merklCampaigns = lookupMerklCampaigns(merklMap, lookupAddrs);
+
+            opportunities.push({
+              pt,
+              pool,
+              chain,
+              ptAddress: pt.address,
+              poolAddress: pool.address || "",
+              impliedApy,
+              variableApr,
+              fixedVsVariableSpread: impliedApy - variableApr,
+              maturityTimestamp: maturityTs,
+              daysToMaturity: days,
+              tvlUsd,
+              poolLiquidityUsd: poolLiqUsd,
+              entryImpactPct: impactPct,
+              effectiveApy,
+              capacityUsd,
+              looping: null,           // filled in Phase 3
+              lpApy: lpData.lpApy,
+              lpApyBoostedTotal: lpData.lpApyBoostedTotal,
+              lpApyAtBoost: lpData.lpApyAtBoost,
+              lpApyBreakdown: lpData.lpApyBreakdown,
+              merklCampaigns: merklCampaigns.length > 0 ? merklCampaigns : undefined,
+              sortApy: effectiveApy,   // updated in Phase 3 if looping profitable
+              underlying: pt.underlying?.symbol || "?",
+              ibtAddress: pt.ibt?.address || "",
+              ibtSymbol: pt.ibt?.symbol || "?",
+              ibtProtocol: pt.ibt?.protocol || "Unknown",
+              warnings,
+            });
+            boostInfoPerOpp.push(boostInfo);
+          } catch (err: any) {
+            // H3: Skip malformed entries instead of crashing the entire scan
+            console.error(`Warning: skipping pool ${pt?.address || "?"} on ${chain}: ${err.message}`);
+            continue;
           }
-          const lpData = extractLpApyBreakdown(pool, boostInfo?.boostFraction ?? 0);
-
-          // Look up Merkl campaigns for this pool
-          const network = resolveNetwork(chain);
-          const merklMap = merklMaps.get(network) || new Map();
-          const lookupAddrs = [pt.address, pool.address, pt.ibt?.address].filter(Boolean) as string[];
-          const merklCampaigns = lookupMerklCampaigns(merklMap, lookupAddrs);
-
-          opportunities.push({
-            pt,
-            pool,
-            chain,
-            ptAddress: pt.address,
-            poolAddress: pool.address || "",
-            impliedApy,
-            variableApr,
-            fixedVsVariableSpread: impliedApy - variableApr,
-            maturityTimestamp: maturityTs,
-            daysToMaturity: days,
-            tvlUsd,
-            poolLiquidityUsd: poolLiqUsd,
-            entryImpactPct: impactPct,
-            effectiveApy,
-            capacityUsd,
-            looping: null,           // filled in Phase 3
-            lpApy: lpData.lpApy,
-            lpApyBoostedTotal: lpData.lpApyBoostedTotal,
-            lpApyAtBoost: lpData.lpApyAtBoost,
-            lpApyBreakdown: lpData.lpApyBreakdown,
-            merklCampaigns: merklCampaigns.length > 0 ? merklCampaigns : undefined,
-            sortApy: effectiveApy,   // updated in Phase 3 if looping profitable
-            underlying: pt.underlying?.symbol || "?",
-            ibtAddress: pt.ibt?.address || "",
-            ibtSymbol: pt.ibt?.symbol || "?",
-            ibtProtocol: pt.ibt?.protocol || "Unknown",
-            warnings,
-          });
-          boostInfoPerOpp.push(boostInfo);
         }
 
         // ================================================================
@@ -346,8 +352,16 @@ Use model_metavault_strategy to model MetaVault looping economics.`,
                   cumulativeEntryImpactPct: cumImpactPct,
                   morphoLiquidityUsd: morphoLiqUsd,
                 };
-                // Rank by effective net APY (steady-state yield minus cumulative entry cost)
-                opp.sortApy = effectiveNetApy;
+                // M2: Only override sortApy when looping effective APY actually beats base effective APY
+                if (effectiveNetApy > opp.effectiveApy) {
+                  opp.sortApy = effectiveNetApy;
+                }
+
+                // M6: Warn if Morpho market lacks sufficient borrow liquidity for the recommended loops
+                const requiredBorrowUsd = capital_usd * (bestLev - 1);
+                if (morphoLiqUsd > 0 && requiredBorrowUsd > morphoLiqUsd) {
+                  opp.warnings.push(`Morpho borrow liquidity (${formatUsd(morphoLiqUsd)}) insufficient for ${bestLoop} loops at ${formatUsd(capital_usd)} capital (needs ${formatUsd(requiredBorrowUsd)})`);
+                }
               }
             }
           }

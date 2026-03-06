@@ -73,7 +73,7 @@ import { register as registerCuratorPortfolio } from "./tools/curator_portfolio.
 
 const server = new McpServer({
   name: "spectra-finance",
-  version: "1.0.0",
+  version: "1.1.0",
 });
 
 // Register all tools
