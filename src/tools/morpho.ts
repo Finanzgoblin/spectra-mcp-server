@@ -514,10 +514,12 @@ Use get_looping_strategy to model leveraged yield after identifying supply liqui
         }
 
         // Parallel: fetch Spectra PT addresses + batch market rates
-        const [spectraPtAddrs, marketRates] = await Promise.all([
-          fetchSpectraPtAddresses().catch(() => new Set<string>()),
+        let spectraPtTaggingAvailable = true;
+        const [spectraPtAddrs, ratesResult] = await Promise.all([
+          fetchSpectraPtAddresses().catch(() => { spectraPtTaggingAvailable = false; return new Set<string>(); }),
           fetchMorphoMarketRates([...allMarketKeys], morphoChainId),
         ]);
+        const marketRates = ratesResult.rates;
 
         const spectraVaultCount = vaults.filter((v) =>
           (v.state?.allocation || []).some((a) => spectraPtAddrs.has(a.collateralAddress || "")),
@@ -540,7 +542,13 @@ Use get_looping_strategy to model leveraged yield after identifying supply liqui
           `• Positions: get_morpho_positions(address=ADDR, chain="${chain}") to check wallet holdings`,
         ].join("\n");
 
-        const text = header + "\n" + summaries.join("\n\n") + "\n" + footer;
+        let text = header + "\n" + summaries.join("\n\n") + "\n" + footer;
+        if (!ratesResult.available) {
+          text += `\nNote: Market rate data unavailable — borrow APY and utilization figures may be missing or default to 0%.`;
+        }
+        if (!spectraPtTaggingAvailable) {
+          text += `\nNote: Spectra PT address data unavailable — Spectra vs Pendle/Other tagging may be inaccurate.`;
+        }
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
         const text = `Error fetching Morpho vaults: ${e.message}`;
@@ -601,7 +609,8 @@ Use get_portfolio for Spectra protocol positions (PT, YT, LP).`,
         }
 
         // Fetch Spectra PT addresses for tagging (best-effort)
-        const spectraPtAddrs = await fetchSpectraPtAddresses().catch(() => new Set<string>());
+        let ptTaggingAvailable = true;
+        const spectraPtAddrs = await fetchSpectraPtAddresses().catch(() => { ptTaggingAvailable = false; return new Set<string>(); });
 
         // Fetch positions across all chains in parallel
         const results = await Promise.all(
@@ -719,6 +728,11 @@ Use get_portfolio for Spectra protocol positions (PT, YT, LP).`,
         lines.push(`• Spectra positions: get_portfolio(address="${address}") for PT/YT/LP holdings`);
         lines.push(`• Market details: get_morpho_rate(chain=CHAIN, market_key=KEY) for rate + spread analysis`);
         lines.push(`• Vault details: get_morpho_vaults(chain=CHAIN) to see vault allocations and APY`);
+
+        if (!ptTaggingAvailable) {
+          lines.push(``);
+          lines.push(`Note: Spectra PT address data unavailable — isSpectraPt tagging may be inaccurate.`);
+        }
 
         const text = lines.join("\n");
         return { content: [{ type: "text" as const, text }] };

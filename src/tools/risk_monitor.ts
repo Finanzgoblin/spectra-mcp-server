@@ -76,6 +76,7 @@ Use get_looping_strategy to model deleverage scenarios.`,
 
         // Flatten all positions across chains
         const allPositions = chainResults.flatMap((cr) => cr.positions);
+        const ratesAvailable = chainResults.every((cr) => cr.ratesAvailable);
 
         if (allPositions.length === 0) {
           const scope = chain || "any Morpho-capable chain";
@@ -104,6 +105,7 @@ Use get_looping_strategy to model deleverage scenarios.`,
           worstHealthFactor: worstPosition.healthFactor,
           worstPositionMarket: worstPosition.marketKey,
           alertThresholdPct: alert_threshold_pct,
+          ratesAvailable,
           positions: allPositions,
         };
 

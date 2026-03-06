@@ -745,15 +745,25 @@ one chain. Position sizing should assume this scan is incomplete, not comprehens
 
         const allPoolActivities: PoolActivity[] = [];
         const failedChains: string[] = [];
+        const partialChains: string[] = []; // chains where pool list or portfolio fetch failed
 
         // Phase 1: Fetch all pools per chain, then activity per pool — parallel within each chain
         const chainResults = await Promise.allSettled(
           networks.map(async (net): Promise<PoolActivity[]> => {
             // Get active pools + portfolio (for expired pools) in parallel
+            let poolsFailed = false;
+            let portfolioFailed = false;
             const [poolsRaw, portfolioRaw] = await Promise.all([
-              fetchSpectra(`/${net}/pools`).catch(() => []),
-              fetchSpectra(`/${net}/portfolio/${address}`).catch(() => []),
+              fetchSpectra(`/${net}/pools`).catch(() => { poolsFailed = true; return []; }),
+              fetchSpectra(`/${net}/portfolio/${address}`).catch(() => { portfolioFailed = true; return []; }),
             ]);
+            if (poolsFailed && portfolioFailed) {
+              // Both failed — can't discover any pools for this chain
+              throw new Error(`Spectra API unavailable for ${net}`);
+            }
+            if (poolsFailed || portfolioFailed) {
+              partialChains.push(net + (poolsFailed ? " (pools API)" : " (portfolio API)"));
+            }
 
             const pts: any[] = (() => {
               const r = poolsRaw as any;
@@ -883,12 +893,17 @@ one chain. Position sizing should assume this scan is incomplete, not comprehens
 
         if (allPoolActivities.length === 0) {
           const scope = chain || "all chains";
+          const notes: string[] = [];
+          if (failedChains.length > 0) notes.push(`${failedChains.length} chain(s) failed entirely: ${failedChains.join(", ")}`);
+          if (partialChains.length > 0) notes.push(`partial data on: ${partialChains.join(", ")}`);
+          const noteStr = notes.length > 0 ? ` (${notes.join("; ")})` : "";
           return {
             content: [{
               type: "text",
-              text: `No pool activity found for ${address} on ${scope}.${
-                failedChains.length > 0 ? ` (${failedChains.length} chain(s) failed: ${failedChains.join(", ")})` : ""
-              }`,
+              text: `No pool activity found for ${address} on ${scope}.${noteStr}\n` +
+                (failedChains.length > 0 || partialChains.length > 0
+                  ? `\nNote: Some Spectra API endpoints were unreachable — this address may have activity that could not be discovered. Retry later or try with a specific chain filter.`
+                  : ""),
             }],
           };
         }
@@ -908,7 +923,10 @@ one chain. Position sizing should assume this scan is incomplete, not comprehens
         ];
 
         if (failedChains.length > 0) {
-          lines.push(`  Note: ${failedChains.length} chain(s) failed (${failedChains.join(", ")})`);
+          lines.push(`  ⚠ ${failedChains.length} chain(s) failed entirely (${failedChains.join(", ")}) — activity on those chains could not be scanned.`);
+        }
+        if (partialChains.length > 0) {
+          lines.push(`  ⚠ Partial data on: ${partialChains.join(", ")} — some pools may be missing from the scan.`);
         }
         lines.push(``);
 

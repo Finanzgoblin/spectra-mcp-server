@@ -787,6 +787,10 @@ export interface CuratorRiskSummary {
   /** Alert threshold used for this scan */
   alertThresholdPct: number;
 
+  /** Whether live borrow rates were available from the Morpho API.
+   *  When false, currentBorrowRate on positions defaults to 0% — rate-based analysis is unreliable. */
+  ratesAvailable: boolean;
+
   /** Individual position details */
   positions: LiquidationAlert[];
 }
@@ -962,4 +966,7 @@ export interface MerklChainRewards {
   matched: Map<string, MerklTokenReward[]>;
   /** Rewards from pools NOT in the current portfolio (user may have exited). */
   unmatched: MerklTokenReward[];
+  /** Number of reward entries that failed to parse (BigInt conversion errors).
+   *  When > 0, some reward amounts may be missing from the output. */
+  parseFailures: number;
 }

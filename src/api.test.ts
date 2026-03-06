@@ -148,8 +148,8 @@ describe("parseWei", () => {
     assert.equal(parseWei(undefined, 18), 0);
   });
 
-  it("returns 0 for invalid string", () => {
-    assert.equal(parseWei("not_a_number", 18), 0);
+  it("returns NaN for invalid string (signals parse failure to caller)", () => {
+    assert.ok(isNaN(parseWei("not_a_number", 18)), "Expected NaN for invalid input");
   });
 
   it("handles 6-decimal tokens (e.g., USDC)", () => {

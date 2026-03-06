@@ -3946,6 +3946,10 @@ export function formatCuratorRiskSummary(summary: CuratorRiskSummary): string {
   if (ok > 0) distParts.push(`${ok} ok`);
   lines.push(`  Risk Distribution: ${distParts.join(" | ")}`);
 
+  if (!summary.ratesAvailable) {
+    lines.push(`  ⚠ Borrow Rates: UNAVAILABLE — Morpho rate API was unreachable. Borrow rate fields default to 0% and should not be trusted.`);
+  }
+
   lines.push(``);
 
   // Sort: critical first, then warning, watch, ok
