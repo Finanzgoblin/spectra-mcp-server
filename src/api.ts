@@ -546,16 +546,23 @@ export async function fetchMorphoVaults(
 // Morpho Batch Market Rates
 // =============================================================================
 
+/** Result from batch Morpho rate fetch — distinguishes "no data" from "API unavailable" */
+export interface MorphoRatesResult {
+  rates: Map<string, { borrowApy: number; supplyApy: number; utilization: number; supplyAssetsUsd: number }>;
+  available: boolean;
+}
+
 /**
  * Batch-fetch live rates for multiple Morpho markets in a single GraphQL query.
  * Uses aliased fields (m0, m1, ...) to avoid N+1 round trips. Max 50 markets.
+ * Returns { rates, available } — available=false means the API was unreachable.
  */
 export async function fetchMorphoMarketRates(
   marketKeys: string[],
   chainId: number,
-): Promise<Map<string, { borrowApy: number; supplyApy: number; utilization: number; supplyAssetsUsd: number }>> {
-  const result = new Map<string, { borrowApy: number; supplyApy: number; utilization: number; supplyAssetsUsd: number }>();
-  if (marketKeys.length === 0) return result;
+): Promise<MorphoRatesResult> {
+  const rates = new Map<string, { borrowApy: number; supplyApy: number; utilization: number; supplyAssetsUsd: number }>();
+  if (marketKeys.length === 0) return { rates, available: true };
 
   try {
     const capped = marketKeys.slice(0, 50);
@@ -570,7 +577,7 @@ export async function fetchMorphoMarketRates(
     for (let i = 0; i < capped.length; i++) {
       const m = data?.[`m${i}`];
       if (m?.state) {
-        result.set(m.uniqueKey || capped[i], {
+        rates.set(m.uniqueKey || capped[i], {
           borrowApy: m.state.borrowApy || 0,
           supplyApy: m.state.supplyApy || 0,
           utilization: m.state.utilization || 0,
@@ -578,10 +585,11 @@ export async function fetchMorphoMarketRates(
         });
       }
     }
+    return { rates, available: true };
   } catch (err) {
     console.error("Morpho batch rate fetch failed:", err instanceof Error ? err.message : err);
+    return { rates, available: false };
   }
-  return result;
 }
 
 // =============================================================================
@@ -656,7 +664,7 @@ export async function fetchMorphoPositionRiskData(
   address: string,
   chain?: string,
   alertThresholdPct: number = 20,
-): Promise<{ chain: string; positions: LiquidationAlert[] }[]> {
+): Promise<{ chain: string; positions: LiquidationAlert[]; ratesAvailable: boolean }[]> {
   // Determine which chains to scan
   let chainsToScan: Array<{ network: string; chainId: number }>;
   if (chain) {
@@ -673,21 +681,23 @@ export async function fetchMorphoPositionRiskData(
 
   // Fetch positions across all chains in parallel (best-effort)
   const chainResults = await Promise.allSettled(
-    chainsToScan.map(async ({ network, chainId }): Promise<{ chain: string; positions: LiquidationAlert[] }> => {
+    chainsToScan.map(async ({ network, chainId }): Promise<{ chain: string; positions: LiquidationAlert[]; ratesAvailable: boolean }> => {
       // Step 1: get raw positions for this chain
       const raw = await fetchMorphoUserPositions(address, chainId);
 
       // Step 2: isolate borrowing positions
       const borrowingPositions = raw.marketPositions.filter((p: any) => (p.borrowAssetsUsd || 0) > 0.01);
       if (borrowingPositions.length === 0) {
-        return { chain: network, positions: [] };
+        return { chain: network, positions: [], ratesAvailable: true };
       }
 
       // Step 3: batch-fetch live borrow rates for all markets on this chain
       const marketKeys = borrowingPositions.map((p: any) => p.market?.uniqueKey).filter(Boolean) as string[];
-      const ratesMap = await fetchMorphoMarketRates(marketKeys, chainId).catch(() =>
-        new Map<string, { borrowApy: number; supplyApy: number; utilization: number; supplyAssetsUsd: number }>()
+      const ratesResult = await fetchMorphoMarketRates(marketKeys, chainId).catch(() =>
+        ({ rates: new Map<string, { borrowApy: number; supplyApy: number; utilization: number; supplyAssetsUsd: number }>(), available: false })
       );
+      const ratesMap = ratesResult.rates;
+      const ratesAvailable = ratesResult.available;
 
       // Step 4: compute risk metrics per position
       const positions: LiquidationAlert[] = borrowingPositions.map((p: any): LiquidationAlert => {
@@ -765,12 +775,12 @@ export async function fetchMorphoPositionRiskData(
         };
       });
 
-      return { chain: network, positions };
+      return { chain: network, positions, ratesAvailable };
     })
   );
 
   // Collect fulfilled results; log failures but don't throw
-  const output: { chain: string; positions: LiquidationAlert[] }[] = [];
+  const output: { chain: string; positions: LiquidationAlert[]; ratesAvailable: boolean }[] = [];
   for (const result of chainResults) {
     if (result.status === "fulfilled") {
       if (result.value.positions.length > 0) {
@@ -1970,7 +1980,9 @@ export function extractPoolAddressFromReasonKey(reasonKey: string): string | nul
 }
 
 /**
- * Parse a raw wei string to human-readable number. Returns 0 on invalid input.
+ * Parse a raw wei string to human-readable number.
+ * Returns 0 for null/undefined/"0" (expected empty inputs).
+ * Returns NaN on BigInt parse failure (unexpected format — caller should track this).
  */
 export function parseWei(raw: string | null | undefined, decimals: number): number {
   if (!raw || raw === "0") return 0;
@@ -1983,7 +1995,7 @@ export function parseWei(raw: string | null | undefined, decimals: number): numb
     const fracPart = bi % divisor;
     return Number(intPart) + Number(fracPart) / Number(divisor);
   } catch {
-    return 0;
+    return NaN;
   }
 }
 
@@ -1997,6 +2009,7 @@ export function parseMerklRewards(
 ): MerklChainRewards {
   const matchedMap = new Map<string, Map<string, { symbol: string; decimals: number; accumulated: number; unclaimed: number; pending: number }>>();
   const unmatchedMap = new Map<string, { symbol: string; decimals: number; accumulated: number; unclaimed: number; pending: number }>();
+  let parseFailures = 0;
 
   for (const [tokenAddr, tokenData] of Object.entries(raw)) {
     if (!tokenData || typeof tokenData !== "object") continue;
@@ -2013,6 +2026,12 @@ export function parseMerklRewards(
       const accumulated = parseWei((reasonData as any).accumulated, decimals);
       const unclaimed = parseWei((reasonData as any).unclaimed, decimals);
       const pending = parseWei((reasonData as any).pending, decimals);
+
+      // Track parse failures — NaN means BigInt conversion failed on non-null input
+      if (isNaN(accumulated) || isNaN(unclaimed) || isNaN(pending)) {
+        parseFailures++;
+        continue;
+      }
 
       if (accumulated === 0 && unclaimed === 0 && pending === 0) continue;
 
@@ -2071,6 +2090,7 @@ export function parseMerklRewards(
     chain,
     matched,
     unmatched: Array.from(unmatchedByToken.values()).filter(r => r.unclaimed > 0 || r.pending > 0),
+    parseFailures,
   };
 }
 
@@ -2203,17 +2223,24 @@ export function lookupMerklCampaigns(
 
 const HYPERLIQUID_API = "https://api.hyperliquid.xyz/info";
 const FUNDING_CACHE_TTL_MS = 60_000; // 1 minute cache
-let _fundingCache: { data: Map<string, number>; expiresAt: number } | null = null;
+
+/** Result from Hyperliquid funding rate fetch — distinguishes "no data" from "API unavailable" */
+export interface HyperliquidFundingResult {
+  data: Map<string, number>;
+  available: boolean;
+}
+
+let _fundingCache: { data: Map<string, number>; available: boolean; expiresAt: number } | null = null;
 
 /**
  * Fetch current hourly funding rates for all Hyperliquid perp assets.
- * Returns Map<symbol, annualizedFundingPct> (e.g. "CRV" → 10.95).
+ * Returns { data: Map<symbol, annualizedFundingPct>, available: boolean }.
  * Negative = shorts get paid (adds to delta-neutral yield).
- * Caches for 60s. Best-effort — returns empty map on failure.
+ * Caches for 60s. Returns available=false when the API was unreachable.
  */
-export async function fetchHyperliquidFunding(): Promise<Map<string, number>> {
+export async function fetchHyperliquidFunding(): Promise<HyperliquidFundingResult> {
   if (_fundingCache && Date.now() < _fundingCache.expiresAt) {
-    return _fundingCache.data;
+    return { data: _fundingCache.data, available: _fundingCache.available };
   }
 
   try {
@@ -2223,7 +2250,11 @@ export async function fetchHyperliquidFunding(): Promise<Map<string, number>> {
       body: JSON.stringify({ type: "metaAndAssetCtxs" }),
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
-    if (!resp.ok) return _fundingCache?.data ?? new Map();
+    if (!resp.ok) {
+      // Non-OK response — return cached data if available, otherwise unavailable
+      if (_fundingCache) return { data: _fundingCache.data, available: _fundingCache.available };
+      return { data: new Map(), available: false };
+    }
 
     const raw = await resp.json() as [{ universe: { name: string; isDelisted?: boolean }[] }, { funding: string }[]];
     const universe = raw[0].universe;
@@ -2238,10 +2269,11 @@ export async function fetchHyperliquidFunding(): Promise<Map<string, number>> {
       result.set(universe[i].name.toUpperCase(), hourlyRate * 24 * 365 * 100);
     }
 
-    _fundingCache = { data: result, expiresAt: Date.now() + FUNDING_CACHE_TTL_MS };
-    return result;
+    _fundingCache = { data: result, available: true, expiresAt: Date.now() + FUNDING_CACHE_TTL_MS };
+    return { data: result, available: true };
   } catch {
-    return _fundingCache?.data ?? new Map();
+    if (_fundingCache) return { data: _fundingCache.data, available: _fundingCache.available };
+    return { data: new Map(), available: false };
   }
 }
 

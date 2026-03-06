@@ -135,9 +135,13 @@ Protocol context:
           }
         }
 
-        const merklWarning = merklFailedChains.length > 0
+        const totalParseFailures = merklByChain.reduce((s, c) => s + c.parseFailures, 0);
+        let merklWarning = merklFailedChains.length > 0
           ? `\nNote: Merkl rewards unavailable for ${merklFailedChains.join(", ")}. Reward totals may be incomplete.\n`
           : "";
+        if (totalParseFailures > 0) {
+          merklWarning += `\nNote: ${totalParseFailures} Merkl reward entries failed to parse — some reward amounts may be missing.\n`;
+        }
 
         // Format only positions with non-zero balances, collecting totalValue from each
         let totalPortfolioValue = 0;

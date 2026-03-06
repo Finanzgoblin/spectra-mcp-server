@@ -382,11 +382,13 @@ check your current positions. Use scan_opportunities for multi-chain comparison.
         // Compute real boost if veSPECTRA balance provided
         let boostInfo: { multiplier: number; boostFraction: number } | undefined;
         let veTotalSupply: number | null = null;
+        let veDataAvailable = true;
         if (ve_spectra_balance !== undefined && ve_spectra_balance > 0) {
           try {
             veTotalSupply = await fetchVeTotalSupply();
             boostInfo = computeSpectraBoost(ve_spectra_balance, veTotalSupply, tvlUsd, capital_usd);
           } catch {
+            veDataAvailable = false;
             // Degrade gracefully if RPC fails
           }
         }
@@ -497,6 +499,11 @@ check your current positions. Use scan_opportunities for multi-chain comparison.
         if (!merklResult.available) {
           lines.push(``);
           lines.push(`Note: Merkl incentive data unavailable — external campaign APR may be missing.`);
+        }
+
+        if (!veDataAvailable && ve_spectra_balance !== undefined && ve_spectra_balance > 0) {
+          lines.push(``);
+          lines.push(`Note: veSPECTRA data unavailable (Base RPC unreachable) — boost calculations omitted. LP APY shown without boost.`);
         }
 
         const text = lines.join("\n");
