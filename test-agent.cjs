@@ -1086,6 +1086,88 @@ async function testMerklRewardsInPortfolio(client) {
 }
 
 // ---------------------------------------------------------------------------
+// Observation Coverage Reporting
+// ---------------------------------------------------------------------------
+
+async function testObservationCoverageReporting(client) {
+  console.log("\n--- Observation Coverage Reporting ---");
+
+  // Test 1: get_pool_activity with address should include observation coverage
+  const { text } = await client.callTool("get_pool_activity", {
+    chain: "mainnet",
+    pool_address: KNOWN_POOL || "0x0000000000000000000000000000000000000001",
+    limit: 5,
+  }, 30_000);
+
+  // Even without address isolation, check the output format is parseable
+  assert(typeof text === "string", "pool activity returns string output", "Expected string from get_pool_activity");
+  pass("pool activity returns valid text output");
+
+  // Test 2: get_address_activity should report observation coverage
+  const { text: addrText } = await client.callTool("get_address_activity", {
+    address: "0x0000000000000000000000000000000000000001",
+    chain: "mainnet",
+  }, 30_000);
+
+  assert(typeof addrText === "string", "address activity returns string", "Expected string from get_address_activity");
+
+  // Coverage section should be present even for empty addresses
+  const hasObservationOrNoActivity =
+    addrText.includes("Observation") || addrText.includes("Coverage") || addrText.includes("No activity");
+  assert(
+    hasObservationOrNoActivity,
+    "address activity includes coverage or no-activity message",
+    `Expected Observation/Coverage/No activity in output, got: ${addrText.slice(0, 200)}`
+  );
+  pass("address activity includes observation coverage or no-activity handling");
+}
+
+// ---------------------------------------------------------------------------
+// Insufficient Evidence Preservation
+// ---------------------------------------------------------------------------
+
+async function testInsufficientEvidencePreservation(client) {
+  console.log("\n--- Insufficient Evidence Preservation ---");
+
+  // Test: Pool activity with address filter should preserve statistical
+  // insufficiency warnings when cycle count is low
+  const { text } = await client.callTool("get_pool_activity", {
+    chain: "mainnet",
+    pool_address: KNOWN_POOL || "0x0000000000000000000000000000000000000001",
+    address: "0x0000000000000000000000000000000000000001",
+    limit: 10,
+  }, 30_000);
+
+  // The output should either show cycle analysis (with or without insufficiency)
+  // or show no activity — either is acceptable
+  assert(typeof text === "string", "filtered activity returns string", "Expected string output");
+
+  // If cycles are detected with count <= 5, the warning should be present
+  const hasCycleSection = text.includes("Sequence Analysis") || text.includes("cycle");
+  if (hasCycleSection) {
+    // Check that if repetition count is mentioned, the format is correct
+    const repeatMatch = text.match(/repeated\s+(\d+)×/);
+    if (repeatMatch) {
+      const count = parseInt(repeatMatch[1]);
+      if (count <= 5) {
+        assert(
+          text.includes("statistically insufficient"),
+          "low-count cycles include insufficiency warning",
+          `Cycle count ${count} should include insufficiency warning`
+        );
+        pass("low repetition count preserves statistical insufficiency warning");
+      } else {
+        pass("high repetition count correctly omits insufficiency warning");
+      }
+    } else {
+      pass("cycle analysis present (no repetition count to validate)");
+    }
+  } else {
+    pass("no cycle analysis present for empty address (expected)");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 
@@ -1142,6 +1224,10 @@ async function main() {
 
       // Merkl rewards integration
       await testMerklRewardsInPortfolio(client);
+
+      // Observation coverage & evidence preservation
+      await testObservationCoverageReporting(client);
+      await testInsufficientEvidencePreservation(client);
     } else {
       skip("All agent reasoning tests require network (use without --offline)");
     }

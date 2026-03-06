@@ -10,7 +10,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork, CHAIN_BLOCK_TIMES, resolveRpcUrlsWithFallbacks } from "../config.js";
 import { fetchBlockNumber, fetchBlockTimestamp, fetchLogs } from "../api.js";
-import { formatDate, formatTokenAmount, formatActivityType } from "../formatters.js";
+import { formatDate, formatTokenAmount, formatActivityType, ROUTER_BATCHABLE_TYPES, ROUTER_BATCH_FOOTNOTE } from "../formatters.js";
 
 // =============================================================================
 // Curve StableSwap-NG Event Signatures (keccak256 pre-computed)
@@ -654,9 +654,12 @@ Use this tool for historical data beyond the API's retention window.`,
           lines.push(`  ${"─".repeat(96)}`);
         }
 
+        let hasRouterBatchable = false;
         for (const e of shown) {
           const block = e.blockNumber.toLocaleString().padEnd(12);
-          const actType = formatActivityType(e.type).padEnd(18);
+          const isBatchable = ROUTER_BATCHABLE_TYPES.has(e.type);
+          if (isBatchable) hasRouterBatchable = true;
+          const actType = (formatActivityType(e.type) + (isBatchable ? "†" : "")).padEnd(18);
           const ibt = e.amount0 !== undefined ? formatTokenAmount(e.amount0, token_decimals).padEnd(20) : "—".padEnd(20);
           const from = `${e.from.slice(0, 6)}...${e.from.slice(-4)}`.padEnd(14);
           const hash = `${e.txHash.slice(0, 10)}...`;
@@ -674,6 +677,9 @@ Use this tool for historical data beyond the API's retention window.`,
 
         // Notes
         lines.push(``);
+        if (hasRouterBatchable) {
+          lines.push(`  ${ROUTER_BATCH_FOOTNOTE}`);
+        }
         if (token_decimals !== 18) {
           lines.push(`  Note: Token amounts formatted with ${token_decimals} decimals (as specified).`);
         } else {
