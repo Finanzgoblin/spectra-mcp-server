@@ -2,7 +2,7 @@
 
 Makes [Spectra Finance](https://spectra.finance) discoverable and usable by AI agents via the [Model Context Protocol](https://modelcontextprotocol.io).
 
-37 tools · 10 chains · read-only · on-chain Curve quoting · ERC-4626 health checks · yield curve term structure · historical eth_getLogs · cross-protocol Pendle comparison · Morpho supply-side visibility · Morpho user positions & historical rates · Merkl campaign APR integration · curator risk monitoring · withdrawal stress testing · rollover planning · multi-vault portfolio aggregation · zero web3 library dependencies
+38 tools · 10 chains · read-only · on-chain Curve quoting · ERC-4626 health checks · yield curve term structure · historical eth_getLogs · cross-protocol Pendle comparison · Morpho supply-side visibility · Morpho user positions & historical rates · Merkl campaign APR integration · curator risk monitoring · withdrawal stress testing · rollover planning · multi-vault portfolio aggregation · pool expiry monitoring · zero web3 library dependencies
 
 ## What This Does
 
@@ -36,6 +36,7 @@ Any AI agent (Claude, GPT, open-source) that supports MCP can now:
 - **Stress-test** MetaVault withdrawal scenarios — liquidity waterfall analysis (idle → maturing → LP removal → PT sale) with market stress simulation
 - **Plan** position rollovers for expiring MetaVault positions — cross-protocol candidate ranking with entry impact, yield gap, and overlap windows
 - **Aggregate** multi-vault curator portfolios — total AUM, blended APY, fee revenue projection, concentration analysis by underlying/chain
+- **Monitor** pool expiry across all chains — get warnings 3 weeks before maturity with urgency grouping, IBT/PT addresses, and successor pool planning
 - **Learn** protocol mechanics on-demand via `get_protocol_context` (PT/YT identity, Router batching, deposit paths, glossary, workflow routing)
 
 The agent doesn't need to understand PT/YT mechanics -- it just calls `scan_opportunities` with its capital size and gets ranked, actionable data. If it needs to understand *why* something works that way, it calls `get_protocol_context`.
@@ -168,6 +169,7 @@ The observation coverage layer addresses a deeper problem: even perfect interpre
 | `stress_test_vault` | Withdrawal stress test for MetaVaults — liquidity waterfall (idle → maturing → LP removal → PT sale), cost to remaining depositors, maximum safe redemption size. Market stress mode (2x impact). |
 | `plan_rollover` | Position rollover planner for expiring MetaVault positions — scans Spectra + Pendle for replacement candidates, computes entry impact, yield gap, overlap windows, and net effective APY. |
 | `curator_portfolio` | Multi-vault portfolio aggregation — total AUM, blended APY, fee revenue projection, concentration by underlying/chain, cross-vault action items. Discovery mode (by curator address) or explicit mode. |
+| `get_expiring_pools` | Scan all chains for pools approaching maturity (default 21-day threshold). Groups by urgency (CRITICAL ≤7d, WARNING ≤14d, ALERT ≤21d). Returns PT/IBT addresses, chain ID, TVL, and successor pool planning section for operators creating follow-up pools and gauge proposals. |
 | `get_protocol_context` | Returns protocol mechanics reference (PT/YT identity, Router batching, deposit paths, glossary, workflow routing). 8 topics callable on-demand. |
 
 ## Supported Chains
@@ -406,6 +408,7 @@ src/
     stress_test.ts  stress_test_vault (withdrawal liquidity waterfall, market stress simulation)
     rollover.ts     plan_rollover (expiring position rollover planner with cross-protocol candidates)
     curator_portfolio.ts curator_portfolio (multi-vault aggregation, AUM, blended APY, concentration)
+    expiry_monitor.ts get_expiring_pools (pool maturity monitoring, urgency grouping, successor pool planning)
 test.cjs              Integration test suite (405 tests, McpTestClient over stdio)
 test-agent.cjs        Agent reasoning test suite (82 assertions, McpTestClient over stdio)
 AGENT-TESTS.md        38-question subjective test suite with grading rubrics (incl. open emergence, coverage, newcomer comprehension tiers)
