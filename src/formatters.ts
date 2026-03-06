@@ -2,7 +2,7 @@
  * Data formatting helpers — USD, percentages, dates, balances, pool/position/Morpho summaries.
  */
 
-import type { SpectraPt, SpectraPool, SpectraMetavault, SpectraMetavaultPosition, MorphoMarket, MorphoVault, MorphoVaultAllocation, MorphoMarketSupplier, PendleMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavaultBridgeTx, MerklTokenReward, CrossProtocolMatch, CuratorOpportunity, MerklCampaign, MorphoUserPositions, MorphoHistoricalAnalysis, MorphoRateStats, MorphoPublicAllocatorLiquidity } from "./types.js";
+import type { SpectraPt, SpectraPool, SpectraMetavault, SpectraMetavaultPosition, MorphoMarket, MorphoVault, MorphoVaultAllocation, MorphoMarketSupplier, PendleMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavaultBridgeTx, MerklTokenReward, CrossProtocolMatch, CuratorOpportunity, MerklCampaign, MorphoUserPositions, MorphoHistoricalAnalysis, MorphoRateStats, MorphoPublicAllocatorLiquidity, CuratorRiskSummary, LiquidationAlert, RiskAlertLevel } from "./types.js";
 import { SUPPORTED_CHAINS } from "./config.js";
 
 // =============================================================================
@@ -3813,6 +3813,123 @@ export function formatCuratorScanResults(
   }
   lines.push(`  → Verify: quote_trade(chain, pt_address, amount, "buy") for exact on-chain Curve quotes.`);
   lines.push(`  Curators: You control pool depth. Entry impact is a design choice, not a given constraint.`);
+
+  return lines.join("\n");
+}
+
+// =============================================================================
+// Curator Risk Monitor Formatter
+// =============================================================================
+
+function riskIcon(level: RiskAlertLevel): string {
+  switch (level) {
+    case "critical": return "[!!!]";
+    case "warning":  return "[!!]";
+    case "watch":    return "[!]";
+    default:         return "";
+  }
+}
+
+function formatPositionAlert(p: LiquidationAlert, idx: number): string[] {
+  const lines: string[] = [];
+  const icon = riskIcon(p.alertLevel);
+  const tag = p.isSpectraPt ? "[Spectra PT] " : "";
+  const loopTag = p.isLooper ? "[Looper] " : "";
+
+  lines.push(`  Position ${idx + 1}: ${tag}${loopTag}${p.collateralSymbol} / ${p.debtSymbol} ${icon}`);
+  lines.push(`    Collateral: ${formatUsd(p.collateralUsd)}  |  Debt: ${formatUsd(p.debtUsd)}`);
+  lines.push(`    LLTV: ${formatPct(p.lltv * 100)}  |  Health Factor: ${p.healthFactor === Infinity ? "∞ (no debt)" : p.healthFactor.toFixed(3)}`);
+
+  if (p.currentPrice > 0 && p.liquidationPrice > 0) {
+    lines.push(`    Collateral Price: ${formatUsd(p.currentPrice)}  →  Liquidation at: ${formatUsd(p.liquidationPrice)}`);
+    lines.push(`    Distance to Liquidation: ${p.distanceToLiquidationPct.toFixed(1)}%`);
+  }
+
+  if (p.currentBorrowRate > 0) {
+    lines.push(`    Borrow Rate: ${formatPct(p.currentBorrowRate)}`);
+  }
+
+  if (p.isFullLiquidation) {
+    lines.push(`    Morpho: No close factor — FULL position liquidatable at health = 1.0`);
+  }
+
+  lines.push(`    Market: ${p.marketKey.slice(0, 10)}...  |  Chain: ${p.chain}`);
+
+  if (p.alertReasons.length > 0) {
+    for (const reason of p.alertReasons) {
+      lines.push(`    ${icon} ${reason}`);
+    }
+  }
+
+  return lines;
+}
+
+export function formatCuratorRiskSummary(summary: CuratorRiskSummary): string {
+  const lines: string[] = [];
+  const scope = summary.chain || "all Morpho chains";
+
+  lines.push(`== Curator Risk Monitor: ${summary.address.slice(0, 6)}...${summary.address.slice(-4)} ==`);
+  lines.push(`  Scope: ${scope}  |  Alert threshold: ${summary.alertThresholdPct}%`);
+  lines.push(`  Borrowing Positions: ${summary.borrowingPositions}`);
+  lines.push(`  Total Collateral: ${formatUsd(summary.totalCollateralUsd)}  |  Total Debt: ${formatUsd(summary.totalDebtUsd)}`);
+
+  if (summary.worstHealthFactor != null && summary.worstHealthFactor !== Infinity) {
+    lines.push(`  Worst Health Factor: ${summary.worstHealthFactor.toFixed(3)}`);
+  }
+
+  // Risk distribution
+  const { critical, warning, watch, ok } = summary.positionsByLevel;
+  const distParts: string[] = [];
+  if (critical > 0) distParts.push(`${critical} critical`);
+  if (warning > 0) distParts.push(`${warning} warning`);
+  if (watch > 0) distParts.push(`${watch} watch`);
+  if (ok > 0) distParts.push(`${ok} ok`);
+  lines.push(`  Risk Distribution: ${distParts.join(" | ")}`);
+
+  lines.push(``);
+
+  // Sort: critical first, then warning, watch, ok
+  const levelOrder: Record<RiskAlertLevel, number> = { critical: 0, warning: 1, watch: 2, ok: 3 };
+  const sorted = [...summary.positions].sort((a, b) => levelOrder[a.alertLevel] - levelOrder[b.alertLevel]);
+
+  for (let i = 0; i < sorted.length; i++) {
+    lines.push(...formatPositionAlert(sorted[i], i));
+    if (i < sorted.length - 1) lines.push(``);
+  }
+
+  // Alerts section — aggregated action items (scaffolding, not directives)
+  const alertPositions = sorted.filter((p) => p.alertLevel !== "ok");
+  if (alertPositions.length > 0) {
+    lines.push(``);
+    lines.push(`--- Alerts ---`);
+    for (const p of alertPositions) {
+      const icon = riskIcon(p.alertLevel);
+      for (const reason of p.alertReasons) {
+        lines.push(`  ${icon} ${p.collateralSymbol}/${p.debtSymbol}: ${reason}`);
+      }
+    }
+
+    lines.push(``);
+    lines.push(`--- Considerations (not directives) ---`);
+    if (critical > 0) {
+      lines.push(`  - Critical positions may warrant immediate deleverage — but check if the collateral is approaching maturity (PT redeems at par)`);
+    }
+    if (warning > 0 || watch > 0) {
+      lines.push(`  - Elevated positions could indicate normal operation at high leverage, or genuine risk — context matters`);
+    }
+    lines.push(`  - Morpho Pre-Liquidation (opt-in Auto-Deleverage) reduces cliff risk for positions near threshold`);
+    lines.push(`  - Use get_morpho_history to assess whether current borrow rates are a spike or a trend`);
+  } else {
+    lines.push(``);
+    lines.push(`  All positions within safe parameters.`);
+  }
+
+  lines.push(``);
+  lines.push(`--- Next Steps ---`);
+  lines.push(`  • Rate history: get_morpho_history(chain, market_key) — assess borrow rate stability`);
+  lines.push(`  • Position details: get_morpho_positions(address) — full supply/vault/borrow view`);
+  lines.push(`  • Deleverage modeling: get_looping_strategy(chain, pt_address) — sensitivity at different leverage`);
+  lines.push(`  • MetaVault status: get_curator_dashboard(chain, metavault_address) — operational overview`);
 
   return lines.join("\n");
 }
