@@ -36,7 +36,7 @@ Any AI agent (Claude, GPT, open-source) that supports MCP can now:
 - **Stress-test** MetaVault withdrawal scenarios — liquidity waterfall analysis (idle → maturing → LP removal → PT sale) with market stress simulation
 - **Plan** position rollovers for expiring MetaVault positions — cross-protocol candidate ranking with entry impact, yield gap, and overlap windows
 - **Aggregate** multi-vault curator portfolios — total AUM, blended APY, fee revenue projection, concentration analysis by underlying/chain
-- **Monitor** pool expiry across all chains — get warnings 3 weeks before maturity with urgency grouping, IBT/PT addresses, and successor pool planning
+- **Monitor** pool expiry across all chains with readiness assessment — successor pool detection, gauge status from governance API, and operator checklist (deploy pool / submit gauge / ready for migration)
 - **Learn** protocol mechanics on-demand via `get_protocol_context` (PT/YT identity, Router batching, deposit paths, glossary, workflow routing)
 
 The agent doesn't need to understand PT/YT mechanics -- it just calls `scan_opportunities` with its capital size and gets ranked, actionable data. If it needs to understand *why* something works that way, it calls `get_protocol_context`.
@@ -169,7 +169,7 @@ The observation coverage layer addresses a deeper problem: even perfect interpre
 | `stress_test_vault` | Withdrawal stress test for MetaVaults — liquidity waterfall (idle → maturing → LP removal → PT sale), cost to remaining depositors, maximum safe redemption size. Market stress mode (2x impact). |
 | `plan_rollover` | Position rollover planner for expiring MetaVault positions — scans Spectra + Pendle for replacement candidates, computes entry impact, yield gap, overlap windows, and net effective APY. |
 | `curator_portfolio` | Multi-vault portfolio aggregation — total AUM, blended APY, fee revenue projection, concentration by underlying/chain, cross-vault action items. Discovery mode (by curator address) or explicit mode. |
-| `get_expiring_pools` | Scan all chains for pools approaching maturity (default 21-day threshold). Groups by urgency (CRITICAL ≤7d, WARNING ≤14d, ALERT ≤21d). Returns PT/IBT addresses, chain ID, TVL, and successor pool planning section for operators creating follow-up pools and gauge proposals. |
+| `get_expiring_pools` | Scan all chains for pools approaching maturity (default 21-day threshold). Groups by urgency (CRITICAL ≤7d, WARNING ≤14d, ALERT ≤21d). Cross-references each expiring pool's IBT against all active pools for successor detection. Fetches gauge status from governance API. Per-pool readiness assessment (OK/CAUTION/WARNING). Operator checklist: deploy successor pool, submit gauge proposal, ready for migration. |
 | `get_protocol_context` | Returns protocol mechanics reference (PT/YT identity, Router batching, deposit paths, glossary, workflow routing). 8 topics callable on-demand. |
 
 ## Supported Chains
@@ -408,7 +408,7 @@ src/
     stress_test.ts  stress_test_vault (withdrawal liquidity waterfall, market stress simulation)
     rollover.ts     plan_rollover (expiring position rollover planner with cross-protocol candidates)
     curator_portfolio.ts curator_portfolio (multi-vault aggregation, AUM, blended APY, concentration)
-    expiry_monitor.ts get_expiring_pools (pool maturity monitoring, urgency grouping, successor pool planning)
+    expiry_monitor.ts get_expiring_pools (pool maturity monitoring, urgency grouping, successor cross-reference, gauge status, readiness assessment)
 test.cjs              Integration test suite (405 tests, McpTestClient over stdio)
 test-agent.cjs        Agent reasoning test suite (82 assertions, McpTestClient over stdio)
 AGENT-TESTS.md        38-question subjective test suite with grading rubrics (incl. open emergence, coverage, newcomer comprehension tiers)
@@ -525,6 +525,7 @@ This server wraps these endpoints:
 | `GET /v1/{chain}/metavaults` | `get_metavaults`, `model_metavault_strategy` (live mode) |
 | `GET api.merkl.xyz/v3/userRewards?user={address}&chainId={chainId}` | `get_portfolio` (Merkl reward fetching — SPECTRA gauge emissions + incentive programs) |
 | `GET api.merkl.xyz/v4/opportunities?chainId={chainId}` | `list_pools`, `get_pt_details`, `compare_yield`, `list_pendle_markets`, `compare_pendle_spectra`, `scan_opportunities`, `scan_curator_opportunities`, `scan_yt_arbitrage` (Merkl campaign APR — 60s TTL cache) |
+| `GET api.spectra.finance/v1/governance/voting-incentives` | `get_expiring_pools` (gauge status — pool address presence = gauge exists) |
 | `GET app.spectra.finance/api/v1/spectra/circulating-supply` | `get_protocol_stats` |
 | `GET app.spectra.finance/api/v1/spectra/total-supply` | `get_protocol_stats` |
 | `POST api.morpho.org/graphql` | `get_morpho_markets`, `get_morpho_rate`, `get_looping_strategy` (auto-detect), `scan_opportunities` (batch) |

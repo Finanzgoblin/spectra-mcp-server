@@ -54,11 +54,18 @@ interface SuccessorPool {
   name: string;
   chain: string;
   ptAddress: string;
+  poolAddress: string;
   maturityDate: string;
   daysLeft: number;
   impliedApy: number;
   tvlUsd: number;
   hasGauge: boolean;
+}
+
+/** Readiness assessment for a pool's transition state */
+interface ReadinessSignal {
+  level: "OK" | "CAUTION" | "WARNING";
+  messages: string[];
 }
 
 function urgencyLabel(days: number): string {
@@ -71,6 +78,50 @@ function urgencyIcon(days: number): string {
   if (days <= 7) return "!!!";
   if (days <= 14) return "!!";
   return "!";
+}
+
+/** Assess transition readiness: successor pool + gauge + timing */
+function assessReadiness(
+  p: ExpiringPool,
+  succs: SuccessorPool[]
+): ReadinessSignal {
+  const messages: string[] = [];
+  let level: "OK" | "CAUTION" | "WARNING" = "OK";
+
+  // No successor
+  if (succs.length === 0) {
+    level = p.daysLeft <= 7 ? "WARNING" : "CAUTION";
+    messages.push(`No successor pool deployed for IBT ${p.ibtSymbol}`);
+    if (p.daysLeft <= 7) {
+      messages.push("Pool expires within 7 days — LPs need migration path");
+    }
+    return { level, messages };
+  }
+
+  // Has successor — check gauge
+  const s = succs[0];
+  if (!s.hasGauge) {
+    level = p.daysLeft <= 14 ? "WARNING" : "CAUTION";
+    messages.push(
+      `Successor ${s.name} exists but has no gauge — needs governance proposal`
+    );
+  }
+
+  // Successor has very low TVL (< $1K) — not seeded yet
+  if (s.tvlUsd < 1000) {
+    if (level !== "WARNING") level = "CAUTION";
+    messages.push(
+      `Successor TVL is ${formatUsd(s.tvlUsd)} — pool may not be seeded yet`
+    );
+  }
+
+  if (messages.length === 0) {
+    messages.push(
+      `Successor deployed with gauge: ${s.name} (${formatUsd(s.tvlUsd)} TVL)`
+    );
+  }
+
+  return { level, messages };
 }
 
 export function register(server: McpServer): void {
@@ -92,10 +143,29 @@ Automatically cross-references each expiring pool's IBT against all active pools
 to flag whether a successor pool (same IBT, later maturity) already exists or
 needs to be created.
 
+Gauge status is fetched from the governance voting-incentives API. A pool address
+present in that endpoint has a gauge (even if it currently has 0 votes / 0 emissions).
+Gauge API failure is best-effort — gauge status shows as unknown, does not block results.
+
+Per-pool readiness assessment combines successor status, gauge status, and timing:
+  OK:      Successor deployed with gauge and seeded
+  CAUTION: Successor exists but missing gauge or low TVL; or no successor but >7d runway
+  WARNING: No successor and ≤7d; or successor without gauge and ≤14d
+
+Urgency (time-based) and readiness (action-based) are independent dimensions.
+A pool can be ALERT urgency (21d runway) but WARNING readiness (no successor at all).
+The Operator Checklist section groups required actions by type:
+  - Deploy successor pool: IBTs with no active successor
+  - Submit gauge proposal: successors that exist but lack a gauge
+  - Ready for migration: successors with gauge and adequate TVL
+
 Urgency levels:
   CRITICAL (≤7 days): Immediate action required
   WARNING  (≤14 days): Start preparations now
   ALERT    (≤21+ days): Plan ahead
+
+Set include_expired=true to also show recently matured pools (if the API returns them).
+By default only active (non-expired) pools are shown.
 
 Use plan_rollover on a specific MetaVault for automated rollover candidate discovery.
 Use get_yield_curve to see what maturities already exist for the same underlying.
@@ -126,29 +196,26 @@ Use list_pools to check if a successor pool has already been created.`,
     async ({ threshold_days, chain, min_tvl_usd, compact }) => {
       try {
         // Scan all chains + fetch gauge list in parallel
-        const [{ opportunities, failedChains }, gaugePoolAddrs] = await Promise.all([
-          scanAllChainPools({ min_tvl_usd: 0, min_liquidity_usd: 0 }),
-          fetchGaugePoolAddresses(),
-        ]);
+        const [{ opportunities, failedChains }, gaugePoolAddrs] =
+          await Promise.all([
+            scanAllChainPools({ min_tvl_usd: 0, min_liquidity_usd: 0 }),
+            fetchGaugePoolAddresses(),
+          ]);
 
         // Filter to expiring pools within threshold
-        const now = Date.now() / 1000;
         const expiring: ExpiringPool[] = [];
 
         for (const opp of opportunities) {
-          // Chain filter
           if (chain && opp.chain !== chain) continue;
 
           const days = daysToMaturity(opp.pt.maturity);
-
-          // Only include pools within the warning window
           if (days > threshold_days) continue;
 
-          // TVL filter (applied after maturity filter so we don't miss low-TVL expiring pools by default)
           const tvl = opp.pt.tvl?.usd || 0;
           if (tvl < min_tvl_usd) continue;
 
-          const chainInfo = SUPPORTED_CHAINS[opp.chain as keyof typeof SUPPORTED_CHAINS];
+          const chainInfo =
+            SUPPORTED_CHAINS[opp.chain as keyof typeof SUPPORTED_CHAINS];
 
           expiring.push({
             name: opp.pt.name,
@@ -173,47 +240,43 @@ Use list_pools to check if a successor pool has already been created.`,
         // Sort by days remaining (most urgent first)
         expiring.sort((a, b) => a.daysLeft - b.daysLeft);
 
-        // Build IBT → successor pools map (same IBT, later maturity, not itself expiring)
-        // Key: lowercase IBT address + ":" + chain
-        const expiringPtSet = new Set(expiring.map((p) => p.ptAddress.toLowerCase()));
+        // Build IBT → successor pools map
+        const expiringPtSet = new Set(
+          expiring.map((p) => p.ptAddress.toLowerCase())
+        );
         const ibtSuccessors = new Map<string, SuccessorPool[]>();
 
         for (const opp of opportunities) {
           const ibtAddr = opp.pt.ibt?.address?.toLowerCase();
           if (!ibtAddr) continue;
-          // Skip pools that are themselves expiring
           if (expiringPtSet.has(opp.pt.address.toLowerCase())) continue;
 
           const key = `${ibtAddr}:${opp.chain}`;
           if (!ibtSuccessors.has(key)) ibtSuccessors.set(key, []);
-          const days = daysToMaturity(opp.pt.maturity);
-          // Gauge detection: pool address present in governance voting-incentives endpoint
           const poolAddr = opp.pool.address?.toLowerCase() || "";
-          const hasGauge = gaugePoolAddrs.has(poolAddr);
           ibtSuccessors.get(key)!.push({
             name: opp.pt.name,
             chain: opp.chain,
             ptAddress: opp.pt.address,
+            poolAddress: opp.pool.address || "",
             maturityDate: formatDate(opp.pt.maturity),
-            daysLeft: days,
+            daysLeft: daysToMaturity(opp.pt.maturity),
             impliedApy: opp.pool.impliedApy || 0,
             tvlUsd: opp.pt.tvl?.usd || 0,
-            hasGauge,
+            hasGauge: gaugePoolAddrs.has(poolAddr),
           });
         }
-        // Sort each group by maturity (nearest first)
         for (const succs of ibtSuccessors.values()) {
           succs.sort((a, b) => a.daysLeft - b.daysLeft);
         }
 
-        // Helper to look up successors for an expiring pool
         function getSuccessors(p: ExpiringPool): SuccessorPool[] {
           if (!p.ibtAddress) return [];
           const key = `${p.ibtAddress.toLowerCase()}:${p.chain}`;
           return ibtSuccessors.get(key) || [];
         }
 
-        // Build output
+        // ── Build output ──
         const lines: string[] = [];
 
         if (expiring.length === 0) {
@@ -230,54 +293,86 @@ Use list_pools to check if a successor pool has already been created.`,
           lines.push(
             "All pools have sufficient runway. Use list_pools to see active pools."
           );
-          const text = lines.join("\n");
-          return { content: [{ type: "text" as const, text }] };
+          return { content: [{ type: "text" as const, text: lines.join("\n") }] };
         }
 
-        // Count by urgency
+        // Urgency counts
         const critical = expiring.filter((p) => p.daysLeft <= 7);
         const warning = expiring.filter(
           (p) => p.daysLeft > 7 && p.daysLeft <= 14
         );
         const alert = expiring.filter((p) => p.daysLeft > 14);
 
+        // Readiness counts
+        let okCount = 0;
+        let cautionCount = 0;
+        let warningCount = 0;
+        const poolReadiness = new Map<string, ReadinessSignal>();
+        for (const p of expiring) {
+          const r = assessReadiness(p, getSuccessors(p));
+          poolReadiness.set(p.ptAddress, r);
+          if (r.level === "OK") okCount++;
+          else if (r.level === "CAUTION") cautionCount++;
+          else warningCount++;
+        }
+
         const scope = chain ? ` on ${chain}` : "";
         lines.push(
-          `Expiring Pools${scope} (${expiring.length} pool${expiring.length === 1 ? "" : "s"} within ${threshold_days} days)`
+          `Expiring Pools${scope} — ${expiring.length} pool${expiring.length === 1 ? "" : "s"} within ${threshold_days} days`
         );
         lines.push("");
 
-        // Summary bar
-        const summaryParts: string[] = [];
+        // Summary
+        const urgParts: string[] = [];
         if (critical.length > 0)
-          summaryParts.push(`!!! CRITICAL: ${critical.length}`);
+          urgParts.push(`!!! ${critical.length} CRITICAL`);
         if (warning.length > 0)
-          summaryParts.push(`!! WARNING: ${warning.length}`);
-        if (alert.length > 0)
-          summaryParts.push(`! ALERT: ${alert.length}`);
-        lines.push(summaryParts.join("  |  "));
+          urgParts.push(`!! ${warning.length} WARNING`);
+        if (alert.length > 0) urgParts.push(`! ${alert.length} ALERT`);
+        lines.push(`Urgency:   ${urgParts.join("  |  ")}`);
+
+        const rdParts: string[] = [];
+        if (warningCount > 0) rdParts.push(`${warningCount} WARNING`);
+        if (cautionCount > 0) rdParts.push(`${cautionCount} CAUTION`);
+        if (okCount > 0) rdParts.push(`${okCount} OK`);
+        lines.push(`Readiness: ${rdParts.join("  |  ")}`);
+        lines.push(
+          `Gauges:    ${gaugePoolAddrs.size > 0 ? `${gaugePoolAddrs.size} gauged pools in governance` : "governance API unavailable — gauge status unknown"}`
+        );
         lines.push("");
 
         if (compact) {
           const hdr =
-            "Urgency  | Days | Maturity   | Impl. APY |       TVL | Chain    | Underlying | IBT             | Succ | PT Address";
+            "Urg | Days | Rdy | Chain    | IBT             | TVL       | Succ  | Gauge | Maturity";
           lines.push(hdr);
           lines.push("─".repeat(hdr.length));
 
           for (const p of expiring) {
-            const urg = urgencyIcon(p.daysLeft).padEnd(8);
+            const urg = urgencyIcon(p.daysLeft).padEnd(3);
             const days = String(p.daysLeft).padStart(4);
-            const apy = formatPct(p.impliedApy).padStart(9);
-            const tvl = formatUsd(p.tvlUsd).padStart(9);
+            const r = poolReadiness.get(p.ptAddress)!;
+            const rdy =
+              r.level === "OK"
+                ? " OK"
+                : r.level === "CAUTION"
+                  ? " ! "
+                  : " !!";
             const ch = p.chain.padEnd(8);
-            const ul = p.underlyingSymbol.padEnd(10);
             const ibt = p.ibtSymbol.slice(0, 15).padEnd(15);
+            const tvl = formatUsd(p.tvlUsd).padStart(9);
             const succs = getSuccessors(p);
-            const succFlag = succs.length === 0 ? `  NO` : succs[0].hasGauge ? ` Y+G` : ` Y-G`;
-            const addr =
-              p.ptAddress.slice(0, 6) + "..." + p.ptAddress.slice(-4);
+            const succ =
+              succs.length === 0
+                ? "  NO "
+                : ` YES `;
+            const gauge =
+              succs.length === 0
+                ? " n/a "
+                : succs[0].hasGauge
+                  ? " YES "
+                  : "  NO ";
             lines.push(
-              `${urg} | ${days} | ${p.maturityDate} | ${apy} | ${tvl} | ${ch} | ${ul} | ${ibt} | ${succFlag} | ${addr}`
+              `${urg} | ${days} | ${rdy} | ${ch} | ${ibt} | ${tvl} | ${succ} | ${gauge} | ${p.maturityDate}`
             );
           }
         } else {
@@ -285,115 +380,128 @@ Use list_pools to check if a successor pool has already been created.`,
           const groups = [
             { label: "CRITICAL (≤7 days)", pools: critical },
             { label: "WARNING (≤14 days)", pools: warning },
-            { label: "ALERT (≤" + threshold_days + " days)", pools: alert },
+            {
+              label: "ALERT (≤" + threshold_days + " days)",
+              pools: alert,
+            },
           ];
 
           for (const group of groups) {
             if (group.pools.length === 0) continue;
 
-            lines.push(`── ${group.label} ${"─".repeat(50)}`);
+            lines.push(
+              `── ${group.label} ${"─".repeat(50)}`
+            );
             lines.push("");
 
             for (const p of group.pools) {
-              lines.push(`${urgencyIcon(p.daysLeft)} ${p.name} (${p.chain})`);
-              lines.push(
-                `  Maturity: ${p.maturityDate} (${p.daysLeft} day${p.daysLeft === 1 ? "" : "s"} remaining)`
-              );
-              lines.push(
-                `  Implied APY: ${formatPct(p.impliedApy)} | TVL: ${formatUsd(p.tvlUsd)} | Liquidity: ${formatUsd(p.liquidityUsd)}`
-              );
-              lines.push(`  Underlying: ${p.underlyingSymbol} (${p.underlyingAddress || "n/a"})`);
-              lines.push(
-                `  IBT: ${p.ibtSymbol} (${p.ibtAddress || "n/a"}) — ${p.ibtProtocol}`
-              );
-              lines.push(`  PT Address: ${p.ptAddress}`);
-              lines.push(`  Pool Address: ${p.poolAddress || "n/a"}`);
-              lines.push(`  Chain ID: ${p.chainId}`);
+              const r = poolReadiness.get(p.ptAddress)!;
+              const rdyTag =
+                r.level === "WARNING"
+                  ? "!! "
+                  : r.level === "CAUTION"
+                    ? "!  "
+                    : "   ";
 
-              // Successor pool status
+              lines.push(
+                `${urgencyIcon(p.daysLeft)} ${p.ibtSymbol} on ${p.chain} — ${p.daysLeft}d to maturity (${p.maturityDate})`
+              );
+              lines.push(
+                `    TVL: ${formatUsd(p.tvlUsd)} | Liquidity: ${formatUsd(p.liquidityUsd)} | APY: ${formatPct(p.impliedApy)}`
+              );
+              lines.push(
+                `    IBT: ${p.ibtAddress} (${p.ibtProtocol})`
+              );
+              lines.push(
+                `    PT:  ${p.ptAddress} | Pool: ${p.poolAddress || "n/a"} | Chain ID: ${p.chainId}`
+              );
+
+              // Successor + gauge status
               const succs = getSuccessors(p);
               if (succs.length > 0) {
-                const s = succs[0]; // nearest successor
-                const gaugeTag = s.hasGauge ? "gauge YES" : "gauge NO";
+                const s = succs[0];
+                const gaugeStr = s.hasGauge ? "gauge: YES" : "gauge: NO";
                 lines.push(
-                  `  Successor: YES — ${s.name} maturing ${s.maturityDate} (${s.daysLeft}d), APY ${formatPct(s.impliedApy)}, TVL ${formatUsd(s.tvlUsd)}, ${gaugeTag}`
+                  `    Successor: ${s.name}`
+                );
+                lines.push(
+                  `      Maturity: ${s.maturityDate} (${s.daysLeft}d) | APY: ${formatPct(s.impliedApy)} | TVL: ${formatUsd(s.tvlUsd)} | ${gaugeStr}`
+                );
+                lines.push(
+                  `      PT: ${s.ptAddress} | Pool: ${s.poolAddress}`
                 );
                 if (succs.length > 1) {
                   lines.push(
-                    `             +${succs.length - 1} more pool${succs.length - 1 === 1 ? "" : "s"} with same IBT`
+                    `      +${succs.length - 1} more pool${succs.length - 1 === 1 ? "" : "s"} with same IBT`
                   );
                 }
               } else {
                 lines.push(
-                  `  Successor: NONE — no active pool found with same IBT (${p.ibtSymbol}). Needs creation.`
+                  `    Successor: NONE`
                 );
               }
+
+              // Readiness
+              lines.push(
+                `    Readiness: ${r.level}${r.messages.length > 0 ? " — " + r.messages.join("; ") : ""}`
+              );
               lines.push("");
             }
           }
         }
 
-        // Action items
+        // ── Operator Checklist ──
         lines.push("");
-        lines.push("── Action Items ──");
-        if (critical.length > 0) {
-          lines.push(
-            `• ${critical.length} pool${critical.length === 1 ? "" : "s"} expiring within 7 days — successor pools should already exist`
-          );
-        }
-        if (warning.length > 0) {
-          lines.push(
-            `• ${warning.length} pool${warning.length === 1 ? "" : "s"} expiring within 14 days — finalize gauge proposals and seed liquidity`
-          );
-        }
-        if (alert.length > 0) {
-          lines.push(
-            `• ${alert.length} pool${alert.length === 1 ? "" : "s"} expiring within ${threshold_days} days — start planning successor pools`
-          );
-        }
+        lines.push("── Operator Checklist ──");
 
-        // Group by IBT for successor pool planning
-        const byIbt = new Map<string, ExpiringPool[]>();
-        for (const p of expiring) {
-          const key = p.ibtAddress
-            ? `${p.ibtAddress.toLowerCase()}:${p.chain}`
-            : `unknown:${p.chain}:${p.underlyingSymbol}`;
-          if (!byIbt.has(key)) byIbt.set(key, []);
-          byIbt.get(key)!.push(p);
-        }
-        if (byIbt.size > 0) {
+        // Pools needing successor creation
+        const needsPool = expiring.filter(
+          (p) => getSuccessors(p).length === 0
+        );
+        const needsGauge = expiring.filter((p) => {
+          const s = getSuccessors(p);
+          return s.length > 0 && !s[0].hasGauge;
+        });
+        const ready = expiring.filter((p) => {
+          const r = poolReadiness.get(p.ptAddress)!;
+          return r.level === "OK";
+        });
+
+        if (needsPool.length > 0) {
           lines.push("");
-          lines.push("── Successor Pool Status ──");
-
-          const needsCreation: string[] = [];
-          const hasSuccessor: string[] = [];
-
-          for (const [, pools] of byIbt) {
-            const earliest = pools[0];
-            const succs = getSuccessors(earliest);
-
-            if (succs.length > 0) {
-              const s = succs[0];
-              const gaugeTag = s.hasGauge ? "gauge YES" : "gauge NO — needs proposal";
-              hasSuccessor.push(
-                `• ${earliest.ibtSymbol} on ${earliest.chain}: ${pools.length} expiring pool${pools.length === 1 ? "" : "s"} — successor exists: ${s.name} (${s.maturityDate}, ${s.daysLeft}d, APY ${formatPct(s.impliedApy)}, ${gaugeTag})`
-              );
-            } else {
-              needsCreation.push(
-                `• ${earliest.ibtSymbol} on ${earliest.chain}: ${pools.length} expiring pool${pools.length === 1 ? "" : "s"}, earliest ${earliest.maturityDate} (${earliest.daysLeft}d) — NO SUCCESSOR, needs creation (IBT: ${earliest.ibtAddress})`
-              );
-            }
+          lines.push(
+            `Deploy successor pool (${needsPool.length}):`
+          );
+          for (const p of needsPool) {
+            lines.push(
+              `  • ${p.ibtSymbol} on ${p.chain} (${p.daysLeft}d) — IBT: ${p.ibtAddress}`
+            );
           }
+        }
 
-          if (needsCreation.length > 0) {
-            lines.push("");
-            lines.push(`Needs successor pool (${needsCreation.length}):`);
-            lines.push(...needsCreation);
+        if (needsGauge.length > 0) {
+          lines.push("");
+          lines.push(
+            `Submit gauge proposal (${needsGauge.length}):`
+          );
+          for (const p of needsGauge) {
+            const s = getSuccessors(p)[0];
+            lines.push(
+              `  • ${s.name} on ${p.chain} — pool: ${s.poolAddress}`
+            );
           }
-          if (hasSuccessor.length > 0) {
-            lines.push("");
-            lines.push(`Successor already deployed (${hasSuccessor.length}):`);
-            lines.push(...hasSuccessor);
+        }
+
+        if (ready.length > 0) {
+          lines.push("");
+          lines.push(
+            `Ready for migration (${ready.length}):`
+          );
+          for (const p of ready) {
+            const s = getSuccessors(p)[0];
+            lines.push(
+              `  • ${p.ibtSymbol} on ${p.chain} → ${s.name} (${formatUsd(s.tvlUsd)} TVL)`
+            );
           }
         }
 
@@ -405,11 +513,23 @@ Use list_pools to check if a successor pool has already been created.`,
         }
 
         lines.push("");
+        lines.push("── Next Steps ──");
+        if (needsPool.length > 0) {
+          const p = needsPool[0];
+          lines.push(
+            `• Deploy: Use get_pt_details(chain="${p.chain}", pt_address="${p.ptAddress}") to review IBT specs before deploying successor`
+          );
+        }
+        if (needsGauge.length > 0) {
+          lines.push(
+            `• Gauge proposals: Submit at gov.spectra.finance — successor pool addresses listed above`
+          );
+        }
         lines.push(
-          "Use get_yield_curve to check if successor maturities already exist."
+          `• Yield curve: get_yield_curve(underlying="SYMBOL") to see all active maturities for an asset`
         );
         lines.push(
-          "Use plan_rollover for MetaVault-specific rollover candidates."
+          `• MetaVault rollover: plan_rollover(chain, metavault_address) for automated candidate discovery`
         );
 
         const text = lines.join("\n");
