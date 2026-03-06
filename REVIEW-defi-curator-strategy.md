@@ -197,6 +197,29 @@ Uses raw `fetch` instead of `fetchWithRetry`. Transient network errors won't be 
 
 ---
 
+## Supplementary Findings (remaining 9 tool modules)
+
+### Additional Issues
+
+**L12. Dead variables in `ve.ts`** — `ptResult` and `poolResult` are assigned but never read (lines 53-54). Leftover from a previous version.
+
+**L13. Pool context fetch uses PT endpoint with pool address (`pool.ts`)** — `fetchSpectra(/${network}/pt/${effectivePoolAddr})` passes a pool address to the PT endpoint. Wrapped in `Promise.allSettled` so it degrades gracefully, but pool context is silently unavailable when input is a pool address.
+
+**L14. Lock rate semantic inaccuracy (`protocol.ts`)** — "Effective lock rate" is computed as `(total - circulating) / total`, which includes all non-circulating tokens (vesting, treasury), not just veSPECTRA-locked supply.
+
+**L15. Token decimals default to 18 in `onchain.ts`** — USDC (6), WBTC (8) amounts display incorrectly without explicit `token_decimals` param. Warning is shown but could confuse users.
+
+**L16. `get_address_activity` address-specific analysis requires `type_filter="all"` (`pool.ts`)** — Rich analysis features (cycle detection, flow accounting, gas estimates) are only available when type_filter is "all". Users filtering by type silently lose all analysis.
+
+### Additional Strengths
+
+14. **Next-step hints** — Every tool ends with actionable `--- Next Steps ---` sections creating a discoverable tool graph for AI agents
+15. **Tool descriptions as documentation** — Descriptions contain protocol mechanics explanations that serve as both user docs and agent guidance
+16. **Dual-fetch mode in `onchain.ts`** — Simultaneous pool + PT address event fetching, merged and sorted, with no ethers/viem dependency
+17. **Cross-protocol Morpho tagging in `morpho.ts`** — Markets auto-tagged as "Spectra" or "Pendle/Other" via parallel PT address fetch
+
+---
+
 ## Recommended Priority Order
 
 1. **Fix H1-H3** — these affect recommendation accuracy and resilience
