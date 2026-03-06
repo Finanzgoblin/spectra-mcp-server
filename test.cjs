@@ -2206,24 +2206,26 @@ async function testGetExpiringPools(client) {
   if (text.includes("Expiring Pools")) {
     assert(text.includes("CRITICAL") || text.includes("WARNING") || text.includes("ALERT"),
       "has urgency labels", "missing urgency grouping");
-    assert(text.includes("PT Address"), "has PT address", "missing PT address");
     assert(text.includes("IBT:"), "has IBT info", "missing IBT info");
     assert(text.includes("Chain ID:"), "has chain ID", "missing chain ID");
-    assert(text.includes("Action Items"), "has action items section", "missing action items");
-    assert(text.includes("Successor Pool Status"), "has successor status section", "missing successor section");
-    // Successor cross-reference: each pool should show Successor: YES or Successor: NONE
+    // Readiness assessment
+    assert(text.includes("Readiness:"), "has readiness assessment", "missing readiness line");
+    assert(
+      text.includes("Readiness: OK") || text.includes("Readiness: CAUTION") || text.includes("Readiness: WARNING"),
+      "readiness has valid level",
+      "unexpected readiness format"
+    );
+    // Successor cross-reference
     assert(text.includes("Successor:"), "has per-pool successor status", "missing successor line");
+    // Operator checklist
+    assert(text.includes("Operator Checklist"), "has operator checklist", "missing operator checklist");
     assert(
-      text.includes("Successor: YES") || text.includes("Successor: NONE"),
-      "successor line has YES or NONE",
-      "unexpected successor format"
+      text.includes("Deploy successor pool") || text.includes("Submit gauge proposal") || text.includes("Ready for migration"),
+      "has actionable checklist items",
+      "missing checklist categorization"
     );
-    // Successor planning section should categorize by needs-creation vs already-deployed
-    assert(
-      text.includes("Needs successor pool") || text.includes("Successor already deployed"),
-      "has successor categorization",
-      "missing successor categorization"
-    );
+    // Next steps with tool calls
+    assert(text.includes("Next Steps"), "has next steps section", "missing next steps");
   }
 
   // Compact mode
@@ -2236,8 +2238,10 @@ async function testGetExpiringPools(client) {
     `unexpected: ${compact.slice(0, 150)}`
   );
   if (compact.includes("Expiring Pools")) {
-    assert(compact.includes("Urgency"), "compact has table header", "missing table header");
+    assert(compact.includes("Urg"), "compact has table header", "missing table header");
     assert(compact.includes("Succ"), "compact has successor column", "missing successor column in compact");
+    assert(compact.includes("Gauge"), "compact has gauge column", "missing gauge column in compact");
+    assert(compact.includes("Rdy"), "compact has readiness column", "missing readiness column in compact");
   }
 
   // Very short threshold — should return empty or very few
@@ -2261,8 +2265,8 @@ async function testGetExpiringPools(client) {
   );
 
   // If both short and long returned pools, long should have >= short count
-  const shortCount = (short.match(/PT Address:/g) || []).length;
-  const longCount = (long.match(/PT Address:/g) || []).length;
+  const shortCount = (short.match(/Readiness:/g) || []).length;
+  const longCount = (long.match(/Readiness:/g) || []).length;
   if (shortCount > 0 && longCount > 0) {
     assert(longCount >= shortCount, "longer threshold finds >= pools", `${longCount} < ${shortCount}`);
   }
