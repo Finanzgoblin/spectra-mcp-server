@@ -138,10 +138,12 @@ Use model_metavault_strategy to model MetaVault looping economics.`,
       try {
         // Resolve veSPECTRA data once (shared across all pools)
         let veTotalSupply: number | null = null;
+        let veDataAvailable = true;
         if (ve_spectra_balance !== undefined && ve_spectra_balance > 0) {
           try {
             veTotalSupply = await fetchVeTotalSupply();
           } catch (err) {
+            veDataAvailable = false;
             console.error(`Warning: could not fetch veSPECTRA totalSupply: ${(err as any).message}`);
           }
         }
@@ -451,6 +453,9 @@ Use model_metavault_strategy to model MetaVault looping economics.`,
 
         if (!merklAvailable) {
           text += `\nNote: Merkl incentive data unavailable — external campaign APR may be missing from results above.\n`;
+        }
+        if (!veDataAvailable && ve_spectra_balance !== undefined && ve_spectra_balance > 0) {
+          text += `\nNote: veSPECTRA totalSupply unavailable (Base RPC unreachable) — boost calculations defaulted to min APY range.\n`;
         }
 
         // ================================================================

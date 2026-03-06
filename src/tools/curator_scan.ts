@@ -125,10 +125,12 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
       try {
         // Resolve veSPECTRA data once (shared across all Spectra pools)
         let veTotalSupply: number | null = null;
+        let veDataAvailable = true;
         if (ve_spectra_balance !== undefined && ve_spectra_balance > 0) {
           try {
             veTotalSupply = await fetchVeTotalSupply();
           } catch (err) {
+            veDataAvailable = false;
             console.error(`Warning: could not fetch veSPECTRA totalSupply: ${(err as any).message}`);
           }
         }
@@ -515,8 +517,11 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
         // ================================================================
         // Best-effort: fetch funding rates in parallel, match to underlyings.
         // Stablecoins don't need hedging — only non-stable underlyings get funding data.
+        let fundingAvailable = true;
         try {
-          const fundingMap = await fetchHyperliquidFunding();
+          const fundingResult = await fetchHyperliquidFunding();
+          fundingAvailable = fundingResult.available;
+          const fundingMap = fundingResult.data;
           if (fundingMap.size > 0) {
             const STABLES = new Set(["USDC", "USDT", "DAI", "FRAX", "GHO", "LUSD", "AUSD", "NUSD", "SNUSD", "SUSD", "USP", "USDU", "SUSDU", "CUSD", "REUSD", "USDAI", "APYUSD", "COREUSD", "COREUSDC", "VBUSDC", "VBUSDT"]);
             for (const opp of opportunities) {
@@ -541,6 +546,7 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
           }
         } catch {
           // Non-fatal: funding data is best-effort
+          fundingAvailable = false;
         }
 
         // ================================================================
@@ -631,6 +637,12 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
 
         if (!merklAvailable) {
           text += `\nNote: Merkl incentive data unavailable — external campaign APR may be missing from results above.\n`;
+        }
+        if (!fundingAvailable) {
+          text += `\nNote: Hyperliquid funding rate data unavailable — delta-neutral hedge signals may be missing from results above.\n`;
+        }
+        if (!veDataAvailable && ve_spectra_balance !== undefined && ve_spectra_balance > 0) {
+          text += `\nNote: veSPECTRA totalSupply unavailable (Base RPC unreachable) — boost calculations defaulted to min APY range.\n`;
         }
 
         return { content: [{ type: "text" as const, text: text + warningsSuffix }] };
