@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Finanzgoblin/spectra-mcp-server",
-  "description": "Makes Spectra Finance discoverable and usable by AI agents via MCP. 31 tools, 10 chains, read-only. Covers yield discovery, PT/YT analysis, looping strategies, Morpho integration (borrow + supply side), MetaVault discovery, portfolio tracking, on-chain Curve quoting, and more.",
+  "description": "Makes Spectra Finance discoverable and usable by AI agents via MCP. 37 tools, 10 chains, read-only. Covers yield discovery, PT/YT analysis, looping strategies, Morpho integration (borrow + supply side), MetaVault discovery & curator risk management, cross-protocol Pendle comparison, portfolio tracking, on-chain Curve quoting, and more.",
   "repository": {
     "url": "https://github.com/Finanzgoblin/spectra-mcp-server.git",
     "source": "github"
@@ -48,6 +48,12 @@
     { "name": "get_pool_capacity", "description": "Multi-size capacity curve for pool depth analysis" },
     { "name": "check_ibt_health", "description": "Multi-signal IBT health assessment with ERC-4626 conversion check" },
     { "name": "get_yield_curve", "description": "Yield curve term structure for an underlying across all chains" },
-    { "name": "get_protocol_context", "description": "On-demand protocol mechanics explainer" }
+    { "name": "get_protocol_context", "description": "On-demand protocol mechanics explainer" },
+    { "name": "get_morpho_positions", "description": "Query user Morpho positions with health factors and looper detection" },
+    { "name": "get_morpho_history", "description": "Historical rates and growth for a Morpho market" },
+    { "name": "curator_risk_monitor", "description": "Liquidation risk monitor for curator Morpho positions" },
+    { "name": "stress_test_vault", "description": "Withdrawal stress test for MetaVaults (liquidity waterfall)" },
+    { "name": "plan_rollover", "description": "Position rollover planner for expiring MetaVault positions" },
+    { "name": "curator_portfolio", "description": "Multi-vault curator portfolio aggregation" }
   ]
 }

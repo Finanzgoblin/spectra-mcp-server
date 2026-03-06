@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-This is a well-architected, well-documented MCP server with 25 tools across 10 blockchain networks. The codebase demonstrates strong domain knowledge and thoughtful agentic design (competing interpretations, observation coverage, cross-tool references). The test suite is multi-layered and meaningfully rigorous.
+This is a well-architected, well-documented MCP server with 37 tools across 10 blockchain networks. The codebase demonstrates strong domain knowledge and thoughtful agentic design (competing interpretations, observation coverage, cross-tool references). The test suite is multi-layered and meaningfully rigorous.
 
 That said, the review surfaced **6 likely bugs**, **2 security concerns**, **8 code quality issues**, and **several test coverage gaps**. The most impactful are the hardcoded 18-decimal assumption in onchain.ts (wrong values for USDC), floating-point precision loss in BigInt conversions, and the response body double-consumption bug in api.ts.
 
