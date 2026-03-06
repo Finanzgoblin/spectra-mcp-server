@@ -185,7 +185,7 @@ async function testToolRegistration(client) {
   const tools = await client.listTools();
   const names = tools.map((t) => t.name);
 
-  assert(tools.length === 37, "exactly 37 tools registered", `got ${tools.length}: ${names.join(", ")}`);
+  assert(tools.length === 38, "exactly 38 tools registered", `got ${tools.length}: ${names.join(", ")}`);
 
   const expected = [
     "get_pt_details",
@@ -225,6 +225,7 @@ async function testToolRegistration(client) {
     "stress_test_vault",
     "plan_rollover",
     "curator_portfolio",
+    "get_expiring_pools",
   ];
 
   for (const name of expected) {
@@ -2189,6 +2190,96 @@ async function testGetOnchainActivity(client) {
   );
 }
 
+async function testGetExpiringPools(client) {
+  console.log("\n--- get_expiring_pools ---");
+
+  // Default call — scan all chains, 21-day threshold
+  const { text } = await client.callTool("get_expiring_pools", {}, 60_000);
+  // Should return valid output (either expiring pools or "No pools expiring")
+  assert(
+    text.includes("Expiring Pools") || text.includes("No pools expiring"),
+    "returns valid response",
+    `unexpected output: ${text.slice(0, 150)}`
+  );
+
+  // If there are expiring pools, check structure
+  if (text.includes("Expiring Pools")) {
+    assert(text.includes("CRITICAL") || text.includes("WARNING") || text.includes("ALERT"),
+      "has urgency labels", "missing urgency grouping");
+    assert(text.includes("PT Address"), "has PT address", "missing PT address");
+    assert(text.includes("IBT:"), "has IBT info", "missing IBT info");
+    assert(text.includes("Chain ID:"), "has chain ID", "missing chain ID");
+    assert(text.includes("Action Items"), "has action items section", "missing action items");
+    assert(text.includes("Successor Pool Planning"), "has successor planning section", "missing successor section");
+  }
+
+  // Compact mode
+  const { text: compact } = await client.callTool("get_expiring_pools", {
+    compact: true,
+  }, 60_000);
+  assert(
+    compact.includes("Expiring Pools") || compact.includes("No pools expiring"),
+    "compact mode returns valid response",
+    `unexpected: ${compact.slice(0, 150)}`
+  );
+  if (compact.includes("Expiring Pools")) {
+    assert(compact.includes("Urgency"), "compact has table header", "missing table header");
+  }
+
+  // Very short threshold — should return empty or very few
+  const { text: short } = await client.callTool("get_expiring_pools", {
+    threshold_days: 1,
+  }, 60_000);
+  assert(
+    short.includes("Expiring Pools") || short.includes("No pools expiring"),
+    "1-day threshold returns valid response",
+    `unexpected: ${short.slice(0, 150)}`
+  );
+
+  // Very long threshold — should find more pools
+  const { text: long } = await client.callTool("get_expiring_pools", {
+    threshold_days: 180,
+  }, 60_000);
+  assert(
+    long.includes("Expiring Pools") || long.includes("No pools expiring"),
+    "180-day threshold returns valid response",
+    `unexpected: ${long.slice(0, 150)}`
+  );
+
+  // If both short and long returned pools, long should have >= short count
+  const shortCount = (short.match(/PT Address:/g) || []).length;
+  const longCount = (long.match(/PT Address:/g) || []).length;
+  if (shortCount > 0 && longCount > 0) {
+    assert(longCount >= shortCount, "longer threshold finds >= pools", `${longCount} < ${shortCount}`);
+  }
+
+  // Single chain filter
+  const { text: chainFilter } = await client.callTool("get_expiring_pools", {
+    threshold_days: 365,
+    chain: "mainnet",
+  }, 60_000);
+  assert(
+    chainFilter.includes("Expiring Pools") || chainFilter.includes("No pools expiring"),
+    "chain filter returns valid response",
+    `unexpected: ${chainFilter.slice(0, 150)}`
+  );
+  // If it found pools, verify they're all on mainnet (no other chain names in pool entries)
+  if (chainFilter.includes("Expiring Pools") && chainFilter.includes("on mainnet")) {
+    assert(!chainFilter.includes("Chain ID: 8453"), "mainnet filter excludes base (8453)", "found base chain in mainnet-only results");
+  }
+
+  // High TVL filter
+  const { text: highTvl } = await client.callTool("get_expiring_pools", {
+    threshold_days: 365,
+    min_tvl_usd: 999999999999,
+  }, 60_000);
+  assert(
+    highTvl.includes("No pools expiring"),
+    "extreme TVL filter returns empty",
+    `expected no pools with TVL > $999B: ${highTvl.slice(0, 150)}`
+  );
+}
+
 async function testMalformedAddresses(client) {
   console.log("\n--- Malformed address validation ---");
 
@@ -2350,6 +2441,9 @@ async function main() {
 
       // On-chain activity (eth_getLogs)
       await testGetOnchainActivity(client);
+
+      // Expiry monitor
+      await testGetExpiringPools(client);
 
       // Validation / negative tests
       await testMalformedAddresses(client);
