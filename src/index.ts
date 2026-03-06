@@ -62,6 +62,7 @@ import { register as registerOnchain } from "./tools/onchain.js";
 import { register as registerCapacity } from "./tools/capacity.js";
 import { register as registerIbtHealth } from "./tools/ibt_health.js";
 import { register as registerYieldCurve } from "./tools/yield_curve.js";
+import { register as registerRiskMonitor } from "./tools/risk_monitor.js";
 
 // =============================================================================
 // MCP Server Setup
@@ -92,6 +93,7 @@ registerOnchain(server);
 registerCapacity(server);
 registerIbtHealth(server);
 registerYieldCurve(server);
+registerRiskMonitor(server);
 
 // =============================================================================
 // Resources: Protocol context for agents
