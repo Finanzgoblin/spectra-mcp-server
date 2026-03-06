@@ -12,9 +12,23 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, SUPPORTED_CHAINS } from "../config.js";
-import { scanAllChainPools } from "../api.js";
+import { scanAllChainPools, fetchSpectra } from "../api.js";
 import { formatDate, daysToMaturity, formatPct, formatUsd } from "../formatters.js";
 import type { RawPoolOpportunity } from "../types.js";
+
+/** Fetch pool addresses that have gauges from the governance API */
+async function fetchGaugePoolAddresses(): Promise<Set<string>> {
+  try {
+    const data = (await fetchSpectra("/governance/voting-incentives")) as any[];
+    const addrs = new Set<string>();
+    for (const entry of data) {
+      if (entry.address) addrs.add(entry.address.toLowerCase());
+    }
+    return addrs;
+  } catch {
+    return new Set(); // best-effort — don't block on gauge fetch failure
+  }
+}
 
 interface ExpiringPool {
   name: string;
@@ -44,6 +58,7 @@ interface SuccessorPool {
   daysLeft: number;
   impliedApy: number;
   tvlUsd: number;
+  hasGauge: boolean;
 }
 
 function urgencyLabel(days: number): string {
@@ -110,12 +125,11 @@ Use list_pools to check if a successor pool has already been created.`,
     },
     async ({ threshold_days, chain, min_tvl_usd, compact }) => {
       try {
-        // Scan all chains — we want pools that ARE about to expire,
-        // so use min TVL/liquidity of 0 and filter later
-        const { opportunities, failedChains } = await scanAllChainPools({
-          min_tvl_usd: 0,
-          min_liquidity_usd: 0,
-        });
+        // Scan all chains + fetch gauge list in parallel
+        const [{ opportunities, failedChains }, gaugePoolAddrs] = await Promise.all([
+          scanAllChainPools({ min_tvl_usd: 0, min_liquidity_usd: 0 }),
+          fetchGaugePoolAddresses(),
+        ]);
 
         // Filter to expiring pools within threshold
         const now = Date.now() / 1000;
@@ -173,6 +187,9 @@ Use list_pools to check if a successor pool has already been created.`,
           const key = `${ibtAddr}:${opp.chain}`;
           if (!ibtSuccessors.has(key)) ibtSuccessors.set(key, []);
           const days = daysToMaturity(opp.pt.maturity);
+          // Gauge detection: pool address present in governance voting-incentives endpoint
+          const poolAddr = opp.pool.address?.toLowerCase() || "";
+          const hasGauge = gaugePoolAddrs.has(poolAddr);
           ibtSuccessors.get(key)!.push({
             name: opp.pt.name,
             chain: opp.chain,
@@ -181,6 +198,7 @@ Use list_pools to check if a successor pool has already been created.`,
             daysLeft: days,
             impliedApy: opp.pool.impliedApy || 0,
             tvlUsd: opp.pt.tvl?.usd || 0,
+            hasGauge,
           });
         }
         // Sort each group by maturity (nearest first)
@@ -255,7 +273,7 @@ Use list_pools to check if a successor pool has already been created.`,
             const ul = p.underlyingSymbol.padEnd(10);
             const ibt = p.ibtSymbol.slice(0, 15).padEnd(15);
             const succs = getSuccessors(p);
-            const succFlag = succs.length > 0 ? ` YES` : `  NO`;
+            const succFlag = succs.length === 0 ? `  NO` : succs[0].hasGauge ? ` Y+G` : ` Y-G`;
             const addr =
               p.ptAddress.slice(0, 6) + "..." + p.ptAddress.slice(-4);
             lines.push(
@@ -296,8 +314,9 @@ Use list_pools to check if a successor pool has already been created.`,
               const succs = getSuccessors(p);
               if (succs.length > 0) {
                 const s = succs[0]; // nearest successor
+                const gaugeTag = s.hasGauge ? "gauge YES" : "gauge NO";
                 lines.push(
-                  `  Successor: YES — ${s.name} maturing ${s.maturityDate} (${s.daysLeft}d), APY ${formatPct(s.impliedApy)}, TVL ${formatUsd(s.tvlUsd)}`
+                  `  Successor: YES — ${s.name} maturing ${s.maturityDate} (${s.daysLeft}d), APY ${formatPct(s.impliedApy)}, TVL ${formatUsd(s.tvlUsd)}, ${gaugeTag}`
                 );
                 if (succs.length > 1) {
                   lines.push(
@@ -355,8 +374,9 @@ Use list_pools to check if a successor pool has already been created.`,
 
             if (succs.length > 0) {
               const s = succs[0];
+              const gaugeTag = s.hasGauge ? "gauge YES" : "gauge NO — needs proposal";
               hasSuccessor.push(
-                `• ${earliest.ibtSymbol} on ${earliest.chain}: ${pools.length} expiring pool${pools.length === 1 ? "" : "s"} — successor exists: ${s.name} (${s.maturityDate}, ${s.daysLeft}d, APY ${formatPct(s.impliedApy)})`
+                `• ${earliest.ibtSymbol} on ${earliest.chain}: ${pools.length} expiring pool${pools.length === 1 ? "" : "s"} — successor exists: ${s.name} (${s.maturityDate}, ${s.daysLeft}d, APY ${formatPct(s.impliedApy)}, ${gaugeTag})`
               );
             } else {
               needsCreation.push(
