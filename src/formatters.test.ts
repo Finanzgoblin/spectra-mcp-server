@@ -31,6 +31,9 @@ import {
   matchByAssetAndMaturity,
   formatMetavaultStrategy,
   formatCuratorDashboard,
+  formatObservationCoverage,
+  ROUTER_BATCHABLE_TYPES,
+  ROUTER_BATCH_FOOTNOTE,
 } from "./formatters.js";
 import type { SpectraPt, SpectraPool, PendleMarket } from "./types.js";
 
@@ -787,6 +790,44 @@ describe("detectActivityCycles", () => {
     assert.equal(result!.totalValueUsd, 900); // 3 * (100+200)
     assert.equal(result!.avgValueUsd, 300);   // 900 / 3
   });
+
+  it("populates temporal fields when timestamps are provided", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const te = (type: string, ts: number) => ({ type, valueUsd: 100, timestamp: ts });
+    // 4 cycles of ADD→SELL, with a 20-day gap between cycles 2 and 3
+    const entries = [
+      te("AMM_ADD_LIQUIDITY", now - 60 * 86400), te("SELL_PT", now - 59 * 86400),
+      te("AMM_ADD_LIQUIDITY", now - 50 * 86400), te("SELL_PT", now - 49 * 86400),
+      // 20-day gap here
+      te("AMM_ADD_LIQUIDITY", now - 30 * 86400), te("SELL_PT", now - 29 * 86400),
+      te("AMM_ADD_LIQUIDITY", now - 5 * 86400),  te("SELL_PT", now - 4 * 86400),
+    ];
+    const result = detectActivityCycles(entries);
+    assert.ok(result !== null);
+    assert.ok(result!.firstOccurrenceTs !== null, "Should have firstOccurrenceTs");
+    assert.ok(result!.lastOccurrenceTs !== null, "Should have lastOccurrenceTs");
+    assert.ok(result!.maxGapBetweenCyclesSec !== null, "Should have maxGapBetweenCyclesSec");
+    // First cycle starts at now-60d
+    assert.equal(result!.firstOccurrenceTs, now - 60 * 86400);
+    // Last cycle starts at now-5d
+    assert.equal(result!.lastOccurrenceTs, now - 5 * 86400);
+    // Max gap should be ~20-25 days (between cycle 2 and cycle 3, accounting for greedy match positions)
+    const maxGapDays = Math.round(result!.maxGapBetweenCyclesSec! / 86400);
+    assert.ok(maxGapDays >= 15 && maxGapDays <= 30, `Max gap should be ~20-25 days, got ${maxGapDays}`);
+  });
+
+  it("temporal fields are null when no timestamps provided", () => {
+    const entries = [
+      entry("SELL_PT"), entry("SELL_PT"),
+      entry("SELL_PT"), entry("SELL_PT"),
+      entry("SELL_PT"), entry("SELL_PT"),
+    ];
+    const result = detectActivityCycles(entries);
+    assert.ok(result !== null);
+    assert.equal(result!.firstOccurrenceTs, null, "Should be null without timestamps");
+    assert.equal(result!.lastOccurrenceTs, null, "Should be null without timestamps");
+    assert.equal(result!.maxGapBetweenCyclesSec, null, "Should be null without timestamps");
+  });
 });
 
 // =============================================================================
@@ -802,6 +843,9 @@ describe("formatCycleAnalysis", () => {
       avgValueUsd: 1500,
       coverageFraction: 0.85,
       uncoveredCount: 4,
+      firstOccurrenceTs: null,
+      lastOccurrenceTs: null,
+      maxGapBetweenCyclesSec: null,
     };
     const lines = formatCycleAnalysis(cycle, 15000);
     assert.ok(lines.length >= 3);
@@ -823,6 +867,9 @@ describe("formatCycleAnalysis", () => {
       avgValueUsd: 500,
       coverageFraction: 0.9,
       uncoveredCount: 2,
+      firstOccurrenceTs: null,
+      lastOccurrenceTs: null,
+      maxGapBetweenCyclesSec: null,
     };
     const lines = formatCycleAnalysis(cycle, 6000);
     const joined = lines.join("\n");
@@ -837,6 +884,9 @@ describe("formatCycleAnalysis", () => {
       avgValueUsd: 2000,
       coverageFraction: 0.8,
       uncoveredCount: 3,
+      firstOccurrenceTs: null,
+      lastOccurrenceTs: null,
+      maxGapBetweenCyclesSec: null,
     };
     const lines = formatCycleAnalysis(cycle, 12000);
     const joined = lines.join("\n");
@@ -851,10 +901,72 @@ describe("formatCycleAnalysis", () => {
       avgValueUsd: 1000,
       coverageFraction: 0.8,
       uncoveredCount: 2,
+      firstOccurrenceTs: null,
+      lastOccurrenceTs: null,
+      maxGapBetweenCyclesSec: null,
     };
     const lines = formatCycleAnalysis(cycle, 5000);
     const joined = lines.join("\n");
     assert.ok(joined.includes("2 txn(s) outside"), "Should mention uncovered transactions");
+  });
+
+  it("shows staleness warning when pattern last seen >30 days ago", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const cycle = {
+      pattern: ["SELL_PT", "SELL_PT"],
+      count: 6,
+      totalValueUsd: 6000,
+      avgValueUsd: 1000,
+      coverageFraction: 0.9,
+      uncoveredCount: 1,
+      firstOccurrenceTs: now - 90 * 86400,  // 90 days ago
+      lastOccurrenceTs: now - 45 * 86400,   // 45 days ago
+      maxGapBetweenCyclesSec: null,
+    };
+    const lines = formatCycleAnalysis(cycle, 7000);
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("may no longer be active"), "Should warn about stale pattern");
+    assert.ok(joined.includes("Timespan"), "Should show timespan");
+  });
+
+  it("shows gap warning when pattern spans >14 day gap between cycles", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const cycle = {
+      pattern: ["BUY_PT", "BUY_PT"],
+      count: 6,
+      totalValueUsd: 6000,
+      avgValueUsd: 1000,
+      coverageFraction: 0.85,
+      uncoveredCount: 2,
+      firstOccurrenceTs: now - 60 * 86400,  // 60 days ago
+      lastOccurrenceTs: now - 2 * 86400,    // 2 days ago (recent, no staleness warning)
+      maxGapBetweenCyclesSec: 30 * 86400,   // 30-day gap between consecutive cycles
+    };
+    const lines = formatCycleAnalysis(cycle, 7000);
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("pre-gap and post-gap occurrences may be unrelated"), "Should warn about temporal gap");
+    assert.ok(joined.includes("30-day gap"), "Should show gap duration");
+    assert.ok(!joined.includes("may no longer be active"), "Should NOT show staleness warning since pattern is recent");
+  });
+
+  it("shows timespan without warnings for recent, continuous patterns", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const cycle = {
+      pattern: ["SELL_PT", "BUY_PT"],
+      count: 8,
+      totalValueUsd: 8000,
+      avgValueUsd: 1000,
+      coverageFraction: 0.9,
+      uncoveredCount: 1,
+      firstOccurrenceTs: now - 7 * 86400,   // 7 days ago
+      lastOccurrenceTs: now - 1 * 86400,    // 1 day ago
+      maxGapBetweenCyclesSec: 2 * 86400,    // 2-day max gap (small)
+    };
+    const lines = formatCycleAnalysis(cycle, 9000);
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("Timespan"), "Should show timespan");
+    assert.ok(!joined.includes("may no longer be active"), "Should NOT show staleness warning");
+    assert.ok(!joined.includes("pre-gap and post-gap"), "Should NOT show gap warning");
   });
 });
 
@@ -1386,5 +1498,192 @@ describe("formatCuratorDashboard — protocol tags", () => {
       positions: [],
     });
     assert.ok(result.includes("scan_curator_opportunities"), "should mention cross-protocol scanner");
+  });
+});
+
+// =============================================================================
+// ROUTER_BATCHABLE_TYPES
+// =============================================================================
+
+describe("ROUTER_BATCHABLE_TYPES", () => {
+  it("includes BUY_PT, SELL_PT, AMM_ADD_LIQUIDITY but not AMM_REMOVE_LIQUIDITY", () => {
+    assert.ok(ROUTER_BATCHABLE_TYPES.has("BUY_PT"));
+    assert.ok(ROUTER_BATCHABLE_TYPES.has("SELL_PT"));
+    assert.ok(ROUTER_BATCHABLE_TYPES.has("AMM_ADD_LIQUIDITY"));
+    assert.ok(!ROUTER_BATCHABLE_TYPES.has("AMM_REMOVE_LIQUIDITY"));
+  });
+
+  it("footnote starts with dagger symbol", () => {
+    assert.ok(ROUTER_BATCH_FOOTNOTE.startsWith("†"), "Footnote should start with †");
+  });
+});
+
+// =============================================================================
+// formatObservationCoverage
+// =============================================================================
+
+describe("formatObservationCoverage", () => {
+  it("reports 0% value coverage when position exists but no activity observed", () => {
+    const lines = formatObservationCoverage({
+      totalActivityVolumeUsd: 0,
+      currentPositionValueUsd: 50000,
+      entryTimestamps: [],
+      portfolioFetched: true,
+      poolContextFetched: true,
+      distinctActivityTypes: 0,
+    });
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("Value Coverage: 0%"), "Should show 0% value coverage");
+    assert.ok(joined.includes("no observable pool activity"), "Should note no observable activity");
+    assert.ok(joined.includes("invisible to this tool"), "Should mention invisible channels");
+    assert.ok(joined.includes("Observation Coverage"), "Should have header");
+  });
+
+  it("reports partial (~40%) value coverage when activity explains less than half the position", () => {
+    const lines = formatObservationCoverage({
+      totalActivityVolumeUsd: 20000,
+      currentPositionValueUsd: 50000,
+      entryTimestamps: [1700000000, 1700100000],
+      portfolioFetched: true,
+      poolContextFetched: true,
+      distinctActivityTypes: 2,
+    });
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("Value Coverage: 40%"), "Should show 40% value coverage");
+    assert.ok(joined.includes("explains less than half"), "Should flag less-than-half coverage");
+    assert.ok(joined.includes("invisible activity"), "Should mention invisible activity");
+  });
+
+  it("reports 100% value coverage when activity roughly matches position", () => {
+    const lines = formatObservationCoverage({
+      totalActivityVolumeUsd: 50000,
+      currentPositionValueUsd: 50000,
+      entryTimestamps: [1700000000, 1700200000, 1700400000],
+      portfolioFetched: true,
+      poolContextFetched: true,
+      distinctActivityTypes: 3,
+    });
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("Value Coverage: 100%"), "Should show 100% value coverage");
+    assert.ok(joined.includes("roughly matches"), "Should say activity roughly matches position");
+  });
+
+  it("reports capital recycling when activity volume greatly exceeds position", () => {
+    const lines = formatObservationCoverage({
+      totalActivityVolumeUsd: 200000,
+      currentPositionValueUsd: 10000,
+      entryTimestamps: [1700000000, 1700100000],
+      portfolioFetched: true,
+      poolContextFetched: true,
+      distinctActivityTypes: 2,
+    });
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("2000%"), "Should show high value coverage percentage");
+    assert.ok(joined.includes("significantly exceeds"), "Should flag activity exceeding position");
+    assert.ok(joined.includes("capital recycling") || joined.includes("round-trips"), "Should mention capital recycling or round-trips");
+  });
+
+  it("reports missing data sources when not all tools consulted", () => {
+    const lines = formatObservationCoverage({
+      totalActivityVolumeUsd: 10000,
+      currentPositionValueUsd: 10000,
+      entryTimestamps: [1700000000, 1700100000],
+      portfolioFetched: false,
+      poolContextFetched: false,
+      onchainConsulted: false,
+      crossChainConsulted: false,
+      distinctActivityTypes: 2,
+    });
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("Data Sources:"), "Should have Data Sources section");
+    assert.ok(joined.includes("1/5"), "Should show 1/5 sources consulted (only pool activity)");
+    assert.ok(joined.includes("Not consulted:"), "Should list unconsulted sources");
+    assert.ok(joined.includes("portfolio"), "Should list portfolio as not consulted");
+    assert.ok(joined.includes("on-chain events"), "Should list on-chain events as not consulted");
+    assert.ok(joined.includes("cross-chain scan"), "Should list cross-chain scan as not consulted");
+  });
+
+  it("reports temporal gaps when dark periods exist between entries", () => {
+    const base = 1700000000;
+    const lines = formatObservationCoverage({
+      totalActivityVolumeUsd: 30000,
+      currentPositionValueUsd: 30000,
+      entryTimestamps: [
+        base,
+        base + 86400,
+        base + 86400 * 25,
+      ],
+      portfolioFetched: true,
+      poolContextFetched: true,
+      distinctActivityTypes: 2,
+    });
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("Temporal Coverage:"), "Should have Temporal Coverage section");
+    assert.ok(joined.includes("active on"), "Should report active days");
+    assert.ok(joined.includes("dark period"), "Should report longest dark period");
+  });
+
+  it("reports all data sources as used when all tools consulted", () => {
+    const lines = formatObservationCoverage({
+      totalActivityVolumeUsd: 10000,
+      currentPositionValueUsd: 10000,
+      entryTimestamps: [1700000000],
+      portfolioFetched: true,
+      poolContextFetched: true,
+      onchainConsulted: true,
+      crossChainConsulted: true,
+      distinctActivityTypes: 2,
+    });
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("Data Sources:"), "Should have Data Sources section");
+    assert.ok(joined.includes("5/5"), "Should show 5/5 sources consulted");
+    assert.ok(joined.includes("pool activity"), "Used sources should include pool activity");
+    assert.ok(joined.includes("portfolio"), "Used sources should include portfolio");
+    assert.ok(joined.includes("pool context"), "Used sources should include pool context");
+    assert.ok(joined.includes("on-chain events"), "Used sources should include on-chain events");
+    assert.ok(joined.includes("cross-chain scan"), "Used sources should include cross-chain scan");
+  });
+});
+
+// =============================================================================
+// formatCycleAnalysis — statistical insufficiency threshold
+// =============================================================================
+
+describe("formatCycleAnalysis — statistical insufficiency threshold", () => {
+  it("includes 'Do not extrapolate' warning when cycle count is 5", () => {
+    const cycle = {
+      pattern: ["AMM_ADD_LIQUIDITY", "SELL_PT"],
+      count: 5,
+      totalValueUsd: 5000,
+      avgValueUsd: 1000,
+      coverageFraction: 0.9,
+      uncoveredCount: 1,
+      firstOccurrenceTs: null,
+      lastOccurrenceTs: null,
+      maxGapBetweenCyclesSec: null,
+    };
+    const lines = formatCycleAnalysis(cycle, 6000);
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("Do not extrapolate"), "Should include 'Do not extrapolate' warning for count=5");
+    assert.ok(joined.includes("Insufficient"), "Should include 'Insufficient' language for count=5");
+    assert.ok(joined.includes("5 repetitions"), "Should mention exact count of 5");
+  });
+
+  it("omits 'Do not extrapolate' warning when cycle count is 6", () => {
+    const cycle = {
+      pattern: ["AMM_ADD_LIQUIDITY", "SELL_PT"],
+      count: 6,
+      totalValueUsd: 6000,
+      avgValueUsd: 1000,
+      coverageFraction: 0.92,
+      uncoveredCount: 1,
+      firstOccurrenceTs: null,
+      lastOccurrenceTs: null,
+      maxGapBetweenCyclesSec: null,
+    };
+    const lines = formatCycleAnalysis(cycle, 7000);
+    const joined = lines.join("\n");
+    assert.ok(!joined.includes("Do not extrapolate"), "Should NOT include 'Do not extrapolate' warning for count=6");
+    assert.ok(!joined.includes("Insufficient"), "Should NOT include 'Insufficient' language for count=6");
   });
 });

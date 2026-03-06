@@ -983,6 +983,14 @@ export function formatActivityType(type: string): string {
   return ACTIVITY_TYPES[type] || type;
 }
 
+// Types that may be one step of a Router-batched operation (flash-mint, flash-redeem,
+// or batched mint+LP). AMM_REMOVE_LIQUIDITY is always direct — not Router-batched.
+export const ROUTER_BATCHABLE_TYPES = new Set(["BUY_PT", "SELL_PT", "AMM_ADD_LIQUIDITY"]);
+
+// Footnote text for Router-batching marker on activity rows.
+export const ROUTER_BATCH_FOOTNOTE =
+  "† May be one step of a Router-batched operation (flash-mint, flash-redeem, or batched mint+LP).";
+
 // =============================================================================
 // Activity Sequence / Cycle Detection
 // =============================================================================
@@ -1001,6 +1009,12 @@ export interface ActivityCycleResult {
   coverageFraction: number;
   /** Remaining entries not part of any detected cycle */
   uncoveredCount: number;
+  /** Timestamp of the first event in the earliest detected cycle (Unix seconds) */
+  firstOccurrenceTs: number | null;
+  /** Timestamp of the first event in the most recent detected cycle (Unix seconds) */
+  lastOccurrenceTs: number | null;
+  /** Largest temporal gap (seconds) between consecutive cycle instances */
+  maxGapBetweenCyclesSec: number | null;
 }
 
 /**
@@ -1014,12 +1028,13 @@ export interface ActivityCycleResult {
  * a mint→LP→unwind loop, but the tool never says "is."
  */
 export function detectActivityCycles(
-  entries: Array<{ type: string; valueUsd: number }>,
+  entries: Array<{ type: string; valueUsd: number; timestamp?: number }>,
 ): ActivityCycleResult | null {
   if (entries.length < 6) return null; // need at least 3 repetitions of a 2-action cycle
 
   const types = entries.map(e => e.type);
   let bestResult: ActivityCycleResult | null = null;
+  let bestMatchPositions: number[] = []; // starting indices of matched cycles
 
   // Try cycle lengths 2 through 5
   for (let cycleLen = 2; cycleLen <= Math.min(5, Math.floor(types.length / 3)); cycleLen++) {
@@ -1031,10 +1046,12 @@ export function detectActivityCycles(
       let matchCount = 0;
       let totalVal = 0;
       let pos = offset;
+      const matchPositions: number[] = [];
       while (pos + cycleLen <= types.length) {
         const slice = types.slice(pos, pos + cycleLen);
         if (slice.every((t, i) => t === candidate[i])) {
           matchCount++;
+          matchPositions.push(pos);
           for (let k = pos; k < pos + cycleLen; k++) {
             totalVal += entries[k].valueUsd || 0;
           }
@@ -1057,7 +1074,34 @@ export function detectActivityCycles(
           avgValueUsd: totalVal / matchCount,
           coverageFraction: coverageFrac,
           uncoveredCount: types.length - covered,
+          firstOccurrenceTs: null,
+          lastOccurrenceTs: null,
+          maxGapBetweenCyclesSec: null,
         };
+        bestMatchPositions = matchPositions;
+      }
+    }
+  }
+
+  // Populate temporal fields from matched cycle positions
+  if (bestResult && bestMatchPositions.length > 0) {
+    const cycleLen = bestResult.pattern.length;
+    const cycleTimestamps = bestMatchPositions
+      .map(pos => entries[pos]?.timestamp)
+      .filter((t): t is number => t != null && t > 0);
+
+    if (cycleTimestamps.length > 0) {
+      bestResult.firstOccurrenceTs = cycleTimestamps[0];
+      bestResult.lastOccurrenceTs = cycleTimestamps[cycleTimestamps.length - 1];
+
+      // Compute max gap between consecutive cycle start timestamps
+      if (cycleTimestamps.length >= 2) {
+        let maxGap = 0;
+        for (let i = 1; i < cycleTimestamps.length; i++) {
+          const gap = cycleTimestamps[i] - cycleTimestamps[i - 1];
+          if (gap > maxGap) maxGap = gap;
+        }
+        bestResult.maxGapBetweenCyclesSec = maxGap;
       }
     }
   }
@@ -1088,6 +1132,27 @@ export function formatCycleAnalysis(
 
   if (cycle.uncoveredCount > 0) {
     lines.push(`    Uncovered: ${cycle.uncoveredCount} txn(s) outside detected pattern`);
+  }
+
+  // Temporal context — when was this pattern active?
+  if (cycle.firstOccurrenceTs && cycle.lastOccurrenceTs) {
+    const now = Math.floor(Date.now() / 1000);
+    const daysSinceFirst = Math.round((now - cycle.firstOccurrenceTs) / 86400);
+    const daysSinceLast = Math.round((now - cycle.lastOccurrenceTs) / 86400);
+    lines.push(`    Timespan: first ${formatDate(cycle.firstOccurrenceTs)} (${daysSinceFirst}d ago) → last ${formatDate(cycle.lastOccurrenceTs)} (${daysSinceLast}d ago)`);
+
+    // Staleness warning — pattern last seen >30 days ago
+    if (daysSinceLast > 30) {
+      lines.push(`    ⚠ Pattern last observed ${daysSinceLast} days ago — may no longer be active.`);
+    }
+
+    // Gap warning — pattern spans a temporal gap >14 days between consecutive cycles
+    if (cycle.maxGapBetweenCyclesSec != null) {
+      const maxGapDays = Math.round(cycle.maxGapBetweenCyclesSec / 86400);
+      if (maxGapDays > 14) {
+        lines.push(`    ⚠ Pattern spans a ${maxGapDays}-day gap between consecutive cycles — pre-gap and post-gap occurrences may be unrelated.`);
+      }
+    }
   }
 
   // Statistical confidence boundary
