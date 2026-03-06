@@ -258,6 +258,21 @@ The looping tool's P(underwater) via normal CDF on 30-day history (`looping.ts:3
 
 ---
 
+## Test Coverage Gaps
+
+The test infrastructure is strong (192 unit, 82 agent, 405 integration, 38 subjective = 717 total) but has specific gaps in emergence pattern testing:
+
+| Gap | Location | Impact | Recommendation |
+|-----|----------|--------|----------------|
+| No unit tests for `formatObservationCoverage()` | `formatters.ts:1298-1441` | Regression risk if refactored; coverage dimensions (value%, temporal%, source%) untested | Add 4-6 tests covering boundary conditions (0%, 50%, 100% coverage) |
+| No explicit test for statistical insufficiency threshold | `formatters.ts:642-643` | The "Do not extrapolate" ≤5 threshold is only implicitly tested via `detectActivityCycles` | Add dedicated test verifying warning text appears at N=5, absent at N=6 |
+| No agent test for observation coverage reporting | `test-agent.cjs` | Agents may treat incomplete coverage as complete without explicit flags | Add `testObservationCoverageReporting()` |
+| No agent test for insufficient evidence preservation | `test-agent.cjs` | Sparse activity (<5 events) should still appear with insufficiency warning | Add `testInsufficientEvidencePreservation()` |
+
+**Note:** The `formatFlowAccounting` mixed PT/YT case (lines 1252-1263) doesn't enumerate explicit A/B/C branches like other position shapes. Minor inconsistency — ratio analysis is adequate but less structured than YT-only or PT-only cases.
+
+---
+
 ## Recommendations (Priority Order)
 
 ### P1 (Should do)
@@ -266,17 +281,19 @@ The looping tool's P(underwater) via normal CDF on 30-day history (`looping.ts:3
 
 2. **Add per-event Router notes** (Gap 1) — One-line `(may be Router-batched)` on BUY_PT/SELL_PT/AMM_ADD_LIQUIDITY rows. Reduces agent cognitive load.
 
+3. **Close test coverage gaps** — Add unit tests for `formatObservationCoverage()` and statistical insufficiency threshold. Add agent tests for coverage reporting and insufficient evidence preservation.
+
 ### P2 (Nice to have)
 
-3. **Cross-pool temporal correlation** (Gap 6) — Detect sequential capital movement across pools. Present as hypothesis.
+4. **Cross-pool temporal correlation** (Gap 6) — Detect sequential capital movement across pools. Present as hypothesis.
 
-4. **Incentive expiration tracking** — If Merkl API exposes campaign end dates, surface them. Currently blocked on API data availability.
+5. **Incentive expiration tracking** — If Merkl API exposes campaign end dates, surface them. Currently blocked on API data availability.
 
 ### P3 (Defer)
 
-5. **Liquidity trending** (Gap 3) — Blocked on API not providing historical liquidity snapshots. Mark as API-dependent.
+6. **Liquidity trending** (Gap 3) — Blocked on API not providing historical liquidity snapshots. Mark as API-dependent.
 
-6. **Aggregate anomaly score** — Individual flags work well; aggregation risks false confidence in a single number.
+7. **Aggregate anomaly score** — Individual flags work well; aggregation risks false confidence in a single number.
 
 ---
 
