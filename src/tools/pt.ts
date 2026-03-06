@@ -59,10 +59,11 @@ Use get_pool_activity to see trading patterns on this pool.`,
         const chainInfo = SUPPORTED_CHAINS[network];
 
         // Fetch PT data and Merkl campaigns in parallel
-        const [data, merklMap] = await Promise.all([
+        const [data, merklResult] = await Promise.all([
           fetchSpectra(`/${network}/pt/${pt_address}`) as Promise<any>,
-          chainInfo ? fetchMerklCampaigns(chainInfo.id).catch(() => new Map<string, MerklCampaign[]>()) : Promise.resolve(new Map<string, MerklCampaign[]>()),
+          chainInfo ? fetchMerklCampaigns(chainInfo.id).catch(() => ({ campaigns: new Map<string, MerklCampaign[]>(), available: false })) : Promise.resolve({ campaigns: new Map<string, MerklCampaign[]>(), available: true }),
         ]);
+        const merklMap = merklResult.campaigns;
         const pt = parsePtResponse(data);
 
         if (!pt) {
@@ -89,7 +90,10 @@ Use get_pool_activity to see trading patterns on this pool.`,
           `• Capital-aware ranking: scan_opportunities(capital_usd=YOUR_AMOUNT) to see where this PT ranks at your size`,
         ];
 
-        const text = summary + nextSteps.join("\n");
+        let text = summary + nextSteps.join("\n");
+        if (!merklResult.available) {
+          text += `\nNote: Merkl incentive data unavailable — external campaign APR may be missing.`;
+        }
 
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
@@ -148,10 +152,11 @@ Use get_pool_activity on a specific pool to see recent trading patterns.`,
         const chainInfo = SUPPORTED_CHAINS[network];
 
         // Fetch pools and Merkl campaigns in parallel
-        const [raw, merklMap] = await Promise.all([
+        const [raw, merklResult] = await Promise.all([
           fetchSpectra(`/${network}/pools`) as Promise<any>,
-          chainInfo ? fetchMerklCampaigns(chainInfo.id).catch(() => new Map<string, MerklCampaign[]>()) : Promise.resolve(new Map<string, MerklCampaign[]>()),
+          chainInfo ? fetchMerklCampaigns(chainInfo.id).catch(() => ({ campaigns: new Map<string, MerklCampaign[]>(), available: false })) : Promise.resolve({ campaigns: new Map<string, MerklCampaign[]>(), available: true }),
         ]);
+        const merklMap = merklResult.campaigns;
         const pts: SpectraPt[] = raw?.data || raw || [];
 
         if (!Array.isArray(pts) || pts.length === 0) {
@@ -211,7 +216,10 @@ Use get_pool_activity on a specific pool to see recent trading patterns.`,
           `• Capital-aware ranking: scan_opportunities(capital_usd=YOUR_AMOUNT) for cross-chain comparison with price impact`,
         ].join("\n");
 
-        const text = header + "\n" + body + footer;
+        let text = header + "\n" + body + footer;
+        if (!merklResult.available) {
+          text += `\nNote: Merkl incentive data unavailable — external campaign APR may be missing.`;
+        }
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
         const text = `Error listing pools: ${e.message}`;
@@ -349,10 +357,11 @@ check your current positions. Use scan_opportunities for multi-chain comparison.
         const chainInfo = SUPPORTED_CHAINS[network];
 
         // Fetch PT data and Merkl campaigns in parallel
-        const [data, merklMap] = await Promise.all([
+        const [data, merklResult] = await Promise.all([
           fetchSpectra(`/${network}/pt/${pt_address}`) as Promise<any>,
-          chainInfo ? fetchMerklCampaigns(chainInfo.id).catch(() => new Map<string, MerklCampaign[]>()) : Promise.resolve(new Map<string, MerklCampaign[]>()),
+          chainInfo ? fetchMerklCampaigns(chainInfo.id).catch(() => ({ campaigns: new Map<string, MerklCampaign[]>(), available: false })) : Promise.resolve({ campaigns: new Map<string, MerklCampaign[]>(), available: true }),
         ]);
+        const merklMap = merklResult.campaigns;
         const pt = parsePtResponse(data);
 
         if (!pt) {
@@ -484,6 +493,11 @@ check your current positions. Use scan_opportunities for multi-chain comparison.
         lines.push(`• Leverage the spread: get_looping_strategy(chain="${chain}", pt_address="${ptAddr}") for Morpho looping`);
         lines.push(`• Preview portfolio impact: simulate_portfolio_after_trade(chain="${chain}", pt_address="${ptAddr}", address=YOUR_WALLET, amount=YOUR_AMOUNT, side="buy")`);
         lines.push(`• Cross-chain comparison: scan_opportunities(capital_usd=${capital_usd}) to compare this against all opportunities`);
+
+        if (!merklResult.available) {
+          lines.push(``);
+          lines.push(`Note: Merkl incentive data unavailable — external campaign APR may be missing.`);
+        }
 
         const text = lines.join("\n");
         return { content: [{ type: "text" as const, text }] };
