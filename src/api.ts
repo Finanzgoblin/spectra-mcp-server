@@ -17,7 +17,7 @@ import {
   CHAIN_RPC_URLS,
   MAX_LOG_BLOCK_RANGE,
 } from "./config.js";
-import type { MorphoMarket, MorphoMarketSupplier, MorphoVault, MorphoVaultAllocation, MorphoHistoricalDataPoint, SpectraPt, SpectraPool, SpectraMetavault, PendleMarket, RawPoolOpportunity, ChainScanResult, MerklTokenReward, MerklChainRewards, MerklCampaign } from "./types.js";
+import type { MorphoMarket, MorphoMarketSupplier, MorphoVault, MorphoVaultAllocation, MorphoHistoricalDataPoint, SpectraPt, SpectraPool, SpectraMetavault, PendleMarket, RawPoolOpportunity, ChainScanResult, MerklTokenReward, MerklChainRewards, MerklCampaign, LiquidationAlert, RiskAlertLevel } from "./types.js";
 
 // =============================================================================
 // Retry Logic
@@ -637,6 +637,150 @@ export async function fetchMorphoUserPositions(
     console.error(`Morpho user positions fetch failed for ${userAddress}:`, err instanceof Error ? err.message : err);
     return { marketPositions: [], vaultPositions: [] };
   }
+}
+
+// =============================================================================
+// Morpho Position Risk Data (Liquidation Distance Monitor)
+// =============================================================================
+
+/**
+ * Fetch enriched Morpho position data for liquidation distance monitoring.
+ * For each chain with borrowing positions, computes health factor, liquidation price,
+ * and distance to liquidation. Borrow rates are fetched in parallel per chain.
+ *
+ * @param address - Wallet address to inspect
+ * @param chain   - Optional: restrict to a single chain (Spectra network slug). Omit to scan all Morpho chains.
+ * @param alertThresholdPct - Distance-to-liquidation % below which a position is flagged (default 20%)
+ */
+export async function fetchMorphoPositionRiskData(
+  address: string,
+  chain?: string,
+  alertThresholdPct: number = 20,
+): Promise<{ chain: string; positions: LiquidationAlert[] }[]> {
+  // Determine which chains to scan
+  let chainsToScan: Array<{ network: string; chainId: number }>;
+  if (chain) {
+    const network = resolveNetwork(chain);
+    const morphoChainId = MORPHO_CHAIN_IDS[network];
+    if (!morphoChainId) return [];
+    chainsToScan = [{ network, chainId: morphoChainId }];
+  } else {
+    chainsToScan = Object.entries(MORPHO_CHAIN_IDS).map(([network, chainId]) => ({ network, chainId }));
+  }
+
+  // Fetch Spectra PT addresses for tagging (best-effort, parallel with position fetches)
+  const spectraPtAddrs = await fetchSpectraPtAddresses().catch(() => new Set<string>());
+
+  // Fetch positions across all chains in parallel (best-effort)
+  const chainResults = await Promise.allSettled(
+    chainsToScan.map(async ({ network, chainId }): Promise<{ chain: string; positions: LiquidationAlert[] }> => {
+      // Step 1: get raw positions for this chain
+      const raw = await fetchMorphoUserPositions(address, chainId);
+
+      // Step 2: isolate borrowing positions
+      const borrowingPositions = raw.marketPositions.filter((p: any) => (p.borrowAssetsUsd || 0) > 0.01);
+      if (borrowingPositions.length === 0) {
+        return { chain: network, positions: [] };
+      }
+
+      // Step 3: batch-fetch live borrow rates for all markets on this chain
+      const marketKeys = borrowingPositions.map((p: any) => p.market?.uniqueKey).filter(Boolean) as string[];
+      const ratesMap = await fetchMorphoMarketRates(marketKeys, chainId).catch(() =>
+        new Map<string, { borrowApy: number; supplyApy: number; utilization: number; supplyAssetsUsd: number }>()
+      );
+
+      // Step 4: compute risk metrics per position
+      const positions: LiquidationAlert[] = borrowingPositions.map((p: any): LiquidationAlert => {
+        const marketKey: string = p.market?.uniqueKey || "";
+        const collateralSymbol: string = p.market?.collateralAsset?.symbol || "?";
+        const debtSymbol: string = p.market?.loanAsset?.symbol || "?";
+        const collateralUsd: number = p.collateralAssetsUsd || 0;
+        const debtUsd: number = p.borrowAssetsUsd || 0;
+        // collateralAssets is the raw token amount (not USD)
+        const collateralAmount: number = p.collateralAssets || 0;
+
+        const lltv: number = Number(p.market?.lltv || "0") / 1e18;
+
+        // Health factor: (collateralUsd * lltv) / debtUsd
+        const healthFactor: number = debtUsd > 0 ? (collateralUsd * lltv) / debtUsd : Infinity;
+
+        // Current collateral price (USD per token), derived from position data
+        const currentPrice: number = collateralAmount > 0 ? collateralUsd / collateralAmount : 0;
+
+        // Liquidation price: price at which health factor = 1.0
+        // Derived from: collateralAmount * price * lltv = debtUsd  =>  price = debtUsd / (collateralAmount * lltv)
+        const liquidationPrice: number =
+          collateralAmount > 0 && lltv > 0 ? debtUsd / (collateralAmount * lltv) : 0;
+
+        // Distance to liquidation: how far the collateral price must fall before liquidation
+        const distanceToLiquidationPct: number =
+          currentPrice > 0 && liquidationPrice > 0
+            ? (1 - liquidationPrice / currentPrice) * 100
+            : 100; // unknown distance — default safe
+
+        // Borrow rate from batch fetch
+        const rateData = ratesMap.get(marketKey);
+        const currentBorrowRate: number = rateData ? (rateData.borrowApy || 0) * 100 : 0;
+
+        // Determine alert level from distance-to-liquidation and health factor
+        const alertReasons: string[] = [];
+        let alertLevel: RiskAlertLevel = "ok";
+
+        if (distanceToLiquidationPct < 5) {
+          alertLevel = "critical";
+          alertReasons.push(`Only ${distanceToLiquidationPct.toFixed(1)}% price drop to liquidation`);
+        } else if (distanceToLiquidationPct < alertThresholdPct / 2) {
+          alertLevel = "warning";
+          alertReasons.push(`${distanceToLiquidationPct.toFixed(1)}% distance to liquidation (below ${(alertThresholdPct / 2).toFixed(0)}% threshold)`);
+        } else if (distanceToLiquidationPct < alertThresholdPct) {
+          alertLevel = "watch";
+          alertReasons.push(`${distanceToLiquidationPct.toFixed(1)}% distance to liquidation (below ${alertThresholdPct}% threshold)`);
+        }
+
+        if (healthFactor < 1.1 && alertLevel === "ok") {
+          alertLevel = "warning";
+          alertReasons.push(`Health factor ${healthFactor.toFixed(3)} dangerously close to 1.0`);
+        }
+
+        return {
+          marketKey,
+          chain: network,
+          collateralSymbol,
+          debtSymbol,
+          collateralUsd,
+          debtUsd,
+          lltv,
+          healthFactor,
+          liquidationPrice,
+          currentPrice,
+          distanceToLiquidationPct,
+          currentBorrowRate,
+          entryBorrowAssumption: null,  // not available from position data alone
+          borrowRateDrift: null,         // not available without entry-time rate
+          isFullLiquidation: true,       // Morpho has no close factor — entire position at risk
+          isSpectraPt: spectraPtAddrs.has((p.market?.collateralAsset?.address || "").toLowerCase()),
+          isLooper: collateralUsd > 0.01 && debtUsd > 0.01,
+          alertLevel,
+          alertReasons,
+        };
+      });
+
+      return { chain: network, positions };
+    })
+  );
+
+  // Collect fulfilled results; log failures but don't throw
+  const output: { chain: string; positions: LiquidationAlert[] }[] = [];
+  for (const result of chainResults) {
+    if (result.status === "fulfilled") {
+      if (result.value.positions.length > 0) {
+        output.push(result.value);
+      }
+    } else {
+      console.error("fetchMorphoPositionRiskData chain fetch failed:", result.reason instanceof Error ? result.reason.message : result.reason);
+    }
+  }
+  return output;
 }
 
 // =============================================================================
