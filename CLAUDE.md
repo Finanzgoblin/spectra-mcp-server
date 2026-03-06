@@ -36,7 +36,7 @@
 - `src/tools/stress_test.ts` — `stress_test_vault` (withdrawal liquidity waterfall, market stress simulation)
 - `src/tools/rollover.ts` — `plan_rollover` (expiring position rollover planner with cross-protocol candidates)
 - `src/tools/curator_portfolio.ts` — `curator_portfolio` (multi-vault aggregation, AUM, blended APY, concentration)
-- `src/tools/expiry_monitor.ts` — `get_expiring_pools` (scan all chains for pools approaching maturity, urgency grouping, successor pool planning)
+- `src/tools/expiry_monitor.ts` — `get_expiring_pools` (scan all chains for pools approaching maturity, urgency grouping, successor pool cross-reference, gauge status via governance API, readiness assessment)
 
 ## Router-Mediated Transactions & eth_getLogs
 Most user interactions go through the **Spectra Router** (flash-mints, flash-redeems, batched mint+LP). The Router is `msg.sender` on underlying contracts, so event `topics[1]` stores the Router address, NOT the user. This is a fundamental EVM constraint, not a bug.
