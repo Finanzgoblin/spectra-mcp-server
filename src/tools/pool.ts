@@ -7,7 +7,7 @@ import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork, API_NETWORKS, CHAIN_GAS_ESTIMATES } from "../config.js";
 import type { SpectraPt } from "../types.js";
 import { fetchSpectra, fetchAddressType } from "../api.js";
-import { formatUsd, formatDate, formatActivityType, parsePtResponse, detectActivityCycles, formatCycleAnalysis, formatFlowAccounting, formatObservationCoverage, formatBalance, formatVolumeHints } from "../formatters.js";
+import { formatUsd, formatDate, formatActivityType, parsePtResponse, detectActivityCycles, formatCycleAnalysis, formatFlowAccounting, formatObservationCoverage, formatBalance, formatVolumeHints, ROUTER_BATCHABLE_TYPES, ROUTER_BATCH_FOOTNOTE } from "../formatters.js";
 
 /**
  * Resolve a PT address to its Curve pool address.
@@ -661,13 +661,22 @@ has interacted with in a single call.`,
         lines.push(`  ${"Date".padEnd(12)} ${"Type".padEnd(18)} ${"Value (USD)".padEnd(16)} ${"From".padEnd(14)} ${"Tx Hash"}`);
         lines.push(`  ${"--".repeat(40)}`);
 
+        let hasRouterBatchable = false;
         for (const e of shown) {
           const date = formatDate(e.timestamp || 0);
-          const actType = formatActivityType(e.type || "UNKNOWN");
+          const rawType = e.type || "UNKNOWN";
+          const isBatchable = ROUTER_BATCHABLE_TYPES.has(rawType);
+          if (isBatchable) hasRouterBatchable = true;
+          const actType = formatActivityType(rawType) + (isBatchable ? "†" : "");
           const value = formatUsd(e.valueUsd || 0);
           const from = e.from ? `${e.from.slice(0, 6)}...${e.from.slice(-4)}` : "unknown";
           const hash = e.hash ? `${e.hash.slice(0, 10)}...` : "unknown";
           lines.push(`  ${date.padEnd(12)} ${actType.padEnd(18)} ${value.padEnd(16)} ${from.padEnd(14)} ${hash}`);
+        }
+
+        if (hasRouterBatchable) {
+          lines.push(``);
+          lines.push(`  ${ROUTER_BATCH_FOOTNOTE}`);
         }
 
         const text = lines.join("\n");
@@ -730,6 +739,8 @@ one chain. Position sizing should assume this scan is incomplete, not comprehens
           totalValueUsd: number;
           txnCount: number;
           typeCounts: Record<string, { count: number; value: number }>;
+          exitTimestamps: number[];   // AMM_REMOVE_LIQUIDITY, SELL_PT
+          entryTimestamps: number[];  // AMM_ADD_LIQUIDITY, BUY_PT
         }
 
         const allPoolActivities: PoolActivity[] = [];
@@ -812,12 +823,24 @@ one chain. Position sizing should assume this scan is incomplete, not comprehens
                   // Aggregate
                   let totalVal = 0;
                   const types: Record<string, { count: number; value: number }> = {};
+                  const exitTs: number[] = [];
+                  const entryTs: number[] = [];
                   for (const e of filtered) {
                     const val = e.valueUsd || 0;
                     totalVal += val;
                     if (!types[e.type]) types[e.type] = { count: 0, value: 0 };
                     types[e.type].count++;
                     types[e.type].value += val;
+                    // Collect timestamps for temporal correlation
+                    const ts = e.timestamp || 0;
+                    if (ts > 0) {
+                      if (e.type === "AMM_REMOVE_LIQUIDITY" || e.type === "SELL_PT") {
+                        exitTs.push(ts);
+                      }
+                      if (e.type === "AMM_ADD_LIQUIDITY" || e.type === "BUY_PT") {
+                        entryTs.push(ts);
+                      }
+                    }
                   }
 
                   if (totalVal < min_volume_usd) return null;
@@ -832,6 +855,8 @@ one chain. Position sizing should assume this scan is incomplete, not comprehens
                     totalValueUsd: totalVal,
                     txnCount,
                     typeCounts: types,
+                    exitTimestamps: exitTs,
+                    entryTimestamps: entryTs,
                   } satisfies PoolActivity;
                 })
               );
@@ -933,6 +958,90 @@ one chain. Position sizing should assume this scan is incomplete, not comprehens
         lines.push(`    This scan shows pool-level aggregates. For cycle detection, flow accounting, and coverage metrics per pool, use get_pool_activity with address parameter.`);
         lines.push(`    ─────────────────────────────────────────`);
         lines.push(`    Position sizing should assume this scan is incomplete, not comprehensive.`);
+
+        // Cross-Pool Temporal Correlation — detect sequential capital movement
+        if (allPoolActivities.length >= 2) {
+          const ROTATION_WINDOW_SECS = 7 * 86400; // 7 days
+          interface RotationSignal {
+            exitPool: string;
+            exitChain: string;
+            entryPool: string;
+            entryChain: string;
+            gapDays: number;
+          }
+          const rotationSignals: RotationSignal[] = [];
+
+          for (const exitPool of allPoolActivities) {
+            if (exitPool.exitTimestamps.length === 0) continue;
+            for (const entryPool of allPoolActivities) {
+              if (entryPool.poolAddress.toLowerCase() === exitPool.poolAddress.toLowerCase()) continue;
+              if (entryPool.entryTimestamps.length === 0) continue;
+              // For each exit timestamp, check if any entry on entryPool falls within 7 days after
+              for (const exitTs of exitPool.exitTimestamps) {
+                for (const entryTs of entryPool.entryTimestamps) {
+                  const gap = entryTs - exitTs;
+                  if (gap >= 0 && gap <= ROTATION_WINDOW_SECS) {
+                    rotationSignals.push({
+                      exitPool: exitPool.ptName,
+                      exitChain: exitPool.chain,
+                      entryPool: entryPool.ptName,
+                      entryChain: entryPool.chain,
+                      gapDays: Math.round(gap / 86400 * 10) / 10,
+                    });
+                  }
+                }
+              }
+            }
+          }
+
+          if (rotationSignals.length > 0) {
+            // Deduplicate by exit→entry pool pair and count occurrences
+            const pairCounts = new Map<string, { signal: RotationSignal; count: number; avgGap: number }>();
+            for (const sig of rotationSignals) {
+              const key = `${sig.exitPool}||${sig.exitChain}||${sig.entryPool}||${sig.entryChain}`;
+              const existing = pairCounts.get(key);
+              if (existing) {
+                existing.count++;
+                existing.avgGap = (existing.avgGap * (existing.count - 1) + sig.gapDays) / existing.count;
+              } else {
+                pairCounts.set(key, { signal: sig, count: 1, avgGap: sig.gapDays });
+              }
+            }
+
+            lines.push(``);
+            lines.push(`  -- Cross-Pool Temporal Correlation --`);
+            lines.push(`    Methodology: exit events (SELL_PT, REMOVE_LIQ) on one pool followed by`);
+            lines.push(`    entry events (BUY_PT, ADD_LIQ) on another pool within 7 days.`);
+            lines.push(``);
+
+            const sorted = [...pairCounts.values()].sort((a, b) => b.count - a.count);
+            for (const { signal, count, avgGap } of sorted) {
+              const exitLabel = signal.exitChain !== signal.entryChain
+                ? `${signal.exitPool} (${signal.exitChain})`
+                : signal.exitPool;
+              const entryLabel = signal.exitChain !== signal.entryChain
+                ? `${signal.entryPool} (${signal.entryChain})`
+                : signal.entryPool;
+              lines.push(`    Possible capital rotation: ${exitLabel} exit -> ${entryLabel} entry`);
+              lines.push(`      Observed ${count} time(s), avg gap: ${avgGap.toFixed(1)} days`);
+              if (count < 3) {
+                lines.push(`      (!) Fewer than 3 occurrences — statistically insufficient for pattern confirmation.`);
+              }
+            }
+
+            // Competing interpretations
+            lines.push(``);
+            lines.push(`    Competing interpretations:`);
+            lines.push(`      (A) Systematic rotation: address deliberately moves capital from maturing/underperforming`);
+            lines.push(`          pools to newer/higher-yield pools as part of an active management strategy.`);
+            lines.push(`      (B) Coincidental timing: exits and entries happen to cluster within 7 days but are`);
+            lines.push(`          driven by independent decisions (market conditions, gas costs, personal schedule).`);
+            lines.push(`      (C) Maturity-driven rebalancing: positions exited at/near maturity and redeployed to`);
+            lines.push(`          the next available maturity — a natural lifecycle, not an alpha signal.`);
+            lines.push(`    Cross-reference with get_portfolio and get_pool_activity per pool to determine which`);
+            lines.push(`    interpretation fits. Pool maturity dates are especially informative for (A) vs (C).`);
+          }
+        }
 
         // Next-step hints with prioritized drill-down
         lines.push(``);
