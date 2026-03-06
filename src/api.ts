@@ -1503,13 +1503,11 @@ export async function fetchChainPoolAddresses(chain: string): Promise<Set<string
 
 /**
  * Scan all chains for MetaVaults in parallel.
- * Returns all MetaVaults with their chain slug attached, plus failed chains.
+ * Returns all MetaVaults with their chain slug attached.
  */
 export async function scanAllMetavaults(): Promise<{
   metavaults: Array<{ metavault: SpectraMetavault; chain: string }>;
-  failedChains: string[];
 }> {
-  const failedChains: string[] = [];
   const results = await Promise.allSettled(
     API_NETWORKS.map(async (chain) => {
       const mvs = await fetchMetavaults(chain);
@@ -1517,16 +1515,11 @@ export async function scanAllMetavaults(): Promise<{
     })
   );
 
-  const metavaults: Array<{ metavault: SpectraMetavault; chain: string }> = [];
-  results.forEach((result, i) => {
-    if (result.status === "fulfilled") {
-      metavaults.push(...result.value);
-    } else {
-      failedChains.push(API_NETWORKS[i]);
-    }
-  });
+  const metavaults = results
+    .filter((r): r is PromiseFulfilledResult<Array<{ metavault: SpectraMetavault; chain: string }>> => r.status === "fulfilled")
+    .flatMap(r => r.value);
 
-  return { metavaults, failedChains };
+  return { metavaults };
 }
 
 // =============================================================================
