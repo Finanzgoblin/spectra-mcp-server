@@ -209,7 +209,8 @@ Use compare_yield for fixed-vs-variable rate analysis on the same PT.`,
             compLines.push(`${Math.round(incentivePct)}% from incentives — yield may drop if program ends`);
             checks.push({ name: "APR Composition", signal: "caution", lines: compLines });
           } else {
-            compLines.push(`${Math.round(organicPct)}% organic — sustainable yield base`);
+            compLines.push(`${Math.round(organicPct)}% organic at the Spectra layer`);
+            compLines.push(`Note: "organic" means Spectra sees no incentive breakdown — the underlying protocol may itself run incentive programs that Spectra cannot decompose`);
             checks.push({ name: "APR Composition", signal: "ok", lines: compLines });
           }
         } else {
