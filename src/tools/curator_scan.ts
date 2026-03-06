@@ -20,6 +20,7 @@ import {
   MORPHO_CHAIN_IDS,
   SUPPORTED_CHAINS,
   PENDLE_CHAIN_IDS,
+  PROTOCOL_CONSTANTS,
   resolveNetwork,
 } from "../config.js";
 import type { CuratorOpportunity, MerklCampaign } from "../types.js";
@@ -173,156 +174,167 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
 
         const maxImpactFrac = max_price_impact_pct / 100;
         const opportunities: CuratorOpportunity[] = [];
+        const processingWarnings: string[] = [];
 
         // --- Spectra opportunities ---
         for (const { pt, pool, chain } of rawSpectra) {
-          const impliedApy = pool.impliedApy || 0;
-          const variableApr = pt.ibt?.apr?.total || 0;
-          const poolLiqUsd = pool.liquidity?.usd || 0;
-          const tvlUsd = pt.tvl?.usd || 0;
-          const maturityTs = pt.maturity;
-          const days = daysToMaturity(maturityTs);
+          try {
+            const impliedApy = pool.impliedApy || 0;
+            const variableApr = pt.ibt?.apr?.total || 0;
+            const poolLiqUsd = pool.liquidity?.usd || 0;
+            const tvlUsd = pt.tvl?.usd || 0;
+            const maturityTs = pt.maturity;
+            const days = daysToMaturity(maturityTs);
 
-          const impactFrac = estimatePriceImpact(capital_usd, poolLiqUsd);
-          const impactPct = impactFrac * 100;
+            const impactFrac = estimatePriceImpact(capital_usd, poolLiqUsd);
+            const impactPct = impactFrac * 100;
 
-          const annualizedEntryCost = days > 0
-            ? impactFrac * (365 / days) * 100
-            : impactFrac * 100;
-          const effectiveApy = impliedApy - annualizedEntryCost;
-          const capacityUsd = maxImpactFrac * 2 * poolLiqUsd;
+            const annualizedEntryCost = days > 0
+              ? impactFrac * (365 / days) * 100
+              : impactFrac * 100;
+            const effectiveApy = impliedApy - annualizedEntryCost;
+            const capacityUsd = maxImpactFrac * 2 * poolLiqUsd;
 
-          // LP APY with optional veSPECTRA boost (computed before impact filter)
-          let boostInfo: BoostInfo | undefined;
-          if (ve_spectra_balance !== undefined && ve_spectra_balance > 0 && veTotalSupply !== null) {
-            boostInfo = computeSpectraBoost(ve_spectra_balance, veTotalSupply, tvlUsd, capital_usd);
+            // LP APY with optional veSPECTRA boost (computed before impact filter)
+            let boostInfo: BoostInfo | undefined;
+            if (ve_spectra_balance !== undefined && ve_spectra_balance > 0 && veTotalSupply !== null) {
+              boostInfo = computeSpectraBoost(ve_spectra_balance, veTotalSupply, tvlUsd, capital_usd);
+            }
+            const lpData = extractLpApyBreakdown(pool, boostInfo?.boostFraction ?? 0);
+
+            // Impact filter: skip only if BOTH PT and LP strategies are unviable
+            // PT swap impact doesn't apply to LP adds, so LP-dominant pools should survive
+            if (impactFrac > maxImpactFrac && lpData.lpApy <= 0) continue;
+
+            const warnings: string[] = [];
+            if (days < 14) warnings.push("Very short maturity (<14d)");
+            else if (days < 30) warnings.push("Short maturity (<30d)");
+            if (poolLiqUsd < 50000) warnings.push("Low liquidity (<$50K)");
+            if (impactPct > 2) warnings.push(`High entry impact (${formatPct(impactPct)})`);
+            if (effectiveApy < 0) warnings.push("Negative effective APY");
+
+            const bestIsLp = lpData.lpApy > effectiveApy;
+
+            // Look up Merkl campaigns
+            const spectraNet = resolveNetwork(chain);
+            const spectraMerklMap = curatorMerklMaps.get(spectraNet) || new Map();
+            const spectraAddrs = [pt.address, pool.address, pt.ibt?.address].filter(Boolean) as string[];
+            const spectraMerklCampaigns = lookupMerklCampaigns(spectraMerklMap, spectraAddrs);
+
+            opportunities.push({
+              protocol: "spectra",
+              chain,
+              name: pt.name,
+              underlying: pt.underlying?.symbol || "?",
+              maturityTimestamp: maturityTs,
+              daysToMaturity: days,
+              impliedApy,
+              lpApy: lpData.lpApy,
+              variableApr,
+              tvlUsd,
+              poolLiquidityUsd: poolLiqUsd,
+              entryImpactPct: impactPct,
+              effectiveApy,
+              capacityUsd,
+              sortApy: Math.max(effectiveApy, lpData.lpApy), // best strategy wins
+              bestStrategy: bestIsLp ? "lp" : "pt_spot",     // updated in Phase 3 if looping beats both
+              ptAddress: pt.address,
+              poolAddress: pool.address || "",
+              looping: null,
+              lpApyBreakdown: lpData.lpApyBreakdown,
+              merklCampaigns: spectraMerklCampaigns.length > 0 ? spectraMerklCampaigns : undefined,
+              warnings,
+            });
+          } catch (err) {
+            const ptName = pt?.name || pt?.address || "unknown";
+            processingWarnings.push(`Skipped Spectra pool ${ptName} on ${chain}: ${(err as Error).message}`);
           }
-          const lpData = extractLpApyBreakdown(pool, boostInfo?.boostFraction ?? 0);
-
-          // Impact filter: skip only if BOTH PT and LP strategies are unviable
-          // PT swap impact doesn't apply to LP adds, so LP-dominant pools should survive
-          if (impactFrac > maxImpactFrac && lpData.lpApy <= 0) continue;
-
-          const warnings: string[] = [];
-          if (days < 14) warnings.push("Very short maturity (<14d)");
-          else if (days < 30) warnings.push("Short maturity (<30d)");
-          if (poolLiqUsd < 50000) warnings.push("Low liquidity (<$50K)");
-          if (impactPct > 2) warnings.push(`High entry impact (${formatPct(impactPct)})`);
-          if (effectiveApy < 0) warnings.push("Negative effective APY");
-
-          const bestIsLp = lpData.lpApy > effectiveApy;
-
-          // Look up Merkl campaigns
-          const spectraNet = resolveNetwork(chain);
-          const spectraMerklMap = curatorMerklMaps.get(spectraNet) || new Map();
-          const spectraAddrs = [pt.address, pool.address, pt.ibt?.address].filter(Boolean) as string[];
-          const spectraMerklCampaigns = lookupMerklCampaigns(spectraMerklMap, spectraAddrs);
-
-          opportunities.push({
-            protocol: "spectra",
-            chain,
-            name: pt.name,
-            underlying: pt.underlying?.symbol || "?",
-            maturityTimestamp: maturityTs,
-            daysToMaturity: days,
-            impliedApy,
-            lpApy: lpData.lpApy,
-            variableApr,
-            tvlUsd,
-            poolLiquidityUsd: poolLiqUsd,
-            entryImpactPct: impactPct,
-            effectiveApy,
-            capacityUsd,
-            sortApy: Math.max(effectiveApy, lpData.lpApy), // best strategy wins
-            bestStrategy: bestIsLp ? "lp" : "pt_spot",     // updated in Phase 3 if looping beats both
-            ptAddress: pt.address,
-            poolAddress: pool.address || "",
-            looping: null,
-            lpApyBreakdown: lpData.lpApyBreakdown,
-            merklCampaigns: spectraMerklCampaigns.length > 0 ? spectraMerklCampaigns : undefined,
-            warnings,
-          });
         }
 
         // --- Pendle opportunities ---
         for (const { market, chain } of rawPendle) {
-          const impliedApy = (market.details.impliedApy || 0) * 100;
-          const variableApr = (market.details.underlyingApy || 0) * 100;
-          const poolLiqUsd = market.details.liquidity || 0;
-          const tvlUsd = market.details.totalTvl || 0;
-          const days = pendleDaysToMaturity(market.expiry);
-          const maturityTs = Math.floor(new Date(market.expiry).getTime() / 1000);
-          const lpApy = (market.details.aggregatedApy || 0) * 100;
+          try {
+            const impliedApy = (market.details.impliedApy || 0) * 100;
+            const variableApr = (market.details.underlyingApy || 0) * 100;
+            const poolLiqUsd = market.details.liquidity || 0;
+            const tvlUsd = market.details.totalTvl || 0;
+            const days = pendleDaysToMaturity(market.expiry);
+            const maturityTs = Math.floor(new Date(market.expiry).getTime() / 1000);
+            const lpApy = (market.details.aggregatedApy || 0) * 100;
 
-          // Pendle logit AMM impact: uses pool reserves + maturity for tighter estimate
-          const totalPt = market.details.totalPt || 0;
-          const totalSy = market.details.totalSy || 0;
-          const impactFrac = estimatePendlePriceImpact(capital_usd, poolLiqUsd, totalPt, totalSy, days);
-          const impactPct = impactFrac * 100;
-          // Impact filter: skip only if BOTH PT and LP strategies are unviable
-          if (impactFrac > maxImpactFrac && lpApy <= 0) continue;
+            // Pendle logit AMM impact: uses pool reserves + maturity for tighter estimate
+            const totalPt = market.details.totalPt || 0;
+            const totalSy = market.details.totalSy || 0;
+            const impactFrac = estimatePendlePriceImpact(capital_usd, poolLiqUsd, totalPt, totalSy, days);
+            const impactPct = impactFrac * 100;
+            // Impact filter: skip only if BOTH PT and LP strategies are unviable
+            if (impactFrac > maxImpactFrac && lpApy <= 0) continue;
 
-          const annualizedEntryCost = days > 0
-            ? impactFrac * (365 / days) * 100
-            : impactFrac * 100;
-          const effectiveApy = impliedApy - annualizedEntryCost;
-          const capacityUsd = maxImpactFrac * 2 * poolLiqUsd;
+            const annualizedEntryCost = days > 0
+              ? impactFrac * (365 / days) * 100
+              : impactFrac * 100;
+            const effectiveApy = impliedApy - annualizedEntryCost;
+            const capacityUsd = maxImpactFrac * 2 * poolLiqUsd;
 
-          const warnings: string[] = [];
-          if (days < 14) warnings.push("Very short maturity (<14d)");
-          else if (days < 30) warnings.push("Short maturity (<30d)");
-          if (poolLiqUsd < 50000) warnings.push("Low liquidity (<$50K)");
-          if (impactPct > 2) warnings.push(`High entry impact (${formatPct(impactPct)})`);
-          if (effectiveApy < 0) warnings.push("Negative effective APY");
+            const warnings: string[] = [];
+            if (days < 14) warnings.push("Very short maturity (<14d)");
+            else if (days < 30) warnings.push("Short maturity (<30d)");
+            if (poolLiqUsd < 50000) warnings.push("Low liquidity (<$50K)");
+            if (impactPct > 2) warnings.push(`High entry impact (${formatPct(impactPct)})`);
+            if (effectiveApy < 0) warnings.push("Negative effective APY");
 
-          const bestIsLp = lpApy > effectiveApy;
+            const bestIsLp = lpApy > effectiveApy;
 
-          // Parse clean underlying symbol from Pendle market name (strip date suffix like "-26MAR2026")
-          const pendleUnderlying = market.name.replace(/-\d{1,2}[A-Z]{3}\d{4}$/, "");
+            // Parse clean underlying symbol from Pendle market name (strip date suffix like "-26MAR2026")
+            const pendleUnderlying = market.name.replace(/-\d{1,2}[A-Z]{3}\d{4}$/, "");
 
-          // Build LP APY breakdown from Pendle market details
-          const swapFeeApyPct = (market.details.swapFeeApy || 0) * 100;
-          const pendleIncentivePct = (market.details.pendleApy || 0) * 100;
-          const maxBoostedPct = (market.details.maxBoostedApy || 0) * 100;
-          const pendleLpBreakdown: CuratorOpportunity["lpApyBreakdown"] = {
-            fees: swapFeeApyPct,
-            pt: 0,
-            ibt: 0,
-            rewards: pendleIncentivePct > 0 ? { PENDLE: pendleIncentivePct } : {},
-            boostedRewards: maxBoostedPct > lpApy
-              ? { PENDLE: { min: pendleIncentivePct, max: maxBoostedPct } }
-              : {},
-          };
+            // Build LP APY breakdown from Pendle market details
+            const swapFeeApyPct = (market.details.swapFeeApy || 0) * 100;
+            const pendleIncentivePct = (market.details.pendleApy || 0) * 100;
+            const maxBoostedPct = (market.details.maxBoostedApy || 0) * 100;
+            const pendleLpBreakdown: CuratorOpportunity["lpApyBreakdown"] = {
+              fees: swapFeeApyPct,
+              pt: 0,
+              ibt: 0,
+              rewards: pendleIncentivePct > 0 ? { PENDLE: pendleIncentivePct } : {},
+              boostedRewards: maxBoostedPct > lpApy
+                ? { PENDLE: { min: pendleIncentivePct, max: maxBoostedPct } }
+                : {},
+            };
 
-          // Look up Merkl campaigns for Pendle market
-          const pendleMerklMap = curatorMerklMaps.get(chain) || new Map();
-          const pendleAddrs = [market.address, market.pt, market.yt, market.sy].filter(Boolean);
-          const pendleMerklCampaigns = lookupMerklCampaigns(pendleMerklMap, pendleAddrs);
+            // Look up Merkl campaigns for Pendle market
+            const pendleMerklMap = curatorMerklMaps.get(chain) || new Map();
+            const pendleAddrs = [market.address, market.pt, market.yt, market.sy].filter(Boolean);
+            const pendleMerklCampaigns = lookupMerklCampaigns(pendleMerklMap, pendleAddrs);
 
-          opportunities.push({
-            protocol: "pendle",
-            chain,
-            name: market.name,
-            underlying: pendleUnderlying,
-            maturityTimestamp: maturityTs,
-            daysToMaturity: days,
-            impliedApy,
-            lpApy,
-            variableApr,
-            tvlUsd,
-            poolLiquidityUsd: poolLiqUsd,
-            entryImpactPct: impactPct,
-            effectiveApy,
-            capacityUsd,
-            sortApy: Math.max(effectiveApy, lpApy), // best strategy wins
-            bestStrategy: bestIsLp ? "lp" : "pt_spot",
-            pendleMarketAddress: market.address,
-            pendlePtAddress: market.pt,
-            pendleSyAddress: market.sy,
-            lpApyBreakdown: pendleLpBreakdown,
-            merklCampaigns: pendleMerklCampaigns.length > 0 ? pendleMerklCampaigns : undefined,
-            warnings,
-          });
+            opportunities.push({
+              protocol: "pendle",
+              chain,
+              name: market.name,
+              underlying: pendleUnderlying,
+              maturityTimestamp: maturityTs,
+              daysToMaturity: days,
+              impliedApy,
+              lpApy,
+              variableApr,
+              tvlUsd,
+              poolLiquidityUsd: poolLiqUsd,
+              entryImpactPct: impactPct,
+              effectiveApy,
+              capacityUsd,
+              sortApy: Math.max(effectiveApy, lpApy), // best strategy wins
+              bestStrategy: bestIsLp ? "lp" : "pt_spot",
+              pendleMarketAddress: market.address,
+              pendlePtAddress: market.pt,
+              pendleSyAddress: market.sy,
+              lpApyBreakdown: pendleLpBreakdown,
+              merklCampaigns: pendleMerklCampaigns.length > 0 ? pendleMerklCampaigns : undefined,
+              warnings,
+            });
+          } catch (err) {
+            const marketName = market?.name || market?.address || "unknown";
+            processingWarnings.push(`Skipped Pendle market ${marketName} on ${chain}: ${(err as Error).message}`);
+          }
         }
 
         // ================================================================
@@ -367,7 +379,7 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
                 if (!market) {
                   // No Morpho market — compute hypothetical loop as creation signal
                   const hypoLltv = 0.86;  // standard LLTV assumption
-                  const hypoBorrow = 3;   // conservative borrow rate assumption (%)
+                  const hypoBorrow = PROTOCOL_CONSTANTS.loopingDefaults.borrowRatePct;  // consistent with get_looping_strategy defaults
                   const morphoBlock: typeof opp.morpho = { marketExists: false };
 
                   if (opp.impliedApy > 0) {
@@ -589,6 +601,10 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
         filtered.sort((a, b) => b.sortApy - a.sortApy);
         const topOpps = filtered.slice(0, topN);
 
+        const warningsSuffix = processingWarnings.length > 0
+          ? `\n\n--- Processing Warnings (${processingWarnings.length} items skipped) ---\n${processingWarnings.join("\n")}`
+          : "";
+
         if (topOpps.length === 0) {
           const lines = [
             `No opportunities found matching criteria (capital: ${formatUsd(capital_usd)}, max impact: ${formatPct(max_price_impact_pct)}).`,
@@ -599,7 +615,7 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
             ``,
             `Try: lower min_tvl_usd/min_liquidity_usd, increase max_price_impact_pct, or reduce capital_usd.`,
           ];
-          return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+          return { content: [{ type: "text" as const, text: lines.join("\n") + warningsSuffix }] };
         }
 
         const text = formatCuratorScanResults(
@@ -611,7 +627,7 @@ Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
           compact,
         );
 
-        return { content: [{ type: "text" as const, text }] };
+        return { content: [{ type: "text" as const, text: text + warningsSuffix }] };
       } catch (e: any) {
         const text = `Error scanning curator opportunities: ${e.message}`;
         return { content: [{ type: "text" as const, text }], isError: true };

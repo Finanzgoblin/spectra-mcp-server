@@ -185,7 +185,7 @@ async function testToolRegistration(client) {
   const tools = await client.listTools();
   const names = tools.map((t) => t.name);
 
-  assert(tools.length === 33, "exactly 33 tools registered", `got ${tools.length}: ${names.join(", ")}`);
+  assert(tools.length === 37, "exactly 37 tools registered", `got ${tools.length}: ${names.join(", ")}`);
 
   const expected = [
     "get_pt_details",
@@ -221,6 +221,10 @@ async function testToolRegistration(client) {
     "get_pool_capacity",
     "check_ibt_health",
     "get_yield_curve",
+    "curator_risk_monitor",
+    "stress_test_vault",
+    "plan_rollover",
+    "curator_portfolio",
   ];
 
   for (const name of expected) {

@@ -2,7 +2,7 @@
 
 Makes [Spectra Finance](https://spectra.finance) discoverable and usable by AI agents via the [Model Context Protocol](https://modelcontextprotocol.io).
 
-33 tools · 10 chains · read-only · on-chain Curve quoting · ERC-4626 health checks · yield curve term structure · historical eth_getLogs · cross-protocol Pendle comparison · Morpho supply-side visibility · Morpho user positions & historical rates · Merkl campaign APR integration · zero web3 library dependencies
+37 tools · 10 chains · read-only · on-chain Curve quoting · ERC-4626 health checks · yield curve term structure · historical eth_getLogs · cross-protocol Pendle comparison · Morpho supply-side visibility · Morpho user positions & historical rates · Merkl campaign APR integration · zero web3 library dependencies
 
 ## What This Does
 
