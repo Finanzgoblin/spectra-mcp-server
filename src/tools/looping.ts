@@ -4,8 +4,9 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { CHAIN_ENUM, EVM_ADDRESS, PROTOCOL_CONSTANTS, resolveNetwork } from "../config.js";
-import { fetchSpectra, findMorphoMarketForPt } from "../api.js";
+import { CHAIN_ENUM, EVM_ADDRESS, PROTOCOL_CONSTANTS, MORPHO_CHAIN_IDS, resolveNetwork } from "../config.js";
+import { fetchSpectra, findMorphoMarketForPt, fetchMorphoMarketHistory } from "../api.js";
+import type { BorrowRateRisk } from "../types.js";
 import {
   formatPct,
   formatUsd,
@@ -18,6 +19,24 @@ import {
   estimateLoopingEntryCost,
   estimatePriceImpact,
 } from "../formatters.js";
+
+/**
+ * Approximate the standard normal CDF using the Abramowitz & Stegun method.
+ * No external libraries needed — accurate to ~1e-7 for typical inputs.
+ */
+function normalCDF(x: number): number {
+  const t = 1 / (1 + 0.2316419 * Math.abs(x));
+  const d = 0.3989422804014327; // 1/sqrt(2*PI)
+  const p =
+    d *
+    Math.exp((-x * x) / 2) *
+    (t *
+      (0.31938153 +
+        t *
+          (-0.356563782 +
+            t * (1.781477937 + t * (-1.821255978 + t * 1.330274429)))));
+  return x > 0 ? 1 - p : p;
+}
 
 export function register(server: McpServer): void {
   server.tool(
@@ -287,6 +306,119 @@ discover the best looping opportunities across all chains with capital-aware siz
         lines.push(`  Risks: Liquidation if PT depegs, smart contract risk on Morpho + Spectra,`);
         lines.push(`     borrow rate may increase (see sensitivity above), PT illiquidity near maturity,`);
         lines.push(`     cumulative entry cost increases with capital size and loop count.`);
+
+        // -----------------------------------------------------------------
+        // Borrow Rate Risk Analysis (best-effort, appended if data exists)
+        // -----------------------------------------------------------------
+        if (morphoDetected && bestLoop > 0) {
+          const morphoChainId = MORPHO_CHAIN_IDS[network];
+          if (morphoChainId) {
+            const now = Math.floor(Date.now() / 1000);
+            const thirtyDaysAgo = now - 30 * 86400;
+
+            // Use Promise.allSettled so a fetch failure never blocks the main output
+            const [histResult] = await Promise.allSettled([
+              fetchMorphoMarketHistory(
+                morphoMarket!.uniqueKey,
+                morphoChainId,
+                thirtyDaysAgo,
+                now,
+                "DAY",
+              ),
+            ]);
+
+            if (histResult.status === "fulfilled" && histResult.value.history.length >= 3) {
+              const { history } = histResult.value;
+
+              // Borrow APY values from Morpho are decimals (e.g. 0.03 = 3%).
+              // Convert to percentages for display.
+              const borrowRates = history.map((dp) => dp.borrowApy * 100);
+
+              const n = borrowRates.length;
+              const meanRate = borrowRates.reduce((s, v) => s + v, 0) / n;
+              const variance =
+                borrowRates.reduce((s, v) => s + (v - meanRate) ** 2, 0) / n;
+              const stdDev = Math.sqrt(variance);
+              const maxRate = Math.max(...borrowRates);
+              const minRate = Math.min(...borrowRates);
+              const currentRate = borrowRates[borrowRates.length - 1];
+
+              // Build the risk table for each loop level (skip loop 0 = unleveraged)
+              const riskTable: BorrowRateRisk[] = [];
+              for (let i = 1; i <= max_loops; i++) {
+                const lev = cumulativeLeverageAtLoop(effectiveLtv, i);
+                // Break-even borrow rate: rate at which net APY = 0
+                // net = baseApy * lev - borrowRate * (lev - 1) = 0
+                // => borrowRate = baseApy * lev / (lev - 1)
+                const breakEvenRate =
+                  lev > 1 ? (baseApy * lev) / (lev - 1) : Infinity;
+
+                let probUnderwater = 0;
+                let safe95th = true;
+                if (Number.isFinite(breakEvenRate) && stdDev > 0) {
+                  const z = (breakEvenRate - meanRate) / stdDev;
+                  // P(rate > breakEven) = 1 - CDF(z)
+                  probUnderwater = 1 - normalCDF(z);
+                  safe95th = breakEvenRate > meanRate + 2 * stdDev;
+                } else if (Number.isFinite(breakEvenRate) && stdDev === 0) {
+                  // Zero variance: deterministic — either always safe or always underwater
+                  probUnderwater = meanRate > breakEvenRate ? 1 : 0;
+                  safe95th = breakEvenRate > meanRate;
+                }
+
+                riskTable.push({
+                  loop: i,
+                  leverage: lev,
+                  breakEvenRate,
+                  meanRate,
+                  stdDev,
+                  maxObservedRate: maxRate,
+                  probabilityUnderwater: probUnderwater,
+                  safe95thPercentile: safe95th,
+                });
+              }
+
+              // Format the risk section
+              lines.push(``);
+              lines.push(`--- Borrow Rate Risk (30d historical) ---`);
+              lines.push(
+                `  Mean: ${formatPct(meanRate)} | StdDev: ${formatPct(stdDev)} | Max: ${formatPct(maxRate)} | Min: ${formatPct(minRate)} | Current: ${formatPct(currentRate)}`,
+              );
+              lines.push(`  Data points: ${n} (daily over 30d)`);
+              lines.push(``);
+              lines.push(
+                `  ${"Loop".padEnd(6)} ${"Leverage".padEnd(10)} ${"Break-Even".padEnd(12)} ${"P(underwater)".padEnd(15)} ${"95th-pct Safe?"}`,
+              );
+              lines.push(`  ${"--".repeat(30)}`);
+
+              for (const row of riskTable) {
+                const beStr = Number.isFinite(row.breakEvenRate)
+                  ? formatPct(row.breakEvenRate)
+                  : "Inf";
+                const probStr =
+                  row.probabilityUnderwater < 0.001
+                    ? "<0.1%"
+                    : formatPct(row.probabilityUnderwater * 100);
+                const safeIcon = row.safe95thPercentile ? "yes" : "no";
+                lines.push(
+                  `  ${String(row.loop).padEnd(6)} ${(row.leverage.toFixed(2) + "x").padEnd(10)} ${beStr.padEnd(12)} ${probStr.padEnd(15)} ${safeIcon}`,
+                );
+              }
+
+              lines.push(``);
+              lines.push(
+                `  Reading: P(underwater) = probability that borrow rate exceeds break-even,`,
+              );
+              lines.push(
+                `  based on 30d historical distribution (normal approximation).`,
+              );
+              lines.push(
+                `  This is a statistical estimate, not a guarantee — tail events happen.`,
+              );
+            }
+            // If history fetch failed or had < 3 data points, silently skip the section
+          }
+        }
 
         // Next-step hints
         lines.push(``);
