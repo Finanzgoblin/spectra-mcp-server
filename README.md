@@ -2,7 +2,7 @@
 
 Makes [Spectra Finance](https://spectra.finance) discoverable and usable by AI agents via the [Model Context Protocol](https://modelcontextprotocol.io).
 
-37 tools · 10 chains · read-only · on-chain Curve quoting · ERC-4626 health checks · yield curve term structure · historical eth_getLogs · cross-protocol Pendle comparison · Morpho supply-side visibility · Morpho user positions & historical rates · Merkl campaign APR integration · zero web3 library dependencies
+37 tools · 10 chains · read-only · on-chain Curve quoting · ERC-4626 health checks · yield curve term structure · historical eth_getLogs · cross-protocol Pendle comparison · Morpho supply-side visibility · Morpho user positions & historical rates · Merkl campaign APR integration · curator risk monitoring · withdrawal stress testing · rollover planning · multi-vault portfolio aggregation · zero web3 library dependencies
 
 ## What This Does
 
@@ -32,6 +32,10 @@ Any AI agent (Claude, GPT, open-source) that supports MCP can now:
 - **Verify** IBT health before deploying — on-chain ERC-4626 conversion rate, APR sustainability (organic vs incentive), pool balance, protocol recognition, liquidity
 - **Visualize** yield curves (term structure) for any underlying across all chains — all maturities sorted chronologically with curve shape analysis
 - **Recover** historical on-chain pool activity via `eth_getLogs` when API data has aged out — with dynamic RPC URL support for any chain
+- **Monitor** curator Morpho position health — liquidation distance, borrow rate drift, health factors across all chains
+- **Stress-test** MetaVault withdrawal scenarios — liquidity waterfall analysis (idle → maturing → LP removal → PT sale) with market stress simulation
+- **Plan** position rollovers for expiring MetaVault positions — cross-protocol candidate ranking with entry impact, yield gap, and overlap windows
+- **Aggregate** multi-vault curator portfolios — total AUM, blended APY, fee revenue projection, concentration analysis by underlying/chain
 - **Learn** protocol mechanics on-demand via `get_protocol_context` (PT/YT identity, Router batching, deposit paths, glossary, workflow routing)
 
 The agent doesn't need to understand PT/YT mechanics -- it just calls `scan_opportunities` with its capital size and gets ranked, actionable data. If it needs to understand *why* something works that way, it calls `get_protocol_context`.
@@ -160,6 +164,10 @@ The observation coverage layer addresses a deeper problem: even perfect interpre
 | `get_pool_capacity` | Multi-size capacity curve — quotes PT trades at geometric capital tiers to show price impact and effective APY degradation. Identifies sweet spot and exhaustion point. On-chain Curve quotes. |
 | `check_ibt_health` | Multi-signal IBT health assessment — on-chain ERC-4626 conversion rate, APR composition (organic vs incentive), pool balance ratio, protocol recognition, liquidity level. Returns HEALTHY/CAUTION/WARNING verdict. |
 | `get_yield_curve` | Term structure for a given underlying across all chains. All maturities sorted chronologically with implied APY, TVL, liquidity. Curve shape analysis (normal/inverted/flat), steepest segment, cross-chain pairs. |
+| `curator_risk_monitor` | Liquidation risk monitor for curator Morpho positions — health factor, liquidation price, distance-to-liquidation, borrow rate drift, alert levels (ok/watch/warning/critical). |
+| `stress_test_vault` | Withdrawal stress test for MetaVaults — liquidity waterfall (idle → maturing → LP removal → PT sale), cost to remaining depositors, maximum safe redemption size. Market stress mode (2x impact). |
+| `plan_rollover` | Position rollover planner for expiring MetaVault positions — scans Spectra + Pendle for replacement candidates, computes entry impact, yield gap, overlap windows, and net effective APY. |
+| `curator_portfolio` | Multi-vault portfolio aggregation — total AUM, blended APY, fee revenue projection, concentration by underlying/chain, cross-vault action items. Discovery mode (by curator address) or explicit mode. |
 | `get_protocol_context` | Returns protocol mechanics reference (PT/YT identity, Router batching, deposit paths, glossary, workflow routing). 8 topics callable on-demand. |
 
 ## Supported Chains
@@ -309,6 +317,10 @@ Once connected, you can ask Claude things like:
 - "Compare the 30-day vs 90-day vs 180-day rates for ETH across all chains"
 - "This address traded on Katana weeks ago but get_pool_activity shows nothing -- pull on-chain logs for the last 7 days"
 - "Fetch historical activity for this pool using my RPC URL: https://rpc.katana.network"
+- "Monitor my Morpho positions for liquidation risk -- show me the distance to liquidation for each"
+- "Stress test my MetaVault on Base -- what happens if 30% of depositors redeem in one epoch?"
+- "I have a position expiring in 14 days on my MetaVault -- plan the rollover and show me the best candidates"
+- "Aggregate my curator portfolio across all chains -- show me total AUM, blended APY, and concentration"
 
 ## Architecture
 
@@ -390,6 +402,10 @@ src/
     capacity.ts     get_pool_capacity (multi-size quote ladder, sweet spot / exhaustion detection)
     ibt_health.ts   check_ibt_health (ERC-4626 conversion rate, APR composition, pool balance, verdict)
     yield_curve.ts  get_yield_curve (term structure for a given underlying across all chains)
+    risk_monitor.ts curator_risk_monitor (liquidation distance, health factor, borrow rate drift, alert levels)
+    stress_test.ts  stress_test_vault (withdrawal liquidity waterfall, market stress simulation)
+    rollover.ts     plan_rollover (expiring position rollover planner with cross-protocol candidates)
+    curator_portfolio.ts curator_portfolio (multi-vault aggregation, AUM, blended APY, concentration)
 test.cjs              Integration test suite (405 tests, McpTestClient over stdio)
 test-agent.cjs        Agent reasoning test suite (82 assertions, McpTestClient over stdio)
 AGENT-TESTS.md        38-question subjective test suite with grading rubrics (incl. open emergence, coverage, newcomer comprehension tiers)

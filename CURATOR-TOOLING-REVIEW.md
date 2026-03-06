@@ -56,7 +56,9 @@ The dashboard auto-generates the right action items:
 
 ## Critical Gaps for Curator-as-a-Service
 
-### Gap 1: No Liquidation Distance Monitoring
+### Gap 1: No Liquidation Distance Monitoring — ✅ SHIPPED
+
+> **Implemented as:** `curator_risk_monitor` in `src/tools/risk_monitor.ts`
 
 **Impact: Catastrophic** — This is the #1 risk for a leveraged curator.
 
@@ -73,7 +75,9 @@ The tools show `effectiveMargin` at entry time but never revisit it. A curator r
 3. Show current distance-to-liquidation as a percentage
 4. Flag positions where borrow rate has moved significantly since entry
 
-### Gap 2: No Withdrawal Liquidity Stress Testing
+### Gap 2: No Withdrawal Liquidity Stress Testing — ✅ SHIPPED
+
+> **Implemented as:** `stress_test_vault` in `src/tools/stress_test.ts`
 
 **Impact: High** — ERC-7540 vaults have epoch-based withdrawals.
 
@@ -89,7 +93,9 @@ For a curator-as-a-service, a redemption queue failure is reputational death.
 2. Models the vault's ability to meet it from: idle capital → naturally maturing positions → LP removal (with impact from `get_pool_capacity`)
 3. Outputs the expected loss to remaining depositors
 
-### Gap 3: No Position Rollover Planning
+### Gap 3: No Position Rollover Planning — ✅ SHIPPED
+
+> **Implemented as:** `plan_rollover` in `src/tools/rollover.ts`
 
 **Impact: High** — Rollover is the curator's primary recurring operational task.
 
@@ -119,7 +125,9 @@ The curator's leverage amplifies this: at 4x leverage on MV shares, a 2% borrow 
 2. Shows probability of break-even borrow rate being hit within the maturity period (assuming mean-reversion or random walk)
 3. Recommends a "safe" loop count that survives the 95th percentile rate scenario
 
-### Gap 5: No Multi-Position Portfolio View for Curators
+### Gap 5: No Multi-Position Portfolio View for Curators — ✅ SHIPPED
+
+> **Implemented as:** `curator_portfolio` in `src/tools/curator_portfolio.ts`
 
 **Impact: Medium** — A real curator manages multiple MetaVaults or a single vault with many positions.
 
@@ -175,8 +183,11 @@ The tools exist but the *sequence* for a curator-as-a-service isn't documented. 
 6. **Deploy** — (manual, not tooled)
 7. **Monitor** — `get_curator_dashboard` → daily ops + action items
 8. **Rebalance** — `get_morpho_rate` + `get_morpho_history` → track borrow costs
-9. **Rollover** — [GAP] — no tool helps plan the next position
-10. **Report** — [GAP] — no performance reporting for depositors
+9. **Rollover** — `plan_rollover` → find candidates, compare entry impact, yield gap analysis ✅
+10. **Risk** — `curator_risk_monitor` → liquidation distance, borrow rate drift, alert levels ✅
+11. **Stress** — `stress_test_vault` → withdrawal liquidity waterfall, market stress simulation ✅
+12. **Aggregate** — `curator_portfolio` → multi-vault AUM, blended APY, concentration ✅
+13. **Report** — [GAP] — no historical performance reporting for depositors
 
 ### Pendle Integration Is Half-Complete
 
@@ -198,15 +209,15 @@ The tool assumes the curator will create this market, but once live, monitoring 
 
 ## Priority Ranking for Curator-as-a-Service
 
-| Priority | Gap | Effort | Business Impact |
-|----------|-----|--------|-----------------|
-| P0 | Liquidation distance monitoring | Medium | Prevents catastrophic loss |
-| P0 | Withdrawal stress testing | Medium | Prevents reputational death |
-| P1 | Position rollover planning | Medium | Core operational workflow |
-| P1 | Borrow rate path modeling | Low-Medium | Risk-adjusted loop decisions |
-| P2 | Multi-vault portfolio view | Medium | Scales the business |
-| P2 | Historical performance tracking | Low | Depositor acquisition tool |
-| P3 | Gas cost modeling | Low | Improves small-capital accuracy |
+| Priority | Gap | Effort | Business Impact | Status |
+|----------|-----|--------|-----------------|--------|
+| P0 | Liquidation distance monitoring | Medium | Prevents catastrophic loss | ✅ Shipped |
+| P0 | Withdrawal stress testing | Medium | Prevents reputational death | ✅ Shipped |
+| P1 | Position rollover planning | Medium | Core operational workflow | ✅ Shipped |
+| P1 | Borrow rate path modeling | Low-Medium | Risk-adjusted loop decisions | Open |
+| P2 | Multi-vault portfolio view | Medium | Scales the business | ✅ Shipped |
+| P2 | Historical performance tracking | Low | Depositor acquisition tool | Open |
+| P3 | Gas cost modeling | Low | Improves small-capital accuracy | Open |
 
 ---
 
@@ -226,11 +237,11 @@ The tool assumes the curator will create this market, but once live, monitoring 
 
 **For deal origination and pre-deployment modeling: 9/10.** The tools are comprehensive, capital-aware, and cross-protocol. A curator can go from "I have $X to deploy" to "here's my optimal allocation with projected economics" in under 5 minutes.
 
-**For post-deployment risk management: 4/10.** The dashboard is a great start, but a curator managing leveraged positions with external deposits needs liquidation monitoring, stress testing, and rollover planning that don't exist yet.
+**For post-deployment risk management: 8/10.** *(Updated from 4/10)* Liquidation monitoring (`curator_risk_monitor`), withdrawal stress testing (`stress_test_vault`), and rollover planning (`plan_rollover`) are now shipped. Remaining gaps: borrow rate path modeling (probabilistic risk), historical performance tracking.
 
-**For running it as a business: 6/10.** The tooling supports the *investment* side but not the *business* side (performance reporting, multi-vault aggregation, depositor communication).
+**For running it as a business: 8/10.** *(Updated from 6/10)* Multi-vault portfolio aggregation (`curator_portfolio`) is shipped. Remaining gap: historical performance reporting for depositor acquisition.
 
-The P0 gaps (liquidation monitoring + withdrawal stress testing) should be addressed before scaling external deposits. Everything else can be built incrementally as the business grows.
+All P0 gaps are resolved. The curator-as-a-service tooling is now ready for scaling external deposits.
 
 ---
 
