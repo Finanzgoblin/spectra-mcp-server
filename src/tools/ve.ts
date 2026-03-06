@@ -50,8 +50,6 @@ pool at a given deposit size.`,
       try {
         const veTotalSupply = await fetchVeTotalSupply();
         let computedBoost: { multiplier: number; boostFraction: number } | null = null;
-        let ptResult: any = null;
-        let poolResult: any = null;
 
         const lines: string[] = [
           `-- veSPECTRA Info --`,
@@ -77,8 +75,6 @@ pool at a given deposit size.`,
             const pt = parsePtResponse(ptData);
             const pool = pt?.pools?.[0];
             const tvlUsd = pt?.tvl?.usd || 0;
-            ptResult = pt || null;
-            poolResult = pool || null;
 
             if (pt && pool && tvlUsd > 0) {
               const boost = computeSpectraBoost(

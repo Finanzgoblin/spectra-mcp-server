@@ -2824,16 +2824,11 @@ export function formatMetavaultScanSection(
 export function formatMetavaultList(
   entries: Array<{ metavault: SpectraMetavault; chain: string }>,
   chainFilter: string | undefined,
-  failedChains: string[],
 ): string {
   const lines: string[] = [];
 
   lines.push(`== MetaVaults${chainFilter ? ` (${chainFilter})` : " (all chains)"} ==`);
   lines.push(`  Found: ${entries.length} MetaVault(s)`);
-
-  if (failedChains.length > 0) {
-    lines.push(`  Note: ${failedChains.length} chain(s) failed (${failedChains.join(", ")}). Results may be partial.`);
-  }
 
   if (entries.length === 0) {
     lines.push(``);
@@ -3216,7 +3211,7 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
   lines.push(`--- Fee Revenue (at current rates) ---`);
   lines.push(`  Curator Fee: ${formatPct(opts.curatorFeePct)} of vault yield`);
   if (opts.estimatedAnnualFeeRevenueUsd != null) {
-    lines.push(`  Estimated Annual Fee Revenue: ~${formatUsd(opts.estimatedAnnualFeeRevenueUsd)}/yr`);
+    lines.push(`  Estimated Annual Fee Revenue: ~${formatUsd(opts.estimatedAnnualFeeRevenueUsd)}/yr (gross, incl. incentives)`);
     lines.push(`    = ${formatPct(opts.curatorFeePct)} x ${formatPct(opts.liveApyTotal)} x ${formatUsd(opts.tvlUsd)} TVL`);
     lines.push(`    Both TVL and APY are variable — this is a snapshot projection.`);
   } else {

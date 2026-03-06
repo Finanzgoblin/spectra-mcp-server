@@ -236,7 +236,6 @@ the vault contract address won't appear in pool activity data.`,
     async ({ chain }) => {
       try {
         let entries: Array<{ metavault: any; chain: string }>;
-        let failedChains: string[] = [];
 
         if (chain) {
           const mvs = await fetchMetavaults(chain);
@@ -244,10 +243,9 @@ the vault contract address won't appear in pool activity data.`,
         } else {
           const result = await scanAllMetavaults();
           entries = result.metavaults;
-          failedChains = result.failedChains;
         }
 
-        const text = formatMetavaultList(entries, chain, failedChains);
+        const text = formatMetavaultList(entries, chain);
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
         const text = `Error fetching MetaVaults: ${e.message}`;
@@ -696,6 +694,9 @@ Use get_address_activity on the curator's EOA for cross-pool curator activity.`,
           firstRate = Number(sorted[0].rate) / 1e6;
           lastRate = Number(sorted[sorted.length - 1].rate) / 1e6;
 
+          let cumulativeYield = 0;
+          let cumulativeNetDeposits = 0;
+
           for (let i = 1; i < sorted.length; i++) {
             const prev = sorted[i - 1];
             const curr = sorted[i];
@@ -708,6 +709,9 @@ Use get_address_activity on the curator's EOA for cross-pool curator activity.`,
             const yieldAccrual = prevRate > 0 ? prevAssets * (currRate - prevRate) / prevRate : 0;
             const netDeposits = assetDelta - yieldAccrual;
 
+            cumulativeYield += yieldAccrual;
+            cumulativeNetDeposits += netDeposits;
+
             epochFlows.push({
               fromDate: formatDate(prev.timestamp),
               toDate: formatDate(curr.timestamp),
@@ -718,13 +722,9 @@ Use get_address_activity on the curator's EOA for cross-pool curator activity.`,
             });
           }
 
-          // Lifetime totals
-          const firstAssets = Number(sorted[0].assets) / divisor;
-          const lastAssets = Number(sorted[sorted.length - 1].assets) / divisor;
-          const totalYield = firstRate > 0 ? firstAssets * (lastRate - firstRate) / firstRate : 0;
-          const totalAssetDelta = lastAssets - firstAssets;
-          lifetimeNetFlowUsd = (totalAssetDelta - totalYield) * underlyingPriceUsd;
-          lifetimeYieldUsd = totalYield * underlyingPriceUsd;
+          // Lifetime totals — accumulated from per-epoch calculations
+          lifetimeYieldUsd = cumulativeYield * underlyingPriceUsd;
+          lifetimeNetFlowUsd = cumulativeNetDeposits * underlyingPriceUsd;
         }
 
         // ── Bridge summary ─────────────────────────────────────

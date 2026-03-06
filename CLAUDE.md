@@ -74,7 +74,7 @@ Most user interactions go through the **Spectra Router** (flash-mints, flash-red
 - No USD conversion for reward tokens — shows symbol + amount only
 
 ## Chain-Specific Notes
-- **Katana**: No default RPC in the server. Use `rpc_url="https://rpc.katana.network"` parameter.
+- **Katana**: Has a default RPC (`https://rpc.katana.network`) hardcoded in `config.ts`.
 - **Monad**: No default RPC. Requires `rpc_url` parameter.
 - Most other chains (mainnet, base, arbitrum, sonic, etc.) have hardcoded public RPCs.
 - Morpho looping markets exist on: mainnet, base, arbitrum, katana.
