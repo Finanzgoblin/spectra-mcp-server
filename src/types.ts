@@ -792,6 +792,68 @@ export interface CuratorRiskSummary {
 }
 
 // =============================================================================
+// Borrow Rate Risk Interfaces
+// =============================================================================
+
+/** Borrow rate risk assessment for a specific loop count. */
+export interface BorrowRateRisk {
+  loop: number;
+  leverage: number;
+  breakEvenRate: number;       // borrow rate (%) that makes net APY = 0
+  meanRate: number;            // historical mean borrow rate (%)
+  stdDev: number;              // historical std dev of borrow rate (%)
+  maxObservedRate: number;     // highest rate seen in the period (%)
+  probabilityUnderwater: number; // P(rate > breakEven) based on normal approx
+  safe95thPercentile: boolean;   // breakEven > mean + 2*stdDev
+}
+
+/** Historical rate analysis for risk assessment. */
+export interface BorrowRateAnalysis {
+  marketKey: string;
+  chain: string;
+  period: string;             // e.g. "30d"
+  dataPoints: number;
+  meanBorrowApy: number;      // %
+  stdDevBorrowApy: number;    // %
+  maxBorrowApy: number;       // %
+  minBorrowApy: number;       // %
+  currentBorrowApy: number;   // %
+  riskTable: BorrowRateRisk[];
+}
+
+// =============================================================================
+// Withdrawal Stress Test Interfaces
+// =============================================================================
+
+/** A single tier in the liquidity waterfall — how the vault generates cash for redemptions. */
+export interface WithdrawalWaterfallTier {
+  name: string;
+  description: string;
+  availableUsd: number;
+  coveragePct: number;         // % of requested redemption this tier covers
+  estimatedCostUsd: number;    // cost to remaining depositors from this tier
+  estimatedCostPct: number;    // cost as % of remaining TVL
+  cumulativeCoverageUsd: number;
+}
+
+/** Result of a withdrawal stress test on a MetaVault. */
+export interface StressTestResult {
+  vaultName: string;
+  chain: string;
+  vaultAddress: string;
+  tvlUsd: number;
+  redemptionPct: number;
+  redemptionAmountUsd: number;
+  marketStress: boolean;
+  waterfall: WithdrawalWaterfallTier[];
+  totalCovered: boolean;
+  totalCostToRemainingUsd: number;
+  totalCostToRemainingPct: number;
+  maxSafeRedemptionPct: number;
+  maxSafeRedemptionUsd: number;
+}
+
+// =============================================================================
 // Internal Interfaces
 // =============================================================================
 
