@@ -724,6 +724,74 @@ export interface CuratorOpportunity {
 }
 
 // =============================================================================
+// Curator Risk Monitor Interfaces
+// =============================================================================
+
+/** Alert level for a single Morpho position — scaffolds attention, not action. */
+export type RiskAlertLevel = "ok" | "watch" | "warning" | "critical";
+
+/** A single Morpho borrowing position with liquidation distance analysis. */
+export interface LiquidationAlert {
+  /** Morpho market unique key */
+  marketKey: string;
+  chain: string;
+  collateralSymbol: string;
+  debtSymbol: string;
+
+  /** Position size */
+  collateralUsd: number;
+  debtUsd: number;
+
+  /** Core risk metrics */
+  lltv: number;                    // decimal (e.g. 0.86)
+  healthFactor: number;            // (collateralUsd * lltv) / debtUsd
+  liquidationPrice: number;        // price at which liquidation triggers (USD)
+  currentPrice: number;            // current collateral price (USD, from API)
+  distanceToLiquidationPct: number; // % price drop before liquidation
+
+  /** Borrow rate context — tension between entry assumption and current reality */
+  currentBorrowRate: number;       // current borrow APY (%)
+  entryBorrowAssumption: number | null; // rate at entry if known, null if unknown
+  borrowRateDrift: number | null;  // current - entry, null if entry unknown
+
+  /** Morpho-specific mechanics */
+  isFullLiquidation: boolean;      // Morpho has no close factor — entire position at risk
+
+  /** Position tagging */
+  isSpectraPt: boolean;            // collateral is a Spectra PT
+  isLooper: boolean;               // has both collateral and borrows (loop position)
+
+  /** Risk level — scaffolds attention, multiple signals may disagree */
+  alertLevel: RiskAlertLevel;
+  alertReasons: string[];          // human-readable reasons for the alert level
+}
+
+/** Aggregate risk summary across all positions. */
+export interface CuratorRiskSummary {
+  address: string;
+  chain: string | null;            // null = scanned all chains
+  totalPositions: number;
+  borrowingPositions: number;      // positions with active debt
+
+  /** Aggregate exposure */
+  totalCollateralUsd: number;
+  totalDebtUsd: number;
+
+  /** Risk distribution */
+  positionsByLevel: Record<RiskAlertLevel, number>;
+
+  /** Lowest health factor across all positions — quick risk signal */
+  worstHealthFactor: number | null;
+  worstPositionMarket: string | null;
+
+  /** Alert threshold used for this scan */
+  alertThresholdPct: number;
+
+  /** Individual position details */
+  positions: LiquidationAlert[];
+}
+
+// =============================================================================
 // Internal Interfaces
 // =============================================================================
 
