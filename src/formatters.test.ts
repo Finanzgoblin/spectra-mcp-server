@@ -20,6 +20,7 @@ import {
   extractLpApyBreakdown,
   formatLpApyLines,
   estimatePriceImpact,
+  estimatePendlePriceImpact,
   estimateLoopingEntryCost,
   buildQuoteFromPt,
   detectActivityCycles,
@@ -32,6 +33,9 @@ import {
   formatMetavaultStrategy,
   formatCuratorDashboard,
   formatObservationCoverage,
+  pendleDaysToMaturity,
+  formatPendleMarketCompact,
+  formatPendleMarketSummary,
   ROUTER_BATCHABLE_TYPES,
   ROUTER_BATCH_FOOTNOTE,
 } from "./formatters.js";
@@ -1685,5 +1689,315 @@ describe("formatCycleAnalysis — statistical insufficiency threshold", () => {
     const joined = lines.join("\n");
     assert.ok(!joined.includes("Do not extrapolate"), "Should NOT include 'Do not extrapolate' warning for count=6");
     assert.ok(!joined.includes("Insufficient"), "Should NOT include 'Insufficient' language for count=6");
+  });
+});
+
+// =============================================================================
+// Pendle: estimatePendlePriceImpact
+// =============================================================================
+
+describe("estimatePendlePriceImpact", () => {
+  it("returns 1 (100%) for zero liquidity", () => {
+    assert.equal(estimatePendlePriceImpact(10_000, 0, 100, 100, 30), 1);
+  });
+
+  it("returns 0 for zero capital", () => {
+    assert.equal(estimatePendlePriceImpact(0, 1_000_000, 100, 100, 30), 0);
+  });
+
+  it("returns constant-product estimate when pool reserves are zero", () => {
+    // totalPt + totalSy = 0 → falls back to cpImpact
+    const cpImpact = 10_000 / (2 * 1_000_000); // 0.005
+    assert.equal(estimatePendlePriceImpact(10_000, 1_000_000, 0, 0, 30), cpImpact);
+  });
+
+  it("logit model returns less impact than constant-product for balanced pools", () => {
+    // Balanced pool: PT = SY = 500, p = 0.5
+    const pendleImpact = estimatePendlePriceImpact(10_000, 1_000_000, 500, 500, 30);
+    const cpImpact = 10_000 / (2 * 1_000_000);
+    assert.ok(pendleImpact <= cpImpact,
+      `Pendle logit (${pendleImpact}) should be <= constant-product (${cpImpact})`);
+  });
+
+  it("impact increases with capital size", () => {
+    const small = estimatePendlePriceImpact(10_000, 1_000_000, 500, 500, 30);
+    const large = estimatePendlePriceImpact(100_000, 1_000_000, 500, 500, 30);
+    assert.ok(large > small, `$100K impact (${large}) should exceed $10K impact (${small})`);
+  });
+
+  it("impact decreases with more liquidity", () => {
+    const thin = estimatePendlePriceImpact(10_000, 100_000, 500, 500, 30);
+    const deep = estimatePendlePriceImpact(10_000, 10_000_000, 500, 500, 30);
+    assert.ok(thin > deep, `Thin pool impact (${thin}) should exceed deep pool impact (${deep})`);
+  });
+
+  it("near-maturity pools have lower impact (higher rateScalar)", () => {
+    // Near maturity: rateScalar = 50 * 365 / 7 ≈ 2607 → very deep
+    // Far maturity: rateScalar = 50 * 365 / 365 = 50 → shallower
+    const nearMaturity = estimatePendlePriceImpact(10_000, 1_000_000, 500, 500, 7);
+    const farMaturity = estimatePendlePriceImpact(10_000, 1_000_000, 500, 500, 365);
+    assert.ok(nearMaturity < farMaturity,
+      `Near-maturity impact (${nearMaturity}) should be less than far-maturity (${farMaturity})`);
+  });
+
+  it("never exceeds constant-product estimate", () => {
+    // Even with extreme imbalance, should cap at cpImpact
+    const cpImpact = 50_000 / (2 * 500_000);
+    const result = estimatePendlePriceImpact(50_000, 500_000, 990, 10, 365);
+    assert.ok(result <= cpImpact + 1e-10,
+      `Impact (${result}) should not exceed cp estimate (${cpImpact})`);
+  });
+
+  it("handles highly imbalanced pools", () => {
+    // 99% PT, 1% SY
+    const impact = estimatePendlePriceImpact(10_000, 1_000_000, 990, 10, 30);
+    assert.ok(impact > 0 && impact <= 1, `Impact ${impact} should be between 0 and 1`);
+  });
+
+  it("handles 1-day maturity without error", () => {
+    const impact = estimatePendlePriceImpact(10_000, 1_000_000, 500, 500, 1);
+    assert.ok(impact >= 0 && impact <= 1, `Impact ${impact} should be valid`);
+  });
+
+  it("scales linearly with amount (logit model)", () => {
+    const impact1 = estimatePendlePriceImpact(10_000, 1_000_000, 500, 500, 30);
+    const impact2 = estimatePendlePriceImpact(20_000, 1_000_000, 500, 500, 30);
+    // Logit model is linear in amount (same formula structure)
+    assert.ok(Math.abs(impact2 - 2 * impact1) < 1e-10,
+      `Double capital (${impact2}) should produce double impact (${2 * impact1})`);
+  });
+});
+
+// =============================================================================
+// Pendle: pendleDaysToMaturity
+// =============================================================================
+
+describe("pendleDaysToMaturity", () => {
+  it("returns 0 for past expiry dates", () => {
+    assert.equal(pendleDaysToMaturity("2020-01-01T00:00:00Z"), 0);
+  });
+
+  it("returns positive days for future dates", () => {
+    const future = new Date(Date.now() + 30 * 86_400_000).toISOString();
+    assert.equal(pendleDaysToMaturity(future), 30);
+  });
+
+  it("handles ISO date strings without time component", () => {
+    // Far future to ensure it's always positive
+    const days = pendleDaysToMaturity("2030-06-15T00:00:00Z");
+    assert.ok(days > 0, `Should return positive days for 2030 date, got ${days}`);
+  });
+
+  it("returns 0 for epoch date", () => {
+    assert.equal(pendleDaysToMaturity("1970-01-01T00:00:00Z"), 0);
+  });
+
+  it("rounds to nearest integer", () => {
+    // 30.5 days from now
+    const halfDayOffset = new Date(Date.now() + 30.5 * 86_400_000).toISOString();
+    const result = pendleDaysToMaturity(halfDayOffset);
+    assert.ok(result === 30 || result === 31, `Should round to 30 or 31, got ${result}`);
+  });
+});
+
+// =============================================================================
+// Pendle: formatPendleMarketCompact
+// =============================================================================
+
+describe("formatPendleMarketCompact", () => {
+  function makePendleMarket(overrides?: Partial<PendleMarket>): PendleMarket {
+    return {
+      address: "0x1234567890abcdef1234567890abcdef12345678",
+      name: "PT USDC 26MAR2026",
+      expiry: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+      pt: "0xptptpt",
+      yt: "0xytytyt",
+      sy: "0xsysysy",
+      underlyingAsset: "0xunderlying",
+      chainId: 1,
+      isPrime: false,
+      categoryIds: [],
+      details: {
+        impliedApy: 0.05,
+        underlyingApy: 0.03,
+        aggregatedApy: 0.08,
+        maxBoostedApy: 0.12,
+        swapFeeApy: 0.02,
+        pendleApy: 0.06,
+        totalTvl: 5_000_000,
+        liquidity: 2_000_000,
+        tradingVolume: 500_000,
+        feeRate: 0.003,
+        totalPt: 1000,
+        totalSy: 800,
+        totalSupply: 0,
+        totalActiveSupply: 0,
+      },
+      ...overrides,
+    };
+  }
+
+  it("includes market name and chain", () => {
+    const m = makePendleMarket();
+    const result = formatPendleMarketCompact(m, "ethereum");
+    assert.ok(result.includes("PT USDC 26MAR2026"));
+    assert.ok(result.includes("ethereum"));
+  });
+
+  it("includes implied APY, LP APY, and variable APY", () => {
+    const m = makePendleMarket();
+    const result = formatPendleMarketCompact(m, "ethereum");
+    assert.ok(result.includes("Impl 5.00%"), `Should have implied APY, got: ${result}`);
+    assert.ok(result.includes("LP 8.00%"), `Should have LP APY, got: ${result}`);
+    assert.ok(result.includes("Var 3.00%"), `Should have variable APY, got: ${result}`);
+  });
+
+  it("includes TVL and liquidity", () => {
+    const m = makePendleMarket();
+    const result = formatPendleMarketCompact(m, "ethereum");
+    assert.ok(result.includes("TVL"), "Should include TVL");
+    assert.ok(result.includes("Liq"), "Should include liquidity");
+  });
+
+  it("shows prime star when isPrime is true", () => {
+    const m = makePendleMarket({ isPrime: true });
+    const result = formatPendleMarketCompact(m, "ethereum");
+    assert.ok(result.includes("★"), "Should show prime star");
+  });
+
+  it("omits prime star when isPrime is false", () => {
+    const m = makePendleMarket({ isPrime: false });
+    const result = formatPendleMarketCompact(m, "ethereum");
+    assert.ok(!result.includes("★"), "Should not show prime star");
+  });
+
+  it("shows boost when maxBoostedApy > aggregatedApy", () => {
+    const m = makePendleMarket();
+    // defaults have maxBoostedApy=0.12 > aggregatedApy=0.08
+    const result = formatPendleMarketCompact(m, "ethereum");
+    assert.ok(result.includes("Boost"), "Should show boost");
+    assert.ok(result.includes("12.00%"), "Should show max boosted APY");
+  });
+
+  it("omits boost when maxBoostedApy <= aggregatedApy", () => {
+    const m = makePendleMarket({
+      details: {
+        impliedApy: 0.05, underlyingApy: 0.03, aggregatedApy: 0.08,
+        maxBoostedApy: 0.08, swapFeeApy: 0.02, pendleApy: 0.06,
+        totalTvl: 5_000_000, liquidity: 2_000_000, tradingVolume: 500_000,
+        feeRate: 0.003, totalPt: 1000, totalSy: 800,
+        totalSupply: 0, totalActiveSupply: 0,
+      },
+    });
+    const result = formatPendleMarketCompact(m, "ethereum");
+    assert.ok(!result.includes("Boost"), "Should not show boost when equal");
+  });
+
+  it("includes market address", () => {
+    const m = makePendleMarket();
+    const result = formatPendleMarketCompact(m, "ethereum");
+    assert.ok(result.includes("Market: 0x1234"), "Should include market address");
+  });
+});
+
+// =============================================================================
+// Pendle: formatPendleMarketSummary
+// =============================================================================
+
+describe("formatPendleMarketSummary", () => {
+  function makePendleMarket(overrides?: Partial<PendleMarket>): PendleMarket {
+    return {
+      address: "0x1234567890abcdef1234567890abcdef12345678",
+      name: "PT stETH 26JUN2026",
+      expiry: new Date(Date.now() + 90 * 86_400_000).toISOString(),
+      pt: "0xpt_address",
+      yt: "0xyt_address",
+      sy: "0xsy_address",
+      underlyingAsset: "0xunderlying",
+      chainId: 1,
+      isPrime: true,
+      categoryIds: ["LRT"],
+      details: {
+        impliedApy: 0.04,
+        underlyingApy: 0.035,
+        aggregatedApy: 0.07,
+        maxBoostedApy: 0.10,
+        swapFeeApy: 0.015,
+        pendleApy: 0.055,
+        totalTvl: 10_000_000,
+        liquidity: 4_000_000,
+        tradingVolume: 1_000_000,
+        feeRate: 0.005,
+        totalPt: 2000,
+        totalSy: 1500,
+        totalSupply: 0,
+        totalActiveSupply: 0,
+      },
+      ...overrides,
+    };
+  }
+
+  it("includes market name", () => {
+    const result = formatPendleMarketSummary(makePendleMarket(), "ethereum");
+    assert.ok(result.includes("PT stETH 26JUN2026"));
+  });
+
+  it("includes chain name", () => {
+    const result = formatPendleMarketSummary(makePendleMarket(), "arbitrum");
+    assert.ok(result.includes("Chain: arbitrum"));
+  });
+
+  it("includes PT, YT, SY addresses", () => {
+    const result = formatPendleMarketSummary(makePendleMarket(), "ethereum");
+    assert.ok(result.includes("PT: 0xpt_address"));
+    assert.ok(result.includes("YT: 0xyt_address"));
+    assert.ok(result.includes("SY: 0xsy_address"));
+  });
+
+  it("includes implied and underlying APY with spread", () => {
+    const result = formatPendleMarketSummary(makePendleMarket(), "ethereum");
+    assert.ok(result.includes("Implied APY (Fixed Rate): 4.00%"));
+    assert.ok(result.includes("Underlying APY (Variable): 3.50%"));
+    assert.ok(result.includes("Fixed vs Variable Spread: 0.50%"));
+  });
+
+  it("includes LP APY breakdown", () => {
+    const result = formatPendleMarketSummary(makePendleMarket(), "ethereum");
+    assert.ok(result.includes("LP APY: 7.00%"));
+    assert.ok(result.includes("Swap Fees: 1.50%"));
+    assert.ok(result.includes("PENDLE Incentives: 5.50%"));
+  });
+
+  it("shows max boosted APY when positive", () => {
+    const result = formatPendleMarketSummary(makePendleMarket(), "ethereum");
+    assert.ok(result.includes("Max Boosted LP APY: 10.00%"));
+  });
+
+  it("omits max boosted line when 0", () => {
+    const m = makePendleMarket();
+    m.details.maxBoostedApy = 0;
+    const result = formatPendleMarketSummary(m, "ethereum");
+    assert.ok(!result.includes("Max Boosted LP APY"), "Should omit max boosted when 0");
+  });
+
+  it("shows Prime and category tags", () => {
+    const result = formatPendleMarketSummary(makePendleMarket(), "ethereum");
+    assert.ok(result.includes("★ Prime"));
+    assert.ok(result.includes("LRT"));
+  });
+
+  it("includes TVL, liquidity, volume, fee rate", () => {
+    const result = formatPendleMarketSummary(makePendleMarket(), "ethereum");
+    assert.ok(result.includes("TVL:"), "Should include TVL");
+    assert.ok(result.includes("Pool Liquidity:"), "Should include liquidity");
+    assert.ok(result.includes("24h Volume:"), "Should include volume");
+    assert.ok(result.includes("Fee Rate:"), "Should include fee rate");
+  });
+
+  it("includes pool reserves", () => {
+    const result = formatPendleMarketSummary(makePendleMarket(), "ethereum");
+    assert.ok(result.includes("Pool Reserves:"), "Should include pool reserves");
+    assert.ok(result.includes("PT"), "Should include PT in reserves");
+    assert.ok(result.includes("SY"), "Should include SY in reserves");
   });
 });

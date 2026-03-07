@@ -44,6 +44,18 @@
  *
  *   Pendle:
  *   - pendle_list_markets             -> List active Pendle markets
+ *   - pendle_get_market_details       -> Detailed view of a single Pendle market
+ *   - pendle_get_best_fixed_yields    -> Best fixed-rate opportunities across Pendle chains
+ *   - pendle_get_portfolio            -> Wallet positions on Pendle (PT, YT, LP)
+ *   - pendle_scan_opportunities       -> Capital-aware Pendle opportunity scanner
+ *   - pendle_get_market_capacity      -> Multi-size impact curve for pool depth
+ *   - pendle_get_yield_curve          -> Term structure across Pendle maturities
+ *   - pendle_list_expiring_markets    -> Markets approaching maturity
+ *   - pendle_scan_yt_arbitrage        -> YT mispricing scanner
+ *   - pendle_get_protocol_stats       -> Protocol-wide aggregate stats
+ *   - pendle_get_looping_strategy    -> Leveraged PT + Morpho looping calculator
+ *   - pendle_quote_trade             -> PT trade quote with impact estimation
+ *   - pendle_simulate_trade          -> Portfolio impact simulation for PT trades
  *
  *   Cross-protocol (mv_):
  *   - mv_compare_yield                -> Side-by-side Pendle vs Spectra yield comparison
@@ -73,6 +85,18 @@ import { register as registerVe } from "./tools/ve.js";
 import { register as registerMetavault } from "./tools/metavault.js";
 import { register as registerContext } from "./tools/context.js";
 import { register as registerPendle } from "./tools/pendle.js";
+import { register as registerPendleDetails } from "./tools/pendle_details.js";
+import { register as registerPendleYields } from "./tools/pendle_yields.js";
+import { register as registerPendlePortfolio } from "./tools/pendle_portfolio.js";
+import { register as registerPendleScanner } from "./tools/pendle_scanner.js";
+import { register as registerPendleCapacity } from "./tools/pendle_capacity.js";
+import { register as registerPendleYieldCurve } from "./tools/pendle_yield_curve.js";
+import { register as registerPendleExpiry } from "./tools/pendle_expiry.js";
+import { register as registerPendleYtArb } from "./tools/pendle_yt_arb.js";
+import { register as registerPendleStats } from "./tools/pendle_stats.js";
+import { register as registerPendleLooping } from "./tools/pendle_looping.js";
+import { register as registerPendleQuote } from "./tools/pendle_quote.js";
+import { register as registerPendleSimulate } from "./tools/pendle_simulate.js";
 import { register as registerCuratorScan } from "./tools/curator_scan.js";
 import { register as registerOnchain } from "./tools/onchain.js";
 import { register as registerCapacity } from "./tools/capacity.js";
@@ -108,6 +132,18 @@ registerVe(server);
 registerMetavault(server);
 registerContext(server);
 registerPendle(server);
+registerPendleDetails(server);
+registerPendleYields(server);
+registerPendlePortfolio(server);
+registerPendleScanner(server);
+registerPendleCapacity(server);
+registerPendleYieldCurve(server);
+registerPendleExpiry(server);
+registerPendleYtArb(server);
+registerPendleStats(server);
+registerPendleLooping(server);
+registerPendleQuote(server);
+registerPendleSimulate(server);
 registerCuratorScan(server);
 registerOnchain(server);
 registerCapacity(server);

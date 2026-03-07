@@ -1714,6 +1714,173 @@ export async function scanAllPendleMarkets(opts: {
 }
 
 // =============================================================================
+// Pendle Single Market Detail
+// =============================================================================
+
+/**
+ * Fetch a single Pendle market by address on a given chain.
+ * First tries the cache (populated by fetchPendleMarkets), then falls back
+ * to the single-market API endpoint.
+ */
+export async function fetchPendleMarketDetail(
+  chain: string,
+  marketAddress: string,
+): Promise<PendleMarket | null> {
+  const network = resolveNetwork(chain);
+  const pendleChainId = PENDLE_CHAIN_IDS[network];
+  if (!pendleChainId) return null;
+
+  const addrLower = marketAddress.toLowerCase();
+
+  // Try cache first (populated by pendle_list_markets or scanAllPendleMarkets)
+  const cacheKey = String(pendleChainId);
+  const cached = _pendleCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt) {
+    const found = cached.markets.find((m) => m.address.toLowerCase() === addrLower);
+    if (found) return found;
+  }
+
+  // Fetch all markets for this chain (populates cache) — efficient because cache is shared
+  const result = await fetchPendleMarkets(chain);
+  if (result.ok) {
+    const found = result.markets.find((m) => m.address.toLowerCase() === addrLower);
+    if (found) return found;
+  }
+
+  // Try single-market endpoint as fallback (for inactive/expired markets)
+  try {
+    const raw = await fetchPendle(`/v1/${pendleChainId}/markets/${marketAddress}`) as any;
+    if (raw && typeof raw === "object" && typeof raw.address === "string") {
+      const validated = validatePendleMarkets([raw]);
+      return validated.length > 0 ? validated[0] : null;
+    }
+  } catch {
+    // Best-effort — market may not exist or endpoint may not be available
+  }
+
+  return null;
+}
+
+// =============================================================================
+// Pendle User Positions
+// =============================================================================
+
+/** A single user position on a Pendle market (parsed from API response). */
+export interface PendleUserPosition {
+  marketAddress: string;
+  marketName: string;
+  chain: string;
+  chainId: number;
+  expiry: string;
+  pt: { address: string; balance: number; valueUsd: number };
+  yt: { address: string; balance: number; valueUsd: number };
+  lp: { address: string; balance: number; valueUsd: number };
+  sy: { address: string };
+  underlyingAsset: string;
+  impliedApy: number;   // decimal
+  lpApy: number;        // decimal
+  totalValueUsd: number;
+  isExpired: boolean;
+}
+
+/**
+ * Fetch user positions on Pendle for a given chain.
+ * Tries Pendle's user-data endpoint. Returns empty array on failure.
+ */
+export async function fetchPendleUserPositions(
+  chain: string,
+  userAddress: string,
+): Promise<{ positions: PendleUserPosition[]; available: boolean }> {
+  const network = resolveNetwork(chain);
+  const pendleChainId = PENDLE_CHAIN_IDS[network];
+  if (!pendleChainId) return { positions: [], available: true };
+
+  try {
+    // Pendle user positions endpoint
+    const raw = await fetchPendle(
+      `/v1/${pendleChainId}/users/${userAddress}/active-positions`
+    ) as any;
+
+    const positions: PendleUserPosition[] = [];
+    const items: any[] = raw?.positions || raw || [];
+    if (!Array.isArray(items)) return { positions: [], available: true };
+
+    for (const item of items) {
+      if (!item || typeof item !== "object") continue;
+
+      const market = item.market || {};
+      const pt = item.pt || {};
+      const yt = item.yt || {};
+      const lp = item.lp || {};
+
+      positions.push({
+        marketAddress: market.address || item.marketAddress || "",
+        marketName: market.name || item.name || "Unknown",
+        chain: network,
+        chainId: pendleChainId,
+        expiry: market.expiry || item.expiry || "",
+        pt: {
+          address: stripPendleChainPrefix(pt.address || market.pt || ""),
+          balance: pt.balance || pt.amount || 0,
+          valueUsd: pt.valuation?.usd || pt.valueUsd || 0,
+        },
+        yt: {
+          address: stripPendleChainPrefix(yt.address || market.yt || ""),
+          balance: yt.balance || yt.amount || 0,
+          valueUsd: yt.valuation?.usd || yt.valueUsd || 0,
+        },
+        lp: {
+          address: stripPendleChainPrefix(lp.address || market.address || ""),
+          balance: lp.balance || lp.amount || 0,
+          valueUsd: lp.valuation?.usd || lp.valueUsd || 0,
+        },
+        sy: { address: stripPendleChainPrefix(market.sy || item.sy || "") },
+        underlyingAsset: stripPendleChainPrefix(market.underlyingAsset || item.underlyingAsset || ""),
+        impliedApy: market.details?.impliedApy || item.impliedApy || 0,
+        lpApy: market.details?.aggregatedApy || item.lpApy || 0,
+        totalValueUsd: (pt.valuation?.usd || pt.valueUsd || 0) +
+          (yt.valuation?.usd || yt.valueUsd || 0) +
+          (lp.valuation?.usd || lp.valueUsd || 0),
+        isExpired: item.expiry
+          ? new Date(item.expiry).getTime() <= Date.now()
+          : false,
+      });
+    }
+
+    return { positions, available: true };
+  } catch (err) {
+    console.error(`[pendle] Failed to fetch user positions for ${userAddress} on ${chain}: ${(err as Error).message}`);
+    return { positions: [], available: false };
+  }
+}
+
+/**
+ * Scan all Pendle chains for user positions in parallel. Best-effort.
+ */
+export async function scanAllPendleUserPositions(
+  userAddress: string,
+): Promise<{ positions: PendleUserPosition[]; failedChains: string[] }> {
+  const pendleChains = Object.keys(PENDLE_CHAIN_IDS);
+  const failedChains: string[] = [];
+  const allPositions: PendleUserPosition[] = [];
+
+  const results = await Promise.allSettled(
+    pendleChains.map((chain) => fetchPendleUserPositions(chain, userAddress))
+  );
+
+  results.forEach((result, i) => {
+    if (result.status === "fulfilled") {
+      if (!result.value.available) failedChains.push(pendleChains[i]);
+      allPositions.push(...result.value.positions);
+    } else {
+      failedChains.push(pendleChains[i]);
+    }
+  });
+
+  return { positions: allPositions, failedChains };
+}
+
+// =============================================================================
 // On-Chain Address Type Detection
 // =============================================================================
 
