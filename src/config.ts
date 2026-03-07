@@ -225,23 +225,6 @@ export const CHAIN_RPC_URLS: Partial<Record<string, string>> = {
 // Standard address on mainnet/base/arbitrum: 0xBBBBBBBBbb9cC5e90e3b3Af64bdAF62C37EEFFCb
 // Katana: 0xD50F2DffFd62f94Ee4AEd9ca05C61d0753268aBc
 // The correct per-chain address is available from the Morpho GraphQL API via morphoBlue { address }.
-// market(bytes32 id) returns (totalSupplyAssets, totalSupplyShares, totalBorrowAssets,
-//                              totalBorrowShares, lastUpdate, fee) — all uint128.
-// DISSOLUTION: If Morpho governance redeploys, update per-chain addresses.
-// The GraphQL API's morphoBlue.address field is the canonical source of truth.
-// Override via env: MORPHO_BLUE_<CHAIN>=0x... (e.g., MORPHO_BLUE_MAINNET=0x...)
-export const MORPHO_BLUE = {
-  addresses: {
-    mainnet:  process.env.MORPHO_BLUE_MAINNET  || "0xBBBBBBBBbb9cC5e90e3b3Af64bdAF62C37EEFFCb",
-    base:     process.env.MORPHO_BLUE_BASE     || "0xBBBBBBBBbb9cC5e90e3b3Af64bdAF62C37EEFFCb",
-    arbitrum: process.env.MORPHO_BLUE_ARBITRUM  || "0xBBBBBBBBbb9cC5e90e3b3Af64bdAF62C37EEFFCb",
-    katana:   process.env.MORPHO_BLUE_KATANA   || "0xD50F2DffFd62f94Ee4AEd9ca05C61d0753268aBc",
-  } as Record<string, string>,
-  selectors: {
-    market: "0x5c60e39a", // keccak256("market(bytes32)")[:4] — verified on mainnet + katana
-  },
-} as const;
-
 // Fallback RPCs — tried when the primary RPC fails. Order matters (first fallback tried first).
 // Every chain with a primary RPC should have at least one fallback to survive rate-limits.
 export const CHAIN_RPC_FALLBACKS: Partial<Record<string, string[]>> = {

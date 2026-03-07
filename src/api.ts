@@ -950,7 +950,7 @@ async function fetchChainPools(chain: string): Promise<SpectraPt[]> {
 // Multi-Chain Pool Scanner
 // =============================================================================
 
-export interface ChainScanOptions {
+interface ChainScanOptions {
   min_tvl_usd?: number;
   min_liquidity_usd?: number;
   asset_filter?: string;
