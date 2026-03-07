@@ -28,6 +28,11 @@
 - `src/tools/pendle_yields.ts` — `pendle_get_best_fixed_yields` (multi-chain best fixed rates)
 - `src/tools/pendle_portfolio.ts` — `pendle_get_portfolio` (wallet positions across Pendle chains)
 - `src/tools/pendle_scanner.ts` — `pendle_scan_opportunities` (capital-aware Pendle scanner with Morpho looping)
+- `src/tools/pendle_capacity.ts` — `pendle_get_market_capacity` (multi-size impact curve using logit AMM model)
+- `src/tools/pendle_yield_curve.ts` — `pendle_get_yield_curve` (term structure for a given underlying across Pendle chains)
+- `src/tools/pendle_expiry.ts` — `pendle_list_expiring_markets` (scan for markets approaching maturity, urgency grouping)
+- `src/tools/pendle_yt_arb.ts` — `pendle_scan_yt_arbitrage` (YT mispricing scanner, direct AMM execution)
+- `src/tools/pendle_stats.ts` — `pendle_get_protocol_stats` (aggregate TVL, market count, volume across all chains)
 - `src/tools/curator_scan.ts` — `mv_scan_curator_opportunities` (cross-protocol Spectra + Pendle capital-aware scanner)
 - `src/tools/metavault.ts` — `spectra_list_metavaults`, `spectra_model_metavault`, `spectra_get_curator_dashboard`
 - `src/tools/protocol.ts` — `spectra_get_protocol_stats`, `spectra_list_chains`
