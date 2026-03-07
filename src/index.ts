@@ -53,6 +53,9 @@
  *   - pendle_list_expiring_markets    -> Markets approaching maturity
  *   - pendle_scan_yt_arbitrage        -> YT mispricing scanner
  *   - pendle_get_protocol_stats       -> Protocol-wide aggregate stats
+ *   - pendle_get_looping_strategy    -> Leveraged PT + Morpho looping calculator
+ *   - pendle_quote_trade             -> PT trade quote with impact estimation
+ *   - pendle_simulate_trade          -> Portfolio impact simulation for PT trades
  *
  *   Cross-protocol (mv_):
  *   - mv_compare_yield                -> Side-by-side Pendle vs Spectra yield comparison
@@ -91,6 +94,9 @@ import { register as registerPendleYieldCurve } from "./tools/pendle_yield_curve
 import { register as registerPendleExpiry } from "./tools/pendle_expiry.js";
 import { register as registerPendleYtArb } from "./tools/pendle_yt_arb.js";
 import { register as registerPendleStats } from "./tools/pendle_stats.js";
+import { register as registerPendleLooping } from "./tools/pendle_looping.js";
+import { register as registerPendleQuote } from "./tools/pendle_quote.js";
+import { register as registerPendleSimulate } from "./tools/pendle_simulate.js";
 import { register as registerCuratorScan } from "./tools/curator_scan.js";
 import { register as registerOnchain } from "./tools/onchain.js";
 import { register as registerCapacity } from "./tools/capacity.js";
@@ -135,6 +141,9 @@ registerPendleYieldCurve(server);
 registerPendleExpiry(server);
 registerPendleYtArb(server);
 registerPendleStats(server);
+registerPendleLooping(server);
+registerPendleQuote(server);
+registerPendleSimulate(server);
 registerCuratorScan(server);
 registerOnchain(server);
 registerCapacity(server);
