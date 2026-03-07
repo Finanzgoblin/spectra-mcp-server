@@ -1,5 +1,5 @@
 /**
- * Tools: get_protocol_stats, get_supported_chains
+ * Tools: spectra_get_protocol_stats, spectra_list_chains
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -9,11 +9,11 @@ import { formatPct } from "../formatters.js";
 
 export function register(server: McpServer): void {
   // ===========================================================================
-  // get_protocol_stats
+  // spectra_get_protocol_stats
   // ===========================================================================
 
   server.tool(
-    "get_protocol_stats",
+    "spectra_get_protocol_stats",
     `Get Spectra protocol-wide statistics: SPECTRA token supply, circulating supply,
 current weekly emissions, rebase formula, and general protocol info.
 Use this for questions about SPECTRA tokenomics or protocol health.
@@ -26,7 +26,7 @@ Protocol context:
 - Weekly emissions decay exponentially and eventually stabilize.
 - Gauge emissions boost LP APY across all pools (see LP APY breakdown in pool tools).
 
-Use get_ve_info for live veSPECTRA data and boost calculations.`,
+Use spectra_get_ve_info for live veSPECTRA data and boost calculations.`,
     {},
     async () => {
       try {
@@ -76,9 +76,9 @@ Use get_ve_info for live veSPECTRA data and boost calculations.`,
           `    Governance: https://gov.spectra.finance`,
           ``,
           `--- Next Steps ---`,
-          `• Live veSPECTRA data: get_ve_info() for current total supply, lock stats, and boost calculation`,
-          `• Yield discovery: get_best_fixed_yields() or scan_opportunities(capital_usd=YOUR_AMOUNT) for cross-chain opportunities`,
-          `• Tokenomics deep-dive: compare_yield(chain=CHAIN, pt_address=PT, ve_spectra_balance=YOUR_BAL) to see boost impact on LP APY`,
+          `• Live veSPECTRA data: spectra_get_ve_info() for current total supply, lock stats, and boost calculation`,
+          `• Yield discovery: spectra_get_best_fixed_yields() or spectra_scan_opportunities(capital_usd=YOUR_AMOUNT) for cross-chain opportunities`,
+          `• Tokenomics deep-dive: spectra_compare_yield(chain=CHAIN, pt_address=PT, ve_spectra_balance=YOUR_BAL) to see boost impact on LP APY`,
         ];
 
         const text = lines.join("\n");
@@ -91,11 +91,11 @@ Use get_ve_info for live veSPECTRA data and boost calculations.`,
   );
 
   // ===========================================================================
-  // get_supported_chains
+  // spectra_list_chains
   // ===========================================================================
 
   server.tool(
-    "get_supported_chains",
+    "spectra_list_chains",
     `List all blockchain networks supported by Spectra Finance.
 Use this as a starting point to discover what's available.
 
@@ -113,10 +113,10 @@ on mainnet, base, arbitrum, and katana. veSPECTRA governance lives on Base.`,
         `  Tip: "ethereum" is also accepted as an alias for "mainnet".`,
         ``,
         `--- Next Steps ---`,
-        `• Scan all chains: get_best_fixed_yields() for raw APY ranking across all chains`,
-        `• Capital-aware scan: scan_opportunities(capital_usd=YOUR_AMOUNT) for price impact + looping analysis`,
-        `• Chain-specific pools: list_pools(chain=CHAIN_NAME) to see available pools on a specific chain`,
-        `• Protocol stats: get_protocol_stats() for tokenomics and emissions data`,
+        `• Scan all chains: spectra_get_best_fixed_yields() for raw APY ranking across all chains`,
+        `• Capital-aware scan: spectra_scan_opportunities(capital_usd=YOUR_AMOUNT) for price impact + looping analysis`,
+        `• Chain-specific pools: spectra_list_pools(chain=CHAIN_NAME) to see available pools on a specific chain`,
+        `• Protocol stats: spectra_get_protocol_stats() for tokenomics and emissions data`,
       ];
 
       const text = lines.join("\n");

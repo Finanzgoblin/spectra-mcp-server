@@ -1,5 +1,5 @@
 /**
- * Tool: get_expiring_pools
+ * Tool: spectra_list_expiring_pools
  *
  * Scans all Spectra chains for pools approaching maturity.
  * Designed for operators who need lead time to create follow-up pools
@@ -140,7 +140,7 @@ function assessReadiness(
 
 export function register(server: McpServer): void {
   server.tool(
-    "get_expiring_pools",
+    "spectra_list_expiring_pools",
     `Scan all Spectra chains for pools approaching maturity.
 
 Returns pools expiring within the specified threshold (default 21 days / 3 weeks),
@@ -181,9 +181,9 @@ Urgency levels:
 Set include_expired=true to also show recently matured pools (if the API returns them).
 By default only active (non-expired) pools are shown.
 
-Use plan_rollover on a specific MetaVault for automated rollover candidate discovery.
-Use get_yield_curve to see what maturities already exist for the same underlying.
-Use list_pools to check if a successor pool has already been created.`,
+Use mv_plan_rollover on a specific MetaVault for automated rollover candidate discovery.
+Use spectra_get_yield_curve to see what maturities already exist for the same underlying.
+Use spectra_list_pools to check if a successor pool has already been created.`,
     {
       threshold_days: z
         .number()
@@ -306,7 +306,7 @@ Use list_pools to check if a successor pool has already been created.`,
           }
           lines.push("");
           lines.push(
-            "All pools have sufficient runway. Use list_pools to see active pools."
+            "All pools have sufficient runway. Use spectra_list_pools to see active pools."
           );
           return { content: [{ type: "text" as const, text: lines.join("\n") }] };
         }
@@ -551,7 +551,7 @@ Use list_pools to check if a successor pool has already been created.`,
         if (needsPool.length > 0) {
           const p = needsPool[0];
           lines.push(
-            `• Deploy: Use get_pt_details(chain="${p.chain}", pt_address="${p.ptAddress}") to review IBT specs before deploying successor`
+            `• Deploy: Use spectra_get_pt_details(chain="${p.chain}", pt_address="${p.ptAddress}") to review IBT specs before deploying successor`
           );
         }
         if (needsGauge.length > 0) {
@@ -560,10 +560,10 @@ Use list_pools to check if a successor pool has already been created.`,
           );
         }
         lines.push(
-          `• Yield curve: get_yield_curve(underlying="SYMBOL") to see all active maturities for an asset`
+          `• Yield curve: spectra_get_yield_curve(underlying="SYMBOL") to see all active maturities for an asset`
         );
         lines.push(
-          `• MetaVault rollover: plan_rollover(chain, metavault_address) for automated candidate discovery`
+          `• MetaVault rollover: mv_plan_rollover(chain, metavault_address) for automated candidate discovery`
         );
 
         const text = lines.join("\n");

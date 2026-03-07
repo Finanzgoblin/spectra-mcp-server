@@ -1,5 +1,5 @@
 /**
- * Tool: scan_curator_opportunities
+ * Tool: mv_scan_curator_opportunities
  *
  * Cross-protocol opportunity scanner for MetaVault curators.
  * Scans both Spectra and Pendle across all chains, computes capital-aware
@@ -46,11 +46,11 @@ import type { BoostInfo } from "../formatters.js";
 
 export function register(server: McpServer): void {
   server.tool(
-    "scan_curator_opportunities",
+    "mv_scan_curator_opportunities",
     `Scan all Spectra AND Pendle chains for the best yield opportunities, sized to your capital.
 Cross-protocol scanner designed for MetaVault curators who can allocate to either protocol.
 
-Unlike scan_opportunities (Spectra-only), this tool includes Pendle markets with:
+Unlike spectra_scan_opportunities (Spectra-only), this tool includes Pendle markets with:
 - Capital-aware price impact for BOTH protocols
 - Maturity-aware cross-protocol matching (same underlying + similar expiry)
 - Morpho looping analysis for Spectra PTs (Pendle looping in future phase)
@@ -58,15 +58,15 @@ Unlike scan_opportunities (Spectra-only), this tool includes Pendle markets with
 - External Merkl campaign APR for both protocols (incentive programs beyond native yield)
 - Protocol tags ([Spectra] vs [Pendle]) and cross-protocol match indicators
 
-Unlike get_best_fixed_yields or list_pendle_markets, this tool computes effective APY
+Unlike spectra_get_best_fixed_yields or pendle_list_markets, this tool computes effective APY
 at YOUR capital size — a high-APY pool with thin liquidity may be useless at your scale.
 
-The ranking can disagree with scan_opportunities because it includes a different opportunity
+The ranking can disagree with spectra_scan_opportunities because it includes a different opportunity
 set (Pendle markets). This disagreement is intentional — both tools measure different things.
 
-Use compare_pendle_spectra for detailed head-to-head on a specific chain.
-Use model_metavault_strategy to model blended Spectra+Pendle MetaVault allocation.
-Use get_curator_dashboard for operational monitoring of an existing MetaVault.`,
+Use mv_compare_yield for detailed head-to-head on a specific chain.
+Use spectra_model_metavault to model blended Spectra+Pendle MetaVault allocation.
+Use spectra_get_curator_dashboard for operational monitoring of an existing MetaVault.`,
     {
       capital_usd: z
         .number()

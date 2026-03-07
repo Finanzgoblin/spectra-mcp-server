@@ -1,4 +1,4 @@
-# Spectra Finance MCP Server
+# MetaVault MCP
 
 Makes [Spectra Finance](https://spectra.finance) discoverable and usable by AI agents via the [Model Context Protocol](https://modelcontextprotocol.io).
 
@@ -37,9 +37,9 @@ Any AI agent (Claude, GPT, open-source) that supports MCP can now:
 - **Plan** position rollovers for expiring MetaVault positions — cross-protocol candidate ranking with entry impact, yield gap, and overlap windows
 - **Aggregate** multi-vault curator portfolios — total AUM, blended APY, fee revenue projection, concentration analysis by underlying/chain
 - **Monitor** pool expiry across all chains with readiness assessment — successor pool detection, gauge status from governance API, and operator checklist (deploy pool / submit gauge / ready for migration)
-- **Learn** protocol mechanics on-demand via `get_protocol_context` (PT/YT identity, Router batching, deposit paths, glossary, workflow routing)
+- **Learn** protocol mechanics on-demand via `mv_get_protocol_context` (PT/YT identity, Router batching, deposit paths, glossary, workflow routing)
 
-The agent doesn't need to understand PT/YT mechanics -- it just calls `scan_opportunities` with its capital size and gets ranked, actionable data. If it needs to understand *why* something works that way, it calls `get_protocol_context`.
+The agent doesn't need to understand PT/YT mechanics -- it just calls `spectra_scan_opportunities` with its capital size and gets ranked, actionable data. If it needs to understand *why* something works that way, it calls `mv_get_protocol_context`.
 
 ## Open Emergence Architecture
 
@@ -48,14 +48,14 @@ The server is designed so that AI agents can **discover novel strategies without
 ### The Three Layers
 
 ```
-Layer 1: Protocol Context (get_protocol_context tool + resources)
+Layer 1: Protocol Context (mv_get_protocol_context tool + resources)
   → Teaches the "physics" of the protocol: PT/YT identity, Router batching, minting
   → Available as a callable tool (on-demand) and as MCP resources
   → Static knowledge — what CAN happen, not what IS happening
 
 Layer 2: Tool Descriptions (every tool's description string)
   → Teaches domain-specific mechanics relevant to that tool's data
-  → Cross-reference nudges: "use get_portfolio to check actual holdings"
+  → Cross-reference nudges: "use spectra_get_portfolio to check actual holdings"
   → Uses "could be" language, not "is" — preserves ambiguity where it exists
   → Calls out hidden mechanics that could mislead (e.g., AMM_ADD_LIQUIDITY can mint YT)
 
@@ -109,17 +109,17 @@ Layer 4: Observation Coverage (quantifies blind spots in tool output)
 - **Teach mechanics, not conclusions.** The server explains that AMM_ADD_LIQUIDITY *could be* a mint+LP batch operation — it doesn't conclude "this user is accumulating YT."
 - **Present competing interpretations, not single narratives.** Activity analysis outputs multiple interpretation branches (A/B/C) that predict different future behavior. The agent must bring external evidence to collapse them. This friction surface prevents premature pattern-matching — the most common failure mode in wallet strategy analysis.
 - **Flag statistical insufficiency.** Small repetition counts (≤5 cycle detections) are explicitly flagged as insufficient for extrapolation. The agent cannot treat N=3 as a confirmed pattern.
-- **Every tool cross-references at least one other tool.** This creates analytical workflows without dictating them. The agent learns to check `get_portfolio` after seeing activity patterns, not because it was told to.
+- **Every tool cross-references at least one other tool.** This creates analytical workflows without dictating them. The agent learns to check `spectra_get_portfolio` after seeing activity patterns, not because it was told to.
 - **Hidden mechanics are called out where they can mislead.** The Spectra Router batches multiple operations atomically. A `SELL_PT` event might actually be YT acquisition via flash-mint. Tool descriptions teach this so agents don't draw wrong conclusions from pool data alone.
-- **Full addresses in output, never truncated.** When addresses appear in activity data, they're shown in full so the agent can pass them directly to `get_portfolio` without needing a block explorer.
-- **Discovery tools warn about capital-awareness gaps.** `get_best_fixed_yields` explicitly says "this ranks by raw APY — use `scan_opportunities` for capital-aware sizing."
+- **Full addresses in output, never truncated.** When addresses appear in activity data, they're shown in full so the agent can pass them directly to `spectra_get_portfolio` without needing a block explorer.
+- **Discovery tools warn about capital-awareness gaps.** `spectra_get_best_fixed_yields` explicitly says "this ranks by raw APY — use `spectra_scan_opportunities` for capital-aware sizing."
 - **Quantify blind spots, not just interpretations.** Tools now output observation coverage metrics: what percentage of behavior is visible, what data sources were consulted vs available, and how long dark periods lasted. These are not interpretations — they're structural measurements of the analysis's own incompleteness. An agent that sees 35% value coverage should size its confidence accordingly, regardless of how coherent the best-fitting interpretation looks.
 
 ### Why This Matters
 
 A cold-start agent with zero prior knowledge of Spectra can:
-1. Call `get_pool_activity` — see trading patterns with ⚠ hints about ambiguous events
-2. Call `get_portfolio` on flagged addresses — see Position Shape (balance ratios like "YT/PT 4:1")
+1. Call `spectra_get_pool_activity` — see trading patterns with ⚠ hints about ambiguous events
+2. Call `spectra_get_portfolio` on flagged addresses — see Position Shape (balance ratios like "YT/PT 4:1")
 3. Read the cross-reference nudges — compose its own analytical workflow
 4. Identify novel strategies the server was never explicitly programmed to detect
 
@@ -133,44 +133,44 @@ The observation coverage layer addresses a deeper problem: even perfect interpre
 
 | Tool | Description |
 |------|-------------|
-| `get_best_fixed_yields` | Scan ALL chains for top fixed-rate opportunities. The main discovery tool. Supports `compact` mode. |
-| `list_pools` | List all active pools on a specific chain, sorted by APY/TVL/maturity. Surfaces pool reserves, IBT APR composition, maturityValue, multipliers, and tags. Supports `compact` mode and `include_expired` flag. |
-| `get_pt_details` | Deep dive on a specific Principal Token -- full data including maturityValue, multipliers (points programs), tags, pool reserves, IBT APR composition, and baseIbt for wrapper tokens. |
-| `compare_yield` | Fixed (PT) vs. variable (IBT) yield comparison with spread mechanics and entry cost analysis. |
-| `get_looping_strategy` | Calculate leveraged yield via PT + Morpho looping with effective liquidation margins, borrow rate sensitivity (+1/2/3%), break-even period, and failure scenario modeling. Auto-fetches live Morpho rates when a matching market exists. |
-| `get_morpho_markets` | Find Morpho lending markets that accept Spectra PTs as collateral. Filter by chain or symbol. Shows reward incentives, vault supplier count per market. Cross-references Spectra PT addresses. |
-| `get_morpho_rate` | Get live borrow rate, state, and supply-side context for a specific Morpho market. Includes PT spread analysis, top supplier identification, and vault allocation details (% of AUM, cap utilization). |
-| `get_morpho_market_suppliers` | Supply-side analysis for a Morpho market: top suppliers ranked by size, vault vs EOA/looper identification, concentration analysis, supply gap warnings. Reveals where lending liquidity comes from. |
-| `get_morpho_vaults` | List Morpho vaults on a chain with enriched allocations: Spectra PT tagging, live borrow rates and utilization per allocation, cap utilization percentages. Parallel-fetches market rates and PT addresses for zero-latency enrichment. |
-| `get_morpho_positions` | Query a user's Morpho positions across markets and vaults on a chain (or all Morpho chains). Shows collateral, borrows, supply with USD values, vault deposits, health factors, looper detection, and position signals. |
-| `get_morpho_history` | Historical rates and growth for a specific Morpho market. Shows borrow/supply APY, utilization, and TVL trends with min/avg/max/current stats. Includes rate stability signals, spike detection, and supply/demand squeeze alerts. |
-| `get_protocol_stats` | SPECTRA tokenomics, emissions schedule, fee distribution, governance info. |
-| `get_supported_chains` | List available networks (10 chains). |
-| `get_portfolio` | Wallet positions across PT, YT, and LP with USD values, claimable yield, and Merkl rewards (SPECTRA gauge emissions + incentive programs). Rewards matched to specific pools via reason key parsing. |
-| `get_pool_volume` | Historical buy/sell trading volume for a specific pool. Accepts PT address or pool address. |
-| `get_pool_activity` | Recent individual transactions (buys, sells, liquidity events) with filtering. Address isolation mode presents competing interpretation branches (A/B/C), statistical confidence boundaries on cycles, flow accounting with competing hypotheses, contract/EOA detection, gas estimates. Accepts PT or pool address. |
-| `get_address_activity` | Cross-pool address scanner — finds all pools an address has interacted with on a chain (or all chains) in one call. Includes expired/matured pools via portfolio lookup. Per-pool breakdown + cross-pool aggregates. |
-| `quote_trade` | PT trade quoting with on-chain Curve `get_dy()` for exact output (falls back to math estimate). Shows price impact, slippage, minOut, pool reserves with ratio, and IBT APR composition. |
-| `simulate_portfolio_after_trade` | Preview portfolio BEFORE/AFTER a hypothetical PT trade with deltas, warnings, and on-chain quoting. |
-| `scan_opportunities` | Capital-aware opportunity scanner: price impact at your size, effective APY, Morpho looping, pool capacity, IBT APR composition, and points multipliers. Supports `compact` mode. |
-| `scan_yt_arbitrage` | YT rate vs IBT rate arbitrage scanner -- finds pools where YT is mispriced relative to underlying yield. Includes IBT APR composition for spread sustainability analysis. Supports `compact` mode. |
-| `get_ve_info` | Live veSPECTRA data from Base chain (total supply via on-chain read) + boost calculator with per-pool multipliers. |
-| `get_metavaults` | List live MetaVaults across all chains (or a specific chain). Returns curator info, TVL, live APY, share price, active positions, and epoch history. |
-| `model_metavault_strategy` | MetaVault "double loop" strategy modeler for curators. Live mode (chain + metavault_address) auto-fetches APY from API; manual mode accepts base_apy directly. Models curator economics (fee revenue, TVL creation, effective ROI). |
-| `get_curator_dashboard` | Operational dashboard for MetaVault curators. Vault health, position status with vault allocation (when available) vs pool TVL, depositor flows, fee revenue estimates, bridge activity, and actionable alerts. Explicitly disambiguates vault allocation from pool-level TVL to prevent misinterpretation. |
-| `list_pendle_markets` | List active Pendle markets on a given chain or all Pendle chains. Supports Pendle-only chains (Mantle, Berachain, HyperEVM, Corn). Supports `compact` mode. |
-| `compare_pendle_spectra` | Side-by-side Pendle vs Spectra yield comparison on overlapping chains (mainnet, base, arbitrum, optimism, sonic, bsc). Maturity-aware matching with configurable tolerance (exact ≤7d, close ≤30d, loose ≤90d). |
-| `scan_curator_opportunities` | Cross-protocol (Spectra + Pendle) capital-aware scanner for MetaVault curators. Price impact at your size, effective APY, Morpho looping (Spectra), cross-protocol match tagging. Supports `compact` mode. |
-| `get_onchain_activity` | Historical on-chain activity via `eth_getLogs` — recovers data when the API has aged out transactions. Supports dynamic `rpc_url` parameter for any chain, `token_decimals` for correct formatting (USDC=6, WBTC=8). Decodes **Curve pool events** (swaps, LP adds/removes) via `pool_address` AND **Spectra PT vault events** (Mint, Redeem, YieldClaimed) via `pt_address`. Both can be provided simultaneously for merged results. |
-| `get_pool_capacity` | Multi-size capacity curve — quotes PT trades at geometric capital tiers to show price impact and effective APY degradation. Identifies sweet spot and exhaustion point. On-chain Curve quotes. |
-| `check_ibt_health` | Multi-signal IBT health assessment — on-chain ERC-4626 conversion rate, APR composition (organic vs incentive), pool balance ratio, protocol recognition, liquidity level. Returns HEALTHY/CAUTION/WARNING verdict. |
-| `get_yield_curve` | Term structure for a given underlying across all chains. All maturities sorted chronologically with implied APY, TVL, liquidity. Curve shape analysis (normal/inverted/flat), steepest segment, cross-chain pairs. |
-| `curator_risk_monitor` | Liquidation risk monitor for curator Morpho positions — health factor, liquidation price, distance-to-liquidation, borrow rate drift, alert levels (ok/watch/warning/critical). |
-| `stress_test_vault` | Withdrawal stress test for MetaVaults — liquidity waterfall (idle → maturing → LP removal → PT sale), cost to remaining depositors, maximum safe redemption size. Market stress mode (2x impact). |
-| `plan_rollover` | Position rollover planner for expiring MetaVault positions — scans Spectra + Pendle for replacement candidates, computes entry impact, yield gap, overlap windows, and net effective APY. |
-| `curator_portfolio` | Multi-vault portfolio aggregation — total AUM, blended APY, fee revenue projection, concentration by underlying/chain, cross-vault action items. Discovery mode (by curator address) or explicit mode. |
-| `get_expiring_pools` | Scan all chains for pools approaching maturity (default 21-day threshold). Groups by urgency (CRITICAL ≤7d, WARNING ≤14d, ALERT ≤21d). Cross-references each expiring pool's IBT against all active pools for successor detection. Fetches gauge status from governance API. Per-pool readiness assessment (OK/CAUTION/WARNING). Operator checklist: deploy successor pool, submit gauge proposal, ready for migration. |
-| `get_protocol_context` | Returns protocol mechanics reference (PT/YT identity, Router batching, deposit paths, glossary, workflow routing). 8 topics callable on-demand. |
+| `spectra_get_best_fixed_yields` | Scan ALL chains for top fixed-rate opportunities. The main discovery tool. Supports `compact` mode. |
+| `spectra_list_pools` | List all active pools on a specific chain, sorted by APY/TVL/maturity. Surfaces pool reserves, IBT APR composition, maturityValue, multipliers, and tags. Supports `compact` mode and `include_expired` flag. |
+| `spectra_get_pt_details` | Deep dive on a specific Principal Token -- full data including maturityValue, multipliers (points programs), tags, pool reserves, IBT APR composition, and baseIbt for wrapper tokens. |
+| `spectra_compare_yield` | Fixed (PT) vs. variable (IBT) yield comparison with spread mechanics and entry cost analysis. |
+| `spectra_get_looping_strategy` | Calculate leveraged yield via PT + Morpho looping with effective liquidation margins, borrow rate sensitivity (+1/2/3%), break-even period, and failure scenario modeling. Auto-fetches live Morpho rates when a matching market exists. |
+| `morpho_list_markets` | Find Morpho lending markets that accept Spectra PTs as collateral. Filter by chain or symbol. Shows reward incentives, vault supplier count per market. Cross-references Spectra PT addresses. |
+| `morpho_get_rate` | Get live borrow rate, state, and supply-side context for a specific Morpho market. Includes PT spread analysis, top supplier identification, and vault allocation details (% of AUM, cap utilization). |
+| `morpho_get_market_suppliers` | Supply-side analysis for a Morpho market: top suppliers ranked by size, vault vs EOA/looper identification, concentration analysis, supply gap warnings. Reveals where lending liquidity comes from. |
+| `morpho_list_vaults` | List Morpho vaults on a chain with enriched allocations: Spectra PT tagging, live borrow rates and utilization per allocation, cap utilization percentages. Parallel-fetches market rates and PT addresses for zero-latency enrichment. |
+| `morpho_get_positions` | Query a user's Morpho positions across markets and vaults on a chain (or all Morpho chains). Shows collateral, borrows, supply with USD values, vault deposits, health factors, looper detection, and position signals. |
+| `morpho_get_history` | Historical rates and growth for a specific Morpho market. Shows borrow/supply APY, utilization, and TVL trends with min/avg/max/current stats. Includes rate stability signals, spike detection, and supply/demand squeeze alerts. |
+| `spectra_get_protocol_stats` | SPECTRA tokenomics, emissions schedule, fee distribution, governance info. |
+| `spectra_list_chains` | List available networks (10 chains). |
+| `spectra_get_portfolio` | Wallet positions across PT, YT, and LP with USD values, claimable yield, and Merkl rewards (SPECTRA gauge emissions + incentive programs). Rewards matched to specific pools via reason key parsing. |
+| `spectra_get_pool_volume` | Historical buy/sell trading volume for a specific pool. Accepts PT address or pool address. |
+| `spectra_get_pool_activity` | Recent individual transactions (buys, sells, liquidity events) with filtering. Address isolation mode presents competing interpretation branches (A/B/C), statistical confidence boundaries on cycles, flow accounting with competing hypotheses, contract/EOA detection, gas estimates. Accepts PT or pool address. |
+| `spectra_get_address_activity` | Cross-pool address scanner — finds all pools an address has interacted with on a chain (or all chains) in one call. Includes expired/matured pools via portfolio lookup. Per-pool breakdown + cross-pool aggregates. |
+| `spectra_quote_trade` | PT trade quoting with on-chain Curve `get_dy()` for exact output (falls back to math estimate). Shows price impact, slippage, minOut, pool reserves with ratio, and IBT APR composition. |
+| `spectra_simulate_trade` | Preview portfolio BEFORE/AFTER a hypothetical PT trade with deltas, warnings, and on-chain quoting. |
+| `spectra_scan_opportunities` | Capital-aware opportunity scanner: price impact at your size, effective APY, Morpho looping, pool capacity, IBT APR composition, and points multipliers. Supports `compact` mode. |
+| `spectra_scan_yt_arbitrage` | YT rate vs IBT rate arbitrage scanner -- finds pools where YT is mispriced relative to underlying yield. Includes IBT APR composition for spread sustainability analysis. Supports `compact` mode. |
+| `spectra_get_ve_info` | Live veSPECTRA data from Base chain (total supply via on-chain read) + boost calculator with per-pool multipliers. |
+| `spectra_list_metavaults` | List live MetaVaults across all chains (or a specific chain). Returns curator info, TVL, live APY, share price, active positions, and epoch history. |
+| `spectra_model_metavault` | MetaVault "double loop" strategy modeler for curators. Live mode (chain + metavault_address) auto-fetches APY from API; manual mode accepts base_apy directly. Models curator economics (fee revenue, TVL creation, effective ROI). |
+| `spectra_get_curator_dashboard` | Operational dashboard for MetaVault curators. Vault health, position status with vault allocation (when available) vs pool TVL, depositor flows, fee revenue estimates, bridge activity, and actionable alerts. Explicitly disambiguates vault allocation from pool-level TVL to prevent misinterpretation. |
+| `pendle_list_markets` | List active Pendle markets on a given chain or all Pendle chains. Supports Pendle-only chains (Mantle, Berachain, HyperEVM, Corn). Supports `compact` mode. |
+| `mv_compare_yield` | Side-by-side Pendle vs Spectra yield comparison on overlapping chains (mainnet, base, arbitrum, optimism, sonic, bsc). Maturity-aware matching with configurable tolerance (exact ≤7d, close ≤30d, loose ≤90d). |
+| `mv_scan_curator_opportunities` | Cross-protocol (Spectra + Pendle) capital-aware scanner for MetaVault curators. Price impact at your size, effective APY, Morpho looping (Spectra), cross-protocol match tagging. Supports `compact` mode. |
+| `spectra_get_onchain_activity` | Historical on-chain activity via `eth_getLogs` — recovers data when the API has aged out transactions. Supports dynamic `rpc_url` parameter for any chain, `token_decimals` for correct formatting (USDC=6, WBTC=8). Decodes **Curve pool events** (swaps, LP adds/removes) via `pool_address` AND **Spectra PT vault events** (Mint, Redeem, YieldClaimed) via `pt_address`. Both can be provided simultaneously for merged results. |
+| `spectra_get_pool_capacity` | Multi-size capacity curve — quotes PT trades at geometric capital tiers to show price impact and effective APY degradation. Identifies sweet spot and exhaustion point. On-chain Curve quotes. |
+| `mv_check_ibt_health` | Multi-signal IBT health assessment — on-chain ERC-4626 conversion rate, APR composition (organic vs incentive), pool balance ratio, protocol recognition, liquidity level. Returns HEALTHY/CAUTION/WARNING verdict. |
+| `spectra_get_yield_curve` | Term structure for a given underlying across all chains. All maturities sorted chronologically with implied APY, TVL, liquidity. Curve shape analysis (normal/inverted/flat), steepest segment, cross-chain pairs. |
+| `morpho_monitor_risk` | Liquidation risk monitor for curator Morpho positions — health factor, liquidation price, distance-to-liquidation, borrow rate drift, alert levels (ok/watch/warning/critical). |
+| `spectra_stress_test_vault` | Withdrawal stress test for MetaVaults — liquidity waterfall (idle → maturing → LP removal → PT sale), cost to remaining depositors, maximum safe redemption size. Market stress mode (2x impact). |
+| `mv_plan_rollover` | Position rollover planner for expiring MetaVault positions — scans Spectra + Pendle for replacement candidates, computes entry impact, yield gap, overlap windows, and net effective APY. |
+| `mv_get_curator_portfolio` | Multi-vault portfolio aggregation — total AUM, blended APY, fee revenue projection, concentration by underlying/chain, cross-vault action items. Discovery mode (by curator address) or explicit mode. |
+| `spectra_list_expiring_pools` | Scan all chains for pools approaching maturity (default 21-day threshold). Groups by urgency (CRITICAL ≤7d, WARNING ≤14d, ALERT ≤21d). Cross-references each expiring pool's IBT against all active pools for successor detection. Fetches gauge status from governance API. Per-pool readiness assessment (OK/CAUTION/WARNING). Operator checklist: deploy successor pool, submit gauge proposal, ready for migration. |
+| `mv_get_protocol_context` | Returns protocol mechanics reference (PT/YT identity, Router batching, deposit paths, glossary, workflow routing). 8 topics callable on-demand. |
 
 ## Supported Chains
 
@@ -191,15 +191,15 @@ d = your deposit size
 
 Full 2.5x boost when your share of total veSPECTRA >= your share of pool TVL.
 
-Tools that accept `ve_spectra_balance` (`scan_opportunities`, `scan_yt_arbitrage`, `compare_yield`, `get_ve_info`) compute per-pool boost automatically. The veSPECTRA contract is an NFT-based voting escrow (veNFT) at `0x6a89228055c7c28430692e342f149f37462b478b` on Base, sourced from [spectra-core](https://github.com/perspectivefi/spectra-core).
+Tools that accept `ve_spectra_balance` (`spectra_scan_opportunities`, `spectra_scan_yt_arbitrage`, `spectra_compare_yield`, `spectra_get_ve_info`) compute per-pool boost automatically. The veSPECTRA contract is an NFT-based voting escrow (veNFT) at `0x6a89228055c7c28430692e342f149f37462b478b` on Base, sourced from [spectra-core](https://github.com/perspectivefi/spectra-core).
 
 ## MetaVault Discovery & Strategy Modeling
 
 MetaVaults are ERC-7540 curated vaults that automate LP rollover and compound YT yield back into LP positions. Two tools work together:
 
-**`get_metavaults`** — Discovery tool. Fetches live MetaVault data from the API (`/v1/{network}/metavaults`), scanning a single chain or all chains in parallel. Returns curator info, TVL, live APY, share price, active positions with PT/pool details, and epoch rate history.
+**`spectra_list_metavaults`** — Discovery tool. Fetches live MetaVault data from the API (`/v1/{network}/metavaults`), scanning a single chain or all chains in parallel. Returns curator info, TVL, live APY, share price, active positions with PT/pool details, and epoch rate history.
 
-**`model_metavault_strategy`** — Strategy modeler with two modes:
+**`spectra_model_metavault`** — Strategy modeler with two modes:
 - **Live mode**: Provide `chain` + `metavault_address` to auto-fetch the vault's live APY as `base_apy`. All other parameters (borrow rate, LTV, curator fee) can still be overridden.
 - **Manual mode**: Provide `base_apy` directly for hypothetical or pre-launch modeling.
 
@@ -219,20 +219,20 @@ The key insight: YT compounding raises the vault's base APY, and leverage multip
 ### Install from npm (recommended)
 
 ```bash
-npm install -g spectra-mcp-server
+npm install -g metavault-mcp
 ```
 
 Or run directly without installing:
 
 ```bash
-npx spectra-mcp-server
+npx metavault-mcp
 ```
 
 ### Install from source
 
 ```bash
-git clone https://github.com/Finanzgoblin/spectra-mcp-server.git
-cd spectra-mcp-server
+git clone https://github.com/Finanzgoblin/metavault-mcp.git
+cd metavault-mcp
 npm install
 npm run build
 ```
@@ -244,9 +244,9 @@ Add to your `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "spectra-finance": {
+    "metavault-mcp": {
       "command": "npx",
-      "args": ["spectra-mcp-server"]
+      "args": ["metavault-mcp"]
     }
   }
 }
@@ -257,7 +257,7 @@ Restart Claude Desktop. You'll see the Spectra tools available.
 ## Connect to Claude Code
 
 ```bash
-claude mcp add spectra-finance -- npx spectra-mcp-server
+claude mcp add metavault-mcp -- npx metavault-mcp
 ```
 
 ## Deep Analysis Prompts
@@ -280,7 +280,7 @@ The more context you give upfront, the deeper the agent can go. Each input unloc
 - **Investigator:** "Wallet 0xABC... is active on Spectra mainnet. Show me everything — portfolio, activity across all pools, sequence analysis, and what strategy they're running."
 - **Term structure:** "Show me the ETH yield curve across all chains. Where are the term premium anomalies? Quote pool capacity at $200K for the top 3 mispricings."
 
-The cross-referencing between tools is where the real depth happens — no single tool tells the full story. The agent calls `get_protocol_context(topic="workflow_routing")` to learn these compositions at runtime.
+The cross-referencing between tools is where the real depth happens — no single tool tells the full story. The agent calls `mv_get_protocol_context(topic="workflow_routing")` to learn these compositions at runtime.
 
 ## Example Queries
 
@@ -317,7 +317,7 @@ Once connected, you can ask Claude things like:
 - "Is the IBT behind this PT healthy? Check the conversion rate and APR composition"
 - "Show me the USDC yield curve -- what rates are available at each maturity?"
 - "Compare the 30-day vs 90-day vs 180-day rates for ETH across all chains"
-- "This address traded on Katana weeks ago but get_pool_activity shows nothing -- pull on-chain logs for the last 7 days"
+- "This address traded on Katana weeks ago but spectra_get_pool_activity shows nothing -- pull on-chain logs for the last 7 days"
 - "Fetch historical activity for this pool using my RPC URL: https://rpc.katana.network"
 - "Monitor my Morpho positions for liquidation risk -- show me the distance to liquidation for each"
 - "Stress test my MetaVault on Base -- what happens if 30% of depositors redeem in one epoch?"
@@ -329,7 +329,7 @@ Once connected, you can ask Claude things like:
 ```
 Agent (Claude/GPT/etc)
   | MCP Protocol (stdio)
-Spectra MCP Server (this)
+MetaVault MCP (this)
   | HTTP (15s timeout, 1 retry on 5xx/network errors)
   |
   +-- api.spectra.finance/v1/{chain}/pools
@@ -380,35 +380,35 @@ src/
                       Merkl reward display (per-position matched rewards, unmatched/exited rewards),
                       Merkl campaign APR display (formatMerklCampaignLines with double-counting avoidance)
   tools/            Layer 2: each tool description teaches domain-specific mechanics
-    context.ts      get_protocol_context (Layer 1 protocol mechanics, deposit paths, glossary, callable on-demand)
-    pt.ts           get_pt_details, list_pools, get_best_fixed_yields, compare_yield
-    looping.ts      get_looping_strategy
-    portfolio.ts    get_portfolio (balance ratio strategy signals, portfolio-level hints, cross-ref nudges,
+    context.ts      mv_get_protocol_context (Layer 1 protocol mechanics, deposit paths, glossary, callable on-demand)
+    pt.ts           spectra_get_pt_details, spectra_list_pools, spectra_get_best_fixed_yields, spectra_compare_yield
+    looping.ts      spectra_get_looping_strategy
+    portfolio.ts    spectra_get_portfolio (balance ratio strategy signals, portfolio-level hints, cross-ref nudges,
                       Merkl rewards integration — parallel fetch, per-position matching, unmatched rewards)
-    pool.ts         get_pool_volume (with volume/liquidity hints), get_pool_activity (PT address resolution, Router batching,
+    pool.ts         spectra_get_pool_volume (with volume/liquidity hints), spectra_get_pool_activity (PT address resolution, Router batching,
                       address isolation w/ cycle detection, flow accounting, contract detection,
                       gas estimates, pool impact warnings, observation coverage metrics),
-                      get_address_activity (cross-pool scanner with coverage boundary markers)
-    morpho.ts       get_morpho_markets (with capacity/utilization hints), get_morpho_rate (with PT spread analysis)
-    protocol.ts     get_protocol_stats, get_supported_chains
-    quote.ts        quote_trade (on-chain Curve get_dy() with math fallback)
-    simulate.ts     simulate_portfolio_after_trade (also uses on-chain quoting)
-    strategy.ts     scan_opportunities (capital-aware, batch Morpho, negative-APY filtering, strategy tension)
-    yt_arb.ts       scan_yt_arbitrage (YT execution mechanics, flash-mint/flash-redeem)
-    ve.ts           get_ve_info
-    metavault.ts    get_metavaults, model_metavault_strategy (live API + computational modeling),
-                      get_curator_dashboard (vault allocation disambiguation, cross-chain position awareness)
-    pendle.ts       list_pendle_markets, compare_pendle_spectra (maturity-aware cross-protocol yield comparison)
-    curator_scan.ts scan_curator_opportunities (cross-protocol capital-aware scanner for MetaVault curators)
-    onchain.ts      get_onchain_activity (historical eth_getLogs, Curve pool + PT vault event decoding, dynamic RPC)
-    capacity.ts     get_pool_capacity (multi-size quote ladder, sweet spot / exhaustion detection)
-    ibt_health.ts   check_ibt_health (ERC-4626 conversion rate, APR composition, pool balance, verdict)
-    yield_curve.ts  get_yield_curve (term structure for a given underlying across all chains)
-    risk_monitor.ts curator_risk_monitor (liquidation distance, health factor, borrow rate drift, alert levels)
-    stress_test.ts  stress_test_vault (withdrawal liquidity waterfall, market stress simulation)
-    rollover.ts     plan_rollover (expiring position rollover planner with cross-protocol candidates)
-    curator_portfolio.ts curator_portfolio (multi-vault aggregation, AUM, blended APY, concentration)
-    expiry_monitor.ts get_expiring_pools (pool maturity monitoring, urgency grouping, successor cross-reference, gauge status, readiness assessment)
+                      spectra_get_address_activity (cross-pool scanner with coverage boundary markers)
+    morpho.ts       morpho_list_markets (with capacity/utilization hints), morpho_get_rate (with PT spread analysis)
+    protocol.ts     spectra_get_protocol_stats, spectra_list_chains
+    quote.ts        spectra_quote_trade (on-chain Curve get_dy() with math fallback)
+    simulate.ts     spectra_simulate_trade (also uses on-chain quoting)
+    strategy.ts     spectra_scan_opportunities (capital-aware, batch Morpho, negative-APY filtering, strategy tension)
+    yt_arb.ts       spectra_scan_yt_arbitrage (YT execution mechanics, flash-mint/flash-redeem)
+    ve.ts           spectra_get_ve_info
+    metavault.ts    spectra_list_metavaults, spectra_model_metavault (live API + computational modeling),
+                      spectra_get_curator_dashboard (vault allocation disambiguation, cross-chain position awareness)
+    pendle.ts       pendle_list_markets, mv_compare_yield (maturity-aware cross-protocol yield comparison)
+    curator_scan.ts mv_scan_curator_opportunities (cross-protocol capital-aware scanner for MetaVault curators)
+    onchain.ts      spectra_get_onchain_activity (historical eth_getLogs, Curve pool + PT vault event decoding, dynamic RPC)
+    capacity.ts     spectra_get_pool_capacity (multi-size quote ladder, sweet spot / exhaustion detection)
+    ibt_health.ts   mv_check_ibt_health (ERC-4626 conversion rate, APR composition, pool balance, verdict)
+    yield_curve.ts  spectra_get_yield_curve (term structure for a given underlying across all chains)
+    risk_monitor.ts morpho_monitor_risk (liquidation distance, health factor, borrow rate drift, alert levels)
+    stress_test.ts  spectra_stress_test_vault (withdrawal liquidity waterfall, market stress simulation)
+    rollover.ts     mv_plan_rollover (expiring position rollover planner with cross-protocol candidates)
+    curator_portfolio.ts mv_get_curator_portfolio (multi-vault aggregation, AUM, blended APY, concentration)
+    expiry_monitor.ts spectra_list_expiring_pools (pool maturity monitoring, urgency grouping, successor cross-reference, gauge status, readiness assessment)
 test.cjs              Integration test suite (405 tests, McpTestClient over stdio)
 test-agent.cjs        Agent reasoning test suite (82 assertions, McpTestClient over stdio)
 AGENT-TESTS.md        38-question subjective test suite with grading rubrics (incl. open emergence, coverage, newcomer comprehension tiers)
@@ -458,7 +458,7 @@ All address parameters are validated (`0x` + 40 hex chars). All API calls have a
 - **Merkl rewards**: Best-effort parallel fetch from Merkl API — failure does not block portfolio display. Pool address matching via regex extraction from reason keys. BigInt `parseWei()` conversion for safe 18-decimal arithmetic
 - **Merkl campaigns**: Best-effort v4 campaign APR fetch per chain (60s TTL cache with inflight dedup). Failure returns empty map — tool output is unchanged. Double-counting avoidance skips campaigns whose reward tokens are already displayed via native API data
 - **MCP error signaling**: All error catch blocks return `isError: true` so agents can distinguish errors from empty results
-- **PT address resolution**: Pool tools (`get_pool_volume`, `get_pool_activity`) accept either pool address or PT address and resolve automatically
+- **PT address resolution**: Pool tools (`spectra_get_pool_volume`, `spectra_get_pool_activity`) accept either pool address or PT address and resolve automatically
 - **Error logging**: Catch blocks in Morpho lookups log to stderr instead of silently swallowing failures
 - **Graceful shutdown**: `server.close()` called before `process.exit()` on SIGTERM/SIGINT
 
@@ -494,11 +494,11 @@ npm run test:agent
 
 - **Protocol context completeness** — all topics present, Router batching ambiguities explained, cross-reference guidance included
 - **Anomaly detection** — raw APY vs capital-aware rankings produce different results (intentional divergence)
-- **Cross-tool data consistency** — APYs match between `list_pools` → `get_pt_details` → `compare_yield`
+- **Cross-tool data consistency** — APYs match between `spectra_list_pools` → `spectra_get_pt_details` → `spectra_compare_yield`
 - **Router mechanics** — mint-and-sell loop detection via pool activity → portfolio cross-reference
 - **Router limitation** — API resolves Router txns that `eth_getLogs` address filtering misses
 - **MetaVault data integrity** — curator info, TVL, APY, vault flows, expired position flagging
-- **Expired pool discovery** — `list_pools` returns only active pools; MetaVaults surface expired positions
+- **Expired pool discovery** — `spectra_list_pools` returns only active pools; MetaVaults surface expired positions
 - **veSPECTRA boost math** — max boost (1M veSPECTRA + $1K) vs min boost (100 veSPECTRA + $1M)
 - **Morpho looping fallback** — graceful handling when no Morpho market exists for a PT
 - **Morpho market classification** — Spectra vs Pendle/Other labels, unsupported chain handling
@@ -517,26 +517,26 @@ This server wraps these endpoints:
 
 | Endpoint | Used By |
 |----------|---------|
-| `GET /v1/{chain}/pools` | `list_pools`, `get_best_fixed_yields`, `scan_opportunities`, `scan_yt_arbitrage`, `get_yield_curve` (30s TTL cache) |
-| `GET /v1/{chain}/pt/{address}` | `get_pt_details`, `compare_yield`, `get_looping_strategy`, `quote_trade`, `simulate_portfolio_after_trade`, `get_pool_capacity`, `check_ibt_health`, `get_pool_volume`/`get_pool_activity` (PT→pool resolution) |
-| `GET /v1/{chain}/portfolio/{wallet}` | `get_portfolio`, `simulate_portfolio_after_trade`, `get_address_activity` (expired pool discovery) |
-| `GET /v1/{chain}/pools/{pool}/volume` | `get_pool_volume` |
-| `GET /v1/{chain}/pools/{pool}/activity` | `get_pool_activity`, `get_address_activity` (active + expired pools) |
-| `GET /v1/{chain}/metavaults` | `get_metavaults`, `model_metavault_strategy` (live mode) |
-| `GET api.merkl.xyz/v3/userRewards?user={address}&chainId={chainId}` | `get_portfolio` (Merkl reward fetching — SPECTRA gauge emissions + incentive programs) |
-| `GET api.merkl.xyz/v4/opportunities?chainId={chainId}` | `list_pools`, `get_pt_details`, `compare_yield`, `list_pendle_markets`, `compare_pendle_spectra`, `scan_opportunities`, `scan_curator_opportunities`, `scan_yt_arbitrage` (Merkl campaign APR — 60s TTL cache) |
-| `GET api.spectra.finance/v1/governance/voting-incentives` | `get_expiring_pools` (gauge status — pool address presence = gauge exists) |
-| `GET app.spectra.finance/api/v1/spectra/circulating-supply` | `get_protocol_stats` |
-| `GET app.spectra.finance/api/v1/spectra/total-supply` | `get_protocol_stats` |
-| `POST api.morpho.org/graphql` | `get_morpho_markets`, `get_morpho_rate`, `get_looping_strategy` (auto-detect), `scan_opportunities` (batch) |
-| `POST mainnet.base.org` (eth_call) | `get_ve_info`, `scan_opportunities`, `scan_yt_arbitrage`, `compare_yield` (veSPECTRA total supply) |
-| `POST {chain RPC}` (eth_call: `get_dy`) | `quote_trade`, `simulate_portfolio_after_trade`, `get_pool_capacity` (Curve StableSwap-NG on-chain quotes) |
-| `POST {chain RPC}` (eth_call: `convertToAssets`) | `check_ibt_health` (ERC-4626 IBT conversion rate health check) |
-| `POST {chain RPC}` (eth_call: `eth_getCode`) | `get_pool_activity` (contract vs EOA detection in address mode) |
-| `POST {chain RPC}` (eth_getLogs) | `get_onchain_activity` (historical Curve pool events + Spectra PT vault events — supports dynamic `rpc_url` override) |
-| `GET api-v2.pendle.finance/core/v2/{chainId}/markets/active` | `list_pendle_markets` (Pendle market discovery) |
-| `GET api-v2.pendle.finance/core/v2/{chainId}/markets/active` | `compare_pendle_spectra` (maturity-aware cross-protocol comparison) |
-| `GET api-v2.pendle.finance/core/v2/{chainId}/markets/active` | `scan_curator_opportunities` (cross-protocol capital-aware scanning — Spectra + Pendle) |
+| `GET /v1/{chain}/pools` | `spectra_list_pools`, `spectra_get_best_fixed_yields`, `spectra_scan_opportunities`, `spectra_scan_yt_arbitrage`, `spectra_get_yield_curve` (30s TTL cache) |
+| `GET /v1/{chain}/pt/{address}` | `spectra_get_pt_details`, `spectra_compare_yield`, `spectra_get_looping_strategy`, `spectra_quote_trade`, `spectra_simulate_trade`, `spectra_get_pool_capacity`, `mv_check_ibt_health`, `spectra_get_pool_volume`/`spectra_get_pool_activity` (PT→pool resolution) |
+| `GET /v1/{chain}/portfolio/{wallet}` | `spectra_get_portfolio`, `spectra_simulate_trade`, `spectra_get_address_activity` (expired pool discovery) |
+| `GET /v1/{chain}/pools/{pool}/volume` | `spectra_get_pool_volume` |
+| `GET /v1/{chain}/pools/{pool}/activity` | `spectra_get_pool_activity`, `spectra_get_address_activity` (active + expired pools) |
+| `GET /v1/{chain}/metavaults` | `spectra_list_metavaults`, `spectra_model_metavault` (live mode) |
+| `GET api.merkl.xyz/v3/userRewards?user={address}&chainId={chainId}` | `spectra_get_portfolio` (Merkl reward fetching — SPECTRA gauge emissions + incentive programs) |
+| `GET api.merkl.xyz/v4/opportunities?chainId={chainId}` | `spectra_list_pools`, `spectra_get_pt_details`, `spectra_compare_yield`, `pendle_list_markets`, `mv_compare_yield`, `spectra_scan_opportunities`, `mv_scan_curator_opportunities`, `spectra_scan_yt_arbitrage` (Merkl campaign APR — 60s TTL cache) |
+| `GET api.spectra.finance/v1/governance/voting-incentives` | `spectra_list_expiring_pools` (gauge status — pool address presence = gauge exists) |
+| `GET app.spectra.finance/api/v1/spectra/circulating-supply` | `spectra_get_protocol_stats` |
+| `GET app.spectra.finance/api/v1/spectra/total-supply` | `spectra_get_protocol_stats` |
+| `POST api.morpho.org/graphql` | `morpho_list_markets`, `morpho_get_rate`, `spectra_get_looping_strategy` (auto-detect), `spectra_scan_opportunities` (batch) |
+| `POST mainnet.base.org` (eth_call) | `spectra_get_ve_info`, `spectra_scan_opportunities`, `spectra_scan_yt_arbitrage`, `spectra_compare_yield` (veSPECTRA total supply) |
+| `POST {chain RPC}` (eth_call: `get_dy`) | `spectra_quote_trade`, `spectra_simulate_trade`, `spectra_get_pool_capacity` (Curve StableSwap-NG on-chain quotes) |
+| `POST {chain RPC}` (eth_call: `convertToAssets`) | `mv_check_ibt_health` (ERC-4626 IBT conversion rate health check) |
+| `POST {chain RPC}` (eth_call: `eth_getCode`) | `spectra_get_pool_activity` (contract vs EOA detection in address mode) |
+| `POST {chain RPC}` (eth_getLogs) | `spectra_get_onchain_activity` (historical Curve pool events + Spectra PT vault events — supports dynamic `rpc_url` override) |
+| `GET api-v2.pendle.finance/core/v2/{chainId}/markets/active` | `pendle_list_markets` (Pendle market discovery) |
+| `GET api-v2.pendle.finance/core/v2/{chainId}/markets/active` | `mv_compare_yield` (maturity-aware cross-protocol comparison) |
+| `GET api-v2.pendle.finance/core/v2/{chainId}/markets/active` | `mv_scan_curator_opportunities` (cross-protocol capital-aware scanning — Spectra + Pendle) |
 
 Note: `{chain}` uses the slug `mainnet` for Ethereum (the alias `ethereum` is accepted by the server and mapped automatically).
 
@@ -544,15 +544,15 @@ Note: `{chain}` uses the slug `mainnet` for Ethereum (the alias `ethereum` is ac
 
 Three tools enable cross-protocol yield discovery and comparison between Spectra and Pendle:
 
-**`list_pendle_markets`** — Lists active Pendle markets on a given chain or scans all Pendle-supported chains. Pendle-supported chains include both overlapping chains (mainnet, base, arbitrum, optimism, sonic, bsc) and Pendle-only chains (Mantle, Berachain, HyperEVM, Corn).
+**`pendle_list_markets`** — Lists active Pendle markets on a given chain or scans all Pendle-supported chains. Pendle-supported chains include both overlapping chains (mainnet, base, arbitrum, optimism, sonic, bsc) and Pendle-only chains (Mantle, Berachain, HyperEVM, Corn).
 
-**`compare_pendle_spectra`** — Side-by-side comparison on overlapping chains with **maturity-aware matching**. Normalizes underlying symbols (wstETH↔stETH, USDC.e↔USDC) and matches by nearest maturity within configurable tolerance (exact ≤7d, close ≤30d, loose ≤90d). Shows match quality and maturity gap per pair.
+**`mv_compare_yield`** — Side-by-side comparison on overlapping chains with **maturity-aware matching**. Normalizes underlying symbols (wstETH↔stETH, USDC.e↔USDC) and matches by nearest maturity within configurable tolerance (exact ≤7d, close ≤30d, loose ≤90d). Shows match quality and maturity gap per pair.
 
-**`scan_curator_opportunities`** — Cross-protocol capital-aware scanner for MetaVault curators. Scans both Spectra and Pendle in parallel, computes price impact at your capital size, effective APY after entry cost, Morpho looping availability (Spectra PTs), and tags cross-protocol matches. This tool intentionally produces different rankings than `scan_opportunities` (Spectra-only) — different scope, same design philosophy.
+**`mv_scan_curator_opportunities`** — Cross-protocol capital-aware scanner for MetaVault curators. Scans both Spectra and Pendle in parallel, computes price impact at your capital size, effective APY after entry cost, Morpho looping availability (Spectra PTs), and tags cross-protocol matches. This tool intentionally produces different rankings than `spectra_scan_opportunities` (Spectra-only) — different scope, same design philosophy.
 
 ## On-Chain Historical Activity
 
-The Spectra REST API (`/v1/{network}/pools/{pool}/activity`) only retains a limited time window of recent transactions. When investigating addresses or pools with older activity, `get_onchain_activity` reads historical event logs directly from the blockchain via `eth_getLogs`.
+The Spectra REST API (`/v1/{network}/pools/{pool}/activity`) only retains a limited time window of recent transactions. When investigating addresses or pools with older activity, `spectra_get_onchain_activity` reads historical event logs directly from the blockchain via `eth_getLogs`.
 
 Supports two contract types:
 - **Curve pool** (`pool_address`): TokenExchange, AddLiquidity, RemoveLiquidity, RemoveLiquidityOne
@@ -566,12 +566,12 @@ Key features:
 - **Dual-contract decoding**: Curve StableSwap-NG pool events AND Spectra PrincipalToken vault events
 - **Block range control**: Explicit `from_block`/`to_block` or `lookback_hours` (default 24h, max 720h/30 days)
 - **Address filtering**: Filter events by a specific address
-- **No USD values**: On-chain logs don't carry prices — token amounts are shown in human-readable form. Cross-reference with `get_pt_details` for price context
+- **No USD values**: On-chain logs don't carry prices — token amounts are shown in human-readable form. Cross-reference with `spectra_get_pt_details` for price context
 
 Composability with existing tools:
 ```
-Agent flow: get_pool_activity → empty? → get_onchain_activity(pool_address=...) → pool events
-Agent flow: portfolio shows PT but no pool trades → get_onchain_activity(pt_address=...) → vault events (mint/redeem)
+Agent flow: spectra_get_pool_activity → empty? → spectra_get_onchain_activity(pool_address=...) → pool events
+Agent flow: portfolio shows PT but no pool trades → spectra_get_onchain_activity(pt_address=...) → vault events (mint/redeem)
 ```
 
 ## Extending

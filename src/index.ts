@@ -1,46 +1,57 @@
 #!/usr/bin/env node
 
 /**
- * Spectra Finance MCP Server
+ * MetaVault MCP Server
  *
- * Makes Spectra's yield protocol discoverable and usable by AI agents.
- * Wraps the Spectra API (api.spectra.finance) and subgraph to expose
- * yield opportunities, pool data, and strategy calculations.
+ * Multi-protocol yield intelligence for AI agents (Spectra, Morpho, Pendle).
  *
- * Tools:
- *   - get_pt_details        -> Full details on a specific Principal Token
- *   - list_pools             -> List all pools on a given chain
- *   - get_best_fixed_yields  -> Find the best fixed-rate opportunities across chains
- *   - get_looping_strategy   -> Calculate leveraged yield via PT + Morpho looping (auto-fetches rates)
- *   - compare_yield          -> Compare Spectra fixed rates vs underlying variable rates
- *   - get_protocol_stats     -> Protocol-wide stats (TVL, supply, emissions)
- *   - get_supported_chains   -> List all supported blockchain networks
- *   - get_portfolio           -> Wallet positions (PT, YT, LP balances & claimable yield)
- *   - get_pool_volume         -> Historical trading volume for a specific pool
- *   - get_pool_activity       -> Recent trade and liquidity activity for a pool (with flow accounting, contract detection, gas estimates)
- *   - get_address_activity    -> Cross-pool activity scan for a specific address
- *   - get_morpho_markets      -> Find Morpho markets that accept Spectra PTs as collateral
- *   - get_morpho_rate         -> Get live borrow rate for a specific Morpho market
- *   - quote_trade             -> Estimate expected output, price impact, and minOut for a PT swap
- *   - simulate_portfolio_after_trade -> Preview portfolio state after a hypothetical PT trade
- *   - scan_opportunities       -> Capital-aware opportunity scanner for autonomous agents
- *   - scan_yt_arbitrage        -> YT rate vs IBT rate arbitrage scanner
- *   - get_ve_info              -> Live veSPECTRA data + boost calculator
- *   - get_metavaults             -> List live MetaVaults across chains (curators, TVL, APY, positions)
- *   - model_metavault_strategy  -> MetaVault double-loop strategy modeler for curators (live data or manual)
- *   - get_curator_dashboard       -> Operational dashboard for MetaVault curators (health, flows, revenue, alerts)
- *   - list_pendle_markets         -> List active Pendle markets (all Pendle chains, including Pendle-only)
- *   - compare_pendle_spectra      -> Side-by-side Pendle vs Spectra yield comparison on overlapping chains
- *   - scan_curator_opportunities  -> Cross-protocol (Spectra + Pendle) capital-aware scanner for MetaVault curators
- *   - get_onchain_activity         -> Historical pool activity via eth_getLogs (when API data is incomplete)
- *   - get_pool_capacity            -> Multi-size capacity curve for pool depth assessment
- *   - check_ibt_health             -> Multi-signal IBT health assessment (ERC-4626, APR, liquidity)
- *   - get_yield_curve              -> Term structure / yield curve for a given underlying across chains
- *   - curator_risk_monitor         -> Liquidation risk monitor for curator Morpho positions
- *   - stress_test_vault            -> Withdrawal stress test for MetaVaults (liquidity waterfall)
- *   - plan_rollover                -> Position rollover planner for expiring MetaVault positions
- *   - curator_portfolio            -> Multi-vault curator portfolio aggregation
- *   - get_expiring_pools           -> Scan all chains for pools approaching maturity (operator alerts)
+ * Tools (prefix convention: spectra_, morpho_, pendle_, mv_ for cross-protocol):
+ *
+ *   Spectra:
+ *   - spectra_get_pt_details          -> Full details on a specific Principal Token
+ *   - spectra_list_pools              -> List all pools on a given chain
+ *   - spectra_get_best_fixed_yields   -> Find the best fixed-rate opportunities across chains
+ *   - spectra_get_looping_strategy    -> Calculate leveraged yield via PT + Morpho looping
+ *   - spectra_compare_yield           -> Compare Spectra fixed rates vs underlying variable rates
+ *   - spectra_get_protocol_stats      -> Protocol-wide stats (TVL, supply, emissions)
+ *   - spectra_list_chains             -> List all supported blockchain networks
+ *   - spectra_get_portfolio           -> Wallet positions (PT, YT, LP balances & claimable yield)
+ *   - spectra_get_pool_volume         -> Historical trading volume for a specific pool
+ *   - spectra_get_pool_activity       -> Recent trade and liquidity activity for a pool
+ *   - spectra_get_address_activity    -> Cross-pool activity scan for a specific address
+ *   - spectra_quote_trade             -> Estimate expected output, price impact, and minOut for a PT swap
+ *   - spectra_simulate_trade          -> Preview portfolio state after a hypothetical PT trade
+ *   - spectra_scan_opportunities      -> Capital-aware opportunity scanner for autonomous agents
+ *   - spectra_scan_yt_arbitrage       -> YT rate vs IBT rate arbitrage scanner
+ *   - spectra_get_ve_info             -> Live veSPECTRA data + boost calculator
+ *   - spectra_list_metavaults         -> List live MetaVaults across chains
+ *   - spectra_model_metavault         -> MetaVault double-loop strategy modeler for curators
+ *   - spectra_get_curator_dashboard   -> Operational dashboard for MetaVault curators
+ *   - spectra_get_onchain_activity    -> Historical pool activity via eth_getLogs
+ *   - spectra_get_pool_capacity       -> Multi-size capacity curve for pool depth assessment
+ *   - spectra_get_yield_curve         -> Term structure / yield curve for a given underlying
+ *   - spectra_list_expiring_pools     -> Scan all chains for pools approaching maturity
+ *   - spectra_stress_test_vault       -> Withdrawal stress test for MetaVaults
+ *
+ *   Morpho:
+ *   - morpho_list_markets             -> Find Morpho markets accepting Spectra PTs as collateral
+ *   - morpho_get_rate                 -> Get live borrow rate for a specific Morpho market
+ *   - morpho_get_market_suppliers     -> Who supplies lending liquidity to a Morpho market
+ *   - morpho_list_vaults              -> List Morpho vaults on a chain
+ *   - morpho_get_positions            -> Query user Morpho positions
+ *   - morpho_get_history              -> Historical rates for a Morpho market
+ *   - morpho_monitor_risk             -> Liquidation risk monitor for curator Morpho positions
+ *
+ *   Pendle:
+ *   - pendle_list_markets             -> List active Pendle markets
+ *
+ *   Cross-protocol (mv_):
+ *   - mv_compare_yield                -> Side-by-side Pendle vs Spectra yield comparison
+ *   - mv_scan_curator_opportunities   -> Cross-protocol capital-aware scanner for curators
+ *   - mv_get_protocol_context         -> Essential protocol mechanics (all protocols)
+ *   - mv_check_ibt_health             -> Multi-signal IBT health assessment
+ *   - mv_plan_rollover                -> Position rollover planner for expiring positions
+ *   - mv_get_curator_portfolio        -> Multi-vault curator portfolio aggregation
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -78,8 +89,8 @@ import { register as registerExpiryMonitor } from "./tools/expiry_monitor.js";
 // =============================================================================
 
 const server = new McpServer({
-  name: "spectra-finance",
-  version: "1.1.0",
+  name: "metavault-mcp",
+  version: "2.0.0",
 });
 
 // Register all tools
@@ -113,8 +124,8 @@ registerExpiryMonitor(server);
 // =============================================================================
 
 server.resource(
-  "spectra-overview",
-  "spectra://overview",
+  "metavault-overview",
+  "metavault://overview",
   async (uri) => ({
     contents: [{
       uri: uri.href,
@@ -137,7 +148,7 @@ Yield Calculation:
 - Effective APY: Implied APY minus annualized entry cost (price impact from AMM trade).
   Scanner estimates use a conservative constant-product model. Real Curve StableSwap-NG pools
   are significantly more capital-efficient — effective APY shown is a lower bound.
-  Use quote_trade() for exact on-chain quotes before acting on scanner output.
+  Use spectra_quote_trade() for exact on-chain quotes before acting on scanner output.
 
 Trading Mechanics (how PT and YT move on-chain):
 - PT trades on Curve StableSwap-NG pools (IBT/PT pairs). Pool activity shows BUY_PT and SELL_PT.
@@ -173,7 +184,7 @@ Known Limitation — Mint Visibility:
 Reading a wallet's strategy from its holdings:
 These patterns have MULTIPLE valid interpretations — do not collapse to one without evidence:
 - YT but no PT: COULD be yield bull (sold PT), OR LPed the PT, OR PT in Morpho collateral.
-  Cross-reference with get_portfolio and get_pool_activity to distinguish.
+  Cross-reference with spectra_get_portfolio and spectra_get_pool_activity to distinguish.
 - PT but no YT: COULD be fixed-rate lock (sold YT), OR bought PT on market, OR partial redeem.
 - Balanced PT + YT: COULD be recently minted (no position yet), OR accumulated separately.
 - High LP + high YT: COULD be mint+LP loop (minted PT+YT, LPed PT+IBT, kept YT).
@@ -186,7 +197,7 @@ Key Integrations:
 - MetaVaults: Auto-rolling liquidity vaults managed by curators (ERC-7540)
   - YT→LP compounding loop (curator converts YT yield to more LP)
   - MetaVault shares can be used as Morpho collateral for leverage ("double loop")
-  - Live data via API: /v1/{network}/metavaults — use get_metavaults to discover
+  - Live data via API: /v1/{network}/metavaults — use spectra_list_metavaults to discover
 - Governance: ve(3,3) model on Base (veSPECTRA)
 
 Looping Strategy (most capital-efficient yield in DeFi):
@@ -208,7 +219,7 @@ Networks: ${API_NETWORKS.map((k) => `${SUPPORTED_CHAINS[k].name} (${k})`).join("
 
 server.resource(
   "curator-strategy-guide",
-  "spectra://curator-strategy-guide",
+  "metavault://curator-strategy-guide",
   async (uri) => ({
     contents: [{
       uri: uri.href,
@@ -350,7 +361,7 @@ flywheel effect. They serve different audiences and reinforce each other.
     +-- SPECTRA gauge emissions on LP position  <-- if veSPECTRA holder
     = Total curator ROI on seed capital
 
-  Use the model_metavault_strategy tool to model specific scenarios with
+  Use the spectra_model_metavault tool to model specific scenarios with
   your actual parameters (base APY, borrow rate, capital, expected deposits).
 `,
     }],
@@ -364,7 +375,7 @@ flywheel effect. They serve different audiences and reinforce each other.
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Spectra Finance MCP Server running on stdio");
+  console.error("MetaVault MCP Server running on stdio");
 }
 
 // Graceful shutdown on SIGTERM/SIGINT

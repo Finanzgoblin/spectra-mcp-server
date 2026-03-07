@@ -39,7 +39,7 @@ No code-level bugs found. TypeScript has pre-existing `any` type warnings in `yt
 | **3** | Liquidity velocity/trending | ❌ Open | ❌ Open | No historical liquidity snapshots available from API; remains snapshot-only |
 | **4** | Cycle detection temporal context | ❌ Open | ❌ Open | No `lastOccurrenceTs` or staleness flag added; cycles still stitched across gaps |
 | **5** | Flow accounting confidence quantitative | ❌ Open | ✅ **Closed** | `formatObservationCoverage` now provides value%, temporal%, source% coverage — richer than a single confidence score |
-| **6** | Cross-pool temporal correlation | ❌ Open | ⚠️ Partial | `get_address_activity` scans all chains but no sequential timing analysis |
+| **6** | Cross-pool temporal correlation | ❌ Open | ⚠️ Partial | `spectra_get_address_activity` scans all chains but no sequential timing analysis |
 | **7** | Looping failure scenarios | ❌ Open | ✅ **Closed** | Commit `59f236a`: optimal≤1 warning, unprofitable warning, break-even period, borrow rate sensitivity (+1/+2/+3%), break-even rate, P(underwater) via normal CDF |
 
 **Score: 4/7 closed, 1 partial, 2 open** (was 0/7).
@@ -52,13 +52,13 @@ No code-level bugs found. TypeScript has pre-existing `any` type warnings in `yt
 
 | Tool | File | Emergence Compliance | Key Pattern |
 |------|------|---------------------|-------------|
-| `curator_risk_monitor` | `risk_monitor.ts` | ✅ Strong | "Alerts scaffold attention, not action"; conflicting signals (health vs rate drift) preserved |
-| `stress_test_vault` | `stress_test.ts` | ✅ Strong | Waterfall coverage quantification (tier-by-tier %); doesn't prescribe action |
-| `plan_rollover` | `rollover.ts` | ✅ Adequate | Cross-protocol candidates ranked but not collapsed; no forced recommendation |
-| `curator_portfolio` | `curator_portfolio.ts` | ⚠️ Minimal | Aggregation tool — shows blended APY, concentration, but no competing interpretations (appropriate for factual aggregation) |
-| `get_morpho_positions` | `morpho.ts` | ✅ Strong | Supply/borrow/vault views with risk context |
-| `get_morpho_history` | `morpho.ts` | ✅ Strong | Statistical analysis (mean, stddev, max, min) — supports probabilistic reasoning |
-| `get_morpho_vaults` | `morpho.ts` | ✅ Adequate | Enriched with Merkl campaigns, public allocator liquidity |
+| `morpho_monitor_risk` | `risk_monitor.ts` | ✅ Strong | "Alerts scaffold attention, not action"; conflicting signals (health vs rate drift) preserved |
+| `spectra_stress_test_vault` | `stress_test.ts` | ✅ Strong | Waterfall coverage quantification (tier-by-tier %); doesn't prescribe action |
+| `mv_plan_rollover` | `rollover.ts` | ✅ Adequate | Cross-protocol candidates ranked but not collapsed; no forced recommendation |
+| `mv_get_curator_portfolio` | `curator_portfolio.ts` | ⚠️ Minimal | Aggregation tool — shows blended APY, concentration, but no competing interpretations (appropriate for factual aggregation) |
+| `morpho_get_positions` | `morpho.ts` | ✅ Strong | Supply/borrow/vault views with risk context |
+| `morpho_get_history` | `morpho.ts` | ✅ Strong | Statistical analysis (mean, stddev, max, min) — supports probabilistic reasoning |
+| `morpho_list_vaults` | `morpho.ts` | ✅ Adequate | Enriched with Merkl campaigns, public allocator liquidity |
 
 ### New Emergence Patterns Added
 
@@ -174,7 +174,7 @@ Three orthogonal dimensions (value, temporal, data source) plus boundary markers
 **Recommendation:** Add `lastOccurrenceTs` and `firstOccurrenceTs` to `ActivityCycleResult`. Flag if most recent cycle is >30 days old: `"Pattern last observed N days ago — may no longer be active."` Flag if cycles span a gap >14 days: `"Pattern spans a {N}-day gap — pre-gap and post-gap occurrences may be unrelated."`
 
 #### Gap 6 (Partial): Cross-Pool Temporal Correlation
-**Status:** `get_address_activity` aggregates per-pool patterns but doesn't detect sequential capital flow.
+**Status:** `spectra_get_address_activity` aggregates per-pool patterns but doesn't detect sequential capital flow.
 
 **Current state:** If a wallet systematically exits Pool A then enters Pool B within 7 days, this pattern isn't flagged.
 
@@ -197,7 +197,7 @@ Three orthogonal dimensions (value, temporal, data source) plus boundary markers
 | **Incentive sustainability** | ✅ Yes | >50% flag in formatters, >70% flag in MetaVault dashboard |
 | **Looping failure scenarios** | ✅ Yes | Minimal/unprofitable warnings, break-even, sensitivity table |
 | **Risk signal framing** | ✅ Yes | New tools use "scaffolds attention, not action" pattern |
-| **Merkl rewards** | ✅ Yes | `get_portfolio` fetches in parallel, matched + unmatched sections |
+| **Merkl rewards** | ✅ Yes | `spectra_get_portfolio` fetches in parallel, matched + unmatched sections |
 
 **Overall: Strong consistency with measurable improvement.** The new tools (risk_monitor, stress_test, rollover) follow the same emergence patterns as the original tools without requiring enforcement.
 
@@ -229,7 +229,7 @@ Three orthogonal dimensions (value, temporal, data source) plus boundary markers
 | Tier | Tests | Alignment | Quality |
 |------|-------|-----------|---------|
 | **T1: Basic Tool Usage** (Q1-Q4) | Chains, yields, pools, MetaVaults | ✅ Direct tool responses | Strong |
-| **T2: Cross-Tool Reasoning** (Q5-Q8) | Capital awareness, cross-protocol, looping, simulation | ✅ scan_opportunities, compare_pendle_spectra | Strong |
+| **T2: Cross-Tool Reasoning** (Q5-Q8) | Capital awareness, cross-protocol, looping, simulation | ✅ spectra_scan_opportunities, mv_compare_yield | Strong |
 | **T3: Protocol Mechanics** (Q9-Q12) | Router batching, YT trading, PT/YT math, mint visibility | ✅ Competing branches + context tool | Strong |
 | **T4: Risk & Nuance** (Q13-Q16) | MetaVault risk, extreme APY, looping risk, bridge activity | ✅ Incentive sustainability + looping failures | **Improved** |
 | **T5: Multi-Step Analysis** (Q17-Q20) | Wallet strategy, veSPECTRA, YT arb vs LP, negative APY | ✅ Cross-reference workflow | Strong |
@@ -248,7 +248,7 @@ Three orthogonal dimensions (value, temporal, data source) plus boundary markers
 The 22 commits since v1 added 14+ new tools and significant feature surface without degrading emergence patterns. New tools independently adopt "scaffold attention, not action," competing branches, and coverage quantification. This suggests the architecture is self-documenting — contributors read existing patterns and follow them.
 
 ### 2. Risk Monitor Sets a New Standard
-`curator_risk_monitor` introduces the "Considerations (not directives)" pattern, which is a cleaner version of competing interpretations for risk-oriented tools. This pattern should be adopted by future risk tools.
+`morpho_monitor_risk` introduces the "Considerations (not directives)" pattern, which is a cleaner version of competing interpretations for risk-oriented tools. This pattern should be adopted by future risk tools.
 
 ### 3. Probabilistic Risk is a Step Change
 The looping tool's P(underwater) via normal CDF on 30-day history (`looping.ts:380-389`) moves beyond scenario tables into probabilistic reasoning. This is the right direction — agents can use probability to size recommendations rather than making binary safe/unsafe calls.

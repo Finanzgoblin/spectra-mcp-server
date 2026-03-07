@@ -1,5 +1,5 @@
 /**
- * Tool: get_looping_strategy
+ * Tool: spectra_get_looping_strategy
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -40,7 +40,7 @@ function normalCDF(x: number): number {
 
 export function register(server: McpServer): void {
   server.tool(
-    "get_looping_strategy",
+    "spectra_get_looping_strategy",
     `Calculate a leveraged fixed-yield strategy using Spectra PT + Morpho looping.
 
 Strategy: Deposit asset -> mint PT on Spectra -> use PT as collateral on Morpho ->
@@ -62,7 +62,7 @@ Risk context:
 - Entry cost (price impact) compounds across loops — each iteration faces degraded
   effective pool liquidity.
 
-Use get_morpho_markets to find available Morpho markets. Use scan_opportunities to
+Use morpho_list_markets to find available Morpho markets. Use spectra_scan_opportunities to
 discover the best looping opportunities across all chains with capital-aware sizing.`,
     {
       chain: CHAIN_ENUM.describe("The blockchain network"),
@@ -131,7 +131,7 @@ discover the best looping opportunities across all chains with capital-aware siz
             `At premium, the "fixed yield" is negative — you'd pay more for PT than you receive at maturity.`,
             ``,
             `This can happen near/post maturity or during temporary market dislocations.`,
-            `Consider: compare_yield(chain="${chain}", pt_address="${pt_address}") to check current rates.`,
+            `Consider: spectra_compare_yield(chain="${chain}", pt_address="${pt_address}") to check current rates.`,
           ].join("\n");
           return { content: [{ type: "text" as const, text }] };
         }
@@ -167,12 +167,12 @@ discover the best looping opportunities across all chains with capital-aware siz
             lines.push(`     Looping is likely NOT possible for this PT on ${chain}. **`);
             lines.push(``);
             lines.push(`  Alternative strategies for this PT:`);
-            lines.push(`    • Unleveraged fixed yield: compare_yield(chain="${chain}", pt_address="${pt_address}") to evaluate the raw spread`);
-            lines.push(`    • Find loopable alternatives: scan_opportunities(capital_usd=YOUR_AMOUNT, include_looping=true)`);
-            lines.push(`    • Check other chains: get_morpho_markets(pt_symbol_filter="${pt.underlying?.symbol || ""}") to find Morpho markets for similar PTs`);
-            lines.push(`    • YT arbitrage: scan_yt_arbitrage(capital_usd=YOUR_AMOUNT) for spread-based opportunities`);
+            lines.push(`    • Unleveraged fixed yield: spectra_compare_yield(chain="${chain}", pt_address="${pt_address}") to evaluate the raw spread`);
+            lines.push(`    • Find loopable alternatives: spectra_scan_opportunities(capital_usd=YOUR_AMOUNT, include_looping=true)`);
+            lines.push(`    • Check other chains: morpho_list_markets(pt_symbol_filter="${pt.underlying?.symbol || ""}") to find Morpho markets for similar PTs`);
+            lines.push(`    • YT arbitrage: spectra_scan_yt_arbitrage(capital_usd=YOUR_AMOUNT) for spread-based opportunities`);
           }
-          lines.push(`  Tip: Use get_morpho_markets to find which PTs have Morpho markets.`);
+          lines.push(`  Tip: Use morpho_list_markets to find which PTs have Morpho markets.`);
         }
 
         lines.push(``);
@@ -445,11 +445,11 @@ discover the best looping opportunities across all chains with capital-aware siz
         // Next-step hints
         lines.push(``);
         lines.push(`--- Next Steps ---`);
-        lines.push(`• Quote entry trade: quote_trade(chain="${chain}", pt_address="${pt_address}", amount=YOUR_AMOUNT, side="buy")`);
-        lines.push(`• Preview portfolio: simulate_portfolio_after_trade(chain="${chain}", pt_address="${pt_address}", address=YOUR_WALLET, amount=YOUR_AMOUNT, side="buy")`);
-        lines.push(`• Compare against alternatives: scan_opportunities(capital_usd=YOUR_AMOUNT) for cross-chain ranking`);
+        lines.push(`• Quote entry trade: spectra_quote_trade(chain="${chain}", pt_address="${pt_address}", amount=YOUR_AMOUNT, side="buy")`);
+        lines.push(`• Preview portfolio: spectra_simulate_trade(chain="${chain}", pt_address="${pt_address}", address=YOUR_WALLET, amount=YOUR_AMOUNT, side="buy")`);
+        lines.push(`• Compare against alternatives: spectra_scan_opportunities(capital_usd=YOUR_AMOUNT) for cross-chain ranking`);
         if (morphoDetected) {
-          lines.push(`• Monitor borrow rate: get_morpho_rate(chain="${chain}", market_key="${morphoMarket!.uniqueKey}") — rates are variable`);
+          lines.push(`• Monitor borrow rate: morpho_get_rate(chain="${chain}", market_key="${morphoMarket!.uniqueKey}") — rates are variable`);
         }
 
         const text = lines.join("\n");

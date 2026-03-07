@@ -1,7 +1,7 @@
-# Spectra MCP Server - Agent Context
+# MetaVault MCP - Agent Context
 
 ## Project Structure
-- Main repo: `C:\Users\User\spectra-mcp-server`
+- Main repo: `C:\Users\User\metavault-mcp`
 - Must `git pull origin main && npm run build` in main repo for MCP server to pick up changes
 - MCP server process must restart after rebuild
 - Worktrees are under `.claude/worktrees/`
@@ -13,64 +13,64 @@
 - TypeScript project — check types with `npx tsc --noEmit`
 
 ## Key Tool Files
-- `src/tools/pt.ts` — `list_pools`, `get_pt_details`, `get_best_fixed_yields`, `compare_yield`
-- `src/tools/pool.ts` — `get_pool_activity`, `get_pool_volume`, `get_address_activity`
-- `src/tools/portfolio.ts` — `get_portfolio`
-- `src/tools/onchain.ts` — `get_onchain_activity` (direct RPC/eth_getLogs)
-- `src/tools/strategy.ts` — `scan_opportunities` (capital-aware, batch Morpho, negative-APY filtering)
-- `src/tools/yt_arb.ts` — `scan_yt_arbitrage` (YT execution mechanics, flash-mint/flash-redeem)
-- `src/tools/morpho.ts` — `get_morpho_markets`, `get_morpho_rate`, `get_morpho_market_suppliers`, `get_morpho_vaults`
-- `src/tools/looping.ts` — `get_looping_strategy` (borrow rate sensitivity, break-even period, failure scenarios)
-- `src/tools/quote.ts` — `quote_trade` (on-chain Curve get_dy() with math fallback), exports `tryOnChainQuote` shared by simulate.ts
-- `src/tools/simulate.ts` — `simulate_portfolio_after_trade` (imports tryOnChainQuote from quote.ts)
-- `src/tools/pendle.ts` — `list_pendle_markets`, `compare_pendle_spectra` (maturity-aware matching)
-- `src/tools/curator_scan.ts` — `scan_curator_opportunities` (cross-protocol Spectra + Pendle capital-aware scanner)
-- `src/tools/metavault.ts` — `get_metavaults`, `model_metavault_strategy`, `get_curator_dashboard`
-- `src/tools/protocol.ts` — `get_protocol_stats`, `get_supported_chains`
-- `src/tools/ve.ts` — `get_ve_info` (live veSPECTRA data from Base chain)
-- `src/tools/context.ts` — `get_protocol_context` (Layer 1 protocol mechanics, deposit paths, glossary, callable on-demand)
-- `src/tools/capacity.ts` — `get_pool_capacity` (multi-size quote ladder, sweet spot / exhaustion detection)
-- `src/tools/ibt_health.ts` — `check_ibt_health` (ERC-4626 conversion rate, APR composition, pool balance, verdict; supports direct ibt_address param for Pendle SY or any ERC-4626 vault)
-- `src/tools/yield_curve.ts` — `get_yield_curve` (term structure for a given underlying across all chains)
-- `src/tools/risk_monitor.ts` — `curator_risk_monitor` (liquidation distance, health factor, borrow rate drift, alert levels)
-- `src/tools/stress_test.ts` — `stress_test_vault` (withdrawal liquidity waterfall, market stress simulation)
-- `src/tools/rollover.ts` — `plan_rollover` (expiring position rollover planner with cross-protocol candidates)
-- `src/tools/curator_portfolio.ts` — `curator_portfolio` (multi-vault aggregation, AUM, blended APY, concentration)
-- `src/tools/expiry_monitor.ts` — `get_expiring_pools` (scan all chains for pools approaching maturity, urgency grouping, successor pool cross-reference, gauge status via governance API, readiness assessment)
+- `src/tools/pt.ts` — `spectra_list_pools`, `spectra_get_pt_details`, `spectra_get_best_fixed_yields`, `spectra_compare_yield`
+- `src/tools/pool.ts` — `spectra_get_pool_activity`, `spectra_get_pool_volume`, `spectra_get_address_activity`
+- `src/tools/portfolio.ts` — `spectra_get_portfolio`
+- `src/tools/onchain.ts` — `spectra_get_onchain_activity` (direct RPC/eth_getLogs)
+- `src/tools/strategy.ts` — `spectra_scan_opportunities` (capital-aware, batch Morpho, negative-APY filtering)
+- `src/tools/yt_arb.ts` — `spectra_scan_yt_arbitrage` (YT execution mechanics, flash-mint/flash-redeem)
+- `src/tools/morpho.ts` — `morpho_list_markets`, `morpho_get_rate`, `morpho_get_market_suppliers`, `morpho_list_vaults`
+- `src/tools/looping.ts` — `spectra_get_looping_strategy` (borrow rate sensitivity, break-even period, failure scenarios)
+- `src/tools/quote.ts` — `spectra_quote_trade` (on-chain Curve get_dy() with math fallback), exports `tryOnChainQuote` shared by simulate.ts
+- `src/tools/simulate.ts` — `spectra_simulate_trade` (imports tryOnChainQuote from quote.ts)
+- `src/tools/pendle.ts` — `pendle_list_markets`, `mv_compare_yield` (maturity-aware matching)
+- `src/tools/curator_scan.ts` — `mv_scan_curator_opportunities` (cross-protocol Spectra + Pendle capital-aware scanner)
+- `src/tools/metavault.ts` — `spectra_list_metavaults`, `spectra_model_metavault`, `spectra_get_curator_dashboard`
+- `src/tools/protocol.ts` — `spectra_get_protocol_stats`, `spectra_list_chains`
+- `src/tools/ve.ts` — `spectra_get_ve_info` (live veSPECTRA data from Base chain)
+- `src/tools/context.ts` — `mv_get_protocol_context` (Layer 1 protocol mechanics, deposit paths, glossary, callable on-demand)
+- `src/tools/capacity.ts` — `spectra_get_pool_capacity` (multi-size quote ladder, sweet spot / exhaustion detection)
+- `src/tools/ibt_health.ts` — `mv_check_ibt_health` (ERC-4626 conversion rate, APR composition, pool balance, verdict; supports direct ibt_address param for Pendle SY or any ERC-4626 vault)
+- `src/tools/yield_curve.ts` — `spectra_get_yield_curve` (term structure for a given underlying across all chains)
+- `src/tools/risk_monitor.ts` — `morpho_monitor_risk` (liquidation distance, health factor, borrow rate drift, alert levels)
+- `src/tools/stress_test.ts` — `spectra_stress_test_vault` (withdrawal liquidity waterfall, market stress simulation)
+- `src/tools/rollover.ts` — `mv_plan_rollover` (expiring position rollover planner with cross-protocol candidates)
+- `src/tools/curator_portfolio.ts` — `mv_get_curator_portfolio` (multi-vault aggregation, AUM, blended APY, concentration)
+- `src/tools/expiry_monitor.ts` — `spectra_list_expiring_pools` (scan all chains for pools approaching maturity, urgency grouping, successor pool cross-reference, gauge status via governance API, readiness assessment)
 
 ## Router-Mediated Transactions & eth_getLogs
 Most user interactions go through the **Spectra Router** (flash-mints, flash-redeems, batched mint+LP). The Router is `msg.sender` on underlying contracts, so event `topics[1]` stores the Router address, NOT the user. This is a fundamental EVM constraint, not a bug.
 
 ### What works for user-specific activity:
-- `get_pool_activity` (API-based) — Spectra indexes by tx.origin, resolves back to user
-- `get_onchain_activity` WITHOUT address filter — fetches all events, manually inspect
-- `get_onchain_activity` WITH address filter — only catches **direct** calls (YieldClaimed, manual mint/redeem)
+- `spectra_get_pool_activity` (API-based) — Spectra indexes by tx.origin, resolves back to user
+- `spectra_get_onchain_activity` WITHOUT address filter — fetches all events, manually inspect
+- `spectra_get_onchain_activity` WITH address filter — only catches **direct** calls (YieldClaimed, manual mint/redeem)
 
 ### What doesn't work:
 - `eth_getLogs` topic filtering by user address for Router-batched operations
 - This means: Mint, Redeem, TokenExchange events from Router-batched txns won't match user address in topics[1]
 
 ### Workaround for historical data beyond API retention:
-1. Use `get_onchain_activity` without address filter on specific block ranges
+1. Use `spectra_get_onchain_activity` without address filter on specific block ranges
 2. Or find the Router address and filter by that, then cross-reference tx hashes
-3. For recent activity, always prefer `get_pool_activity` (API-based, resolves Router txns)
+3. For recent activity, always prefer `spectra_get_pool_activity` (API-based, resolves Router txns)
 
 ## Expired Pools
 - The Spectra API `/v1/{network}/pools` only returns **active** pools. Matured pools vanish entirely.
-- `get_address_activity` now also fetches the portfolio endpoint (`/v1/{network}/portfolio/{address}`) to discover expired pool addresses. This is the only way to find matured pools a wallet interacted with.
-- `list_pools` has `include_expired` flag but the underlying API doesn't return expired pools, so the flag mainly prevents the client-side maturity filter from double-filtering.
+- `spectra_get_address_activity` now also fetches the portfolio endpoint (`/v1/{network}/portfolio/{address}`) to discover expired pool addresses. This is the only way to find matured pools a wallet interacted with.
+- `spectra_list_pools` has `include_expired` flag but the underlying API doesn't return expired pools, so the flag mainly prevents the client-side maturity filter from double-filtering.
 - The portfolio endpoint `/v1/{network}/portfolio/{address}` DOES return expired positions.
 - Individual PT details can be fetched via `/v1/{network}/pt/{address}` even for expired PTs if you know the address.
 
-## RPC-Level Address Filtering in get_onchain_activity
-- `get_onchain_activity` supports an `address` parameter that filters at the RPC level via `topics[1]`
+## RPC-Level Address Filtering in spectra_get_onchain_activity
+- `spectra_get_onchain_activity` supports an `address` parameter that filters at the RPC level via `topics[1]`
 - Address is padded to 32 bytes: `"0x" + "0".repeat(24) + address.slice(2).toLowerCase()`
 - When address-filtered, block range cap is increased 5x (2.5M blocks) since results are sparse
 - All Curve events (TokenExchange, AddLiquidity, RemoveLiquidity, RemoveLiquidityOne) and PT vault events (Mint, Redeem, YieldClaimed) have the user/caller as first indexed parameter
 - BUT: Router-batched txns have Router as `topics[1]`, not end user — see Router section above
 
 ## Merkl Rewards Integration
-- `get_portfolio` fetches Merkl rewards **in parallel** with portfolio data (no added latency)
+- `spectra_get_portfolio` fetches Merkl rewards **in parallel** with portfolio data (no added latency)
 - Merkl API: `GET https://api.merkl.xyz/v3/userRewards?user={address}&chainId={chainId}&proof=false`
 - Chain IDs come from `SUPPORTED_CHAINS[net].id` (already in config.ts)
 - Rewards matched to portfolio positions via pool address extraction from Merkl reason keys (format: `ERC20_0xPoolAddr`)
@@ -100,5 +100,5 @@ Most user interactions go through the **Spectra Router** (flash-mints, flash-red
 
 ## PR Workflow
 - Create feature branch, push, create PR with `gh pr create`
-- After merge, pull changes in main repo: `cd C:\Users\User\spectra-mcp-server && git pull origin main && npm run build`
+- After merge, pull changes in main repo: `cd C:\Users\User\metavault-mcp && git pull origin main && npm run build`
 - Restart MCP server process for changes to take effect

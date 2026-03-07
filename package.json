@@ -1,10 +1,10 @@
 {
-  "name": "spectra-mcp-server",
-  "version": "1.1.0",
-  "description": "MCP Server for Spectra Finance — makes Spectra discoverable by AI agents",
+  "name": "metavault-mcp",
+  "version": "2.0.0",
+  "description": "MetaVault MCP — multi-protocol yield intelligence for AI agents (Spectra, Morpho, Pendle)",
   "type": "module",
   "bin": {
-    "spectra-mcp": "./build/index.js"
+    "metavault-mcp": "./build/index.js"
   },
   "scripts": {
     "build": "tsc",
@@ -23,6 +23,8 @@
   "keywords": [
     "mcp",
     "spectra",
+    "metavault",
+    "pendle",
     "defi",
     "yield",
     "ai-agent",
@@ -32,12 +34,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Finanzgoblin/spectra-mcp-server.git"
+    "url": "git+https://github.com/Finanzgoblin/metavault-mcp.git"
   },
-  "mcpName": "io.github.Finanzgoblin/spectra-mcp-server",
-  "homepage": "https://github.com/Finanzgoblin/spectra-mcp-server#readme",
+  "mcpName": "io.github.Finanzgoblin/metavault-mcp",
+  "homepage": "https://github.com/Finanzgoblin/metavault-mcp#readme",
   "bugs": {
-    "url": "https://github.com/Finanzgoblin/spectra-mcp-server/issues"
+    "url": "https://github.com/Finanzgoblin/metavault-mcp/issues"
   },
   "engines": {
     "node": ">=18.0.0"

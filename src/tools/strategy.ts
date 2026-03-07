@@ -1,5 +1,5 @@
 /**
- * Tool: scan_opportunities
+ * Tool: spectra_scan_opportunities
  *
  * Composite strategy-layer tool for autonomous DeFi agents.
  * Scans all chains, computes capital-aware metrics (price impact, effective APY,
@@ -41,11 +41,11 @@ import type { BoostInfo } from "../formatters.js";
 
 export function register(server: McpServer): void {
   server.tool(
-    "scan_opportunities",
+    "spectra_scan_opportunities",
     `Scan all Spectra chains for the best risk-adjusted yield opportunities, sized to
 your capital.
 
-Unlike get_best_fixed_yields (which ranks by raw APY), this tool computes:
+Unlike spectra_get_best_fixed_yields (which ranks by raw APY), this tool computes:
 - Entry price impact at YOUR capital size (a 50% APY pool with $10K liquidity is useless at $500K)
 - Effective APY after amortizing entry cost over days to maturity
 - Morpho looping availability and optimal leveraged net APY
@@ -66,15 +66,15 @@ they have different risk profiles: variable APY, curator-managed, auto-rolling p
 Set include_metavaults=false to skip MetaVault scanning.
 
 NOTE: This scans Spectra pools only. For broader coverage including Pendle markets,
-use scan_curator_opportunities — it includes both protocols and may surface significantly
+use mv_scan_curator_opportunities — it includes both protocols and may surface significantly
 more opportunities, especially at smaller capital sizes.
 
 Effective APY is a conservative lower bound (constant-product impact model). Real Curve
-StableSwap-NG pools are more capital-efficient. Verify top picks with quote_trade().
+StableSwap-NG pools are more capital-efficient. Verify top picks with spectra_quote_trade().
 
-Use get_looping_strategy to drill into a specific opportunity's leverage details.
-Use get_pool_activity and get_portfolio to investigate trading patterns and positions.
-Use model_metavault_strategy to model MetaVault looping economics.`,
+Use spectra_get_looping_strategy to drill into a specific opportunity's leverage details.
+Use spectra_get_pool_activity and spectra_get_portfolio to investigate trading patterns and positions.
+Use spectra_model_metavault to model MetaVault looping economics.`,
     {
       capital_usd: z
         .number()
@@ -400,8 +400,8 @@ Use model_metavault_strategy to model MetaVault looping economics.`,
             `• Try a smaller capital size or increase max_price_impact_pct`,
             `• Lower filters: min_tvl_usd or min_liquidity_usd`,
             ...(asset_filter ? [`• Remove asset filter to see all available pools`] : []),
-            `• Check raw APY: get_best_fixed_yields() — headline rates without capital adjustment`,
-            `• Check YT spreads: scan_yt_arbitrage(capital_usd=${capital_usd}) — different opportunity type`,
+            `• Check raw APY: spectra_get_best_fixed_yields() — headline rates without capital adjustment`,
+            `• Check YT spreads: spectra_scan_yt_arbitrage(capital_usd=${capital_usd}) — different opportunity type`,
           ];
 
           // Still show MetaVault alternatives even when no PT pools match
@@ -486,10 +486,10 @@ Use model_metavault_strategy to model MetaVault looping economics.`,
         const nextStepLines = [
           ``,
           `--- Next Steps ---`,
-          `• Drill into #1: get_looping_strategy(chain="${top.chain}", pt_address="${top.ptAddress}") for detailed leverage table`,
-          `• Quote entry: quote_trade(chain="${top.chain}", pt_address="${top.ptAddress}", amount=${capital_usd}, side="buy")`,
-          `• Preview portfolio: simulate_portfolio_after_trade(chain="${top.chain}", pt_address="${top.ptAddress}", address=YOUR_WALLET, amount=${capital_usd}, side="buy")`,
-          `• Compare with YT arb: scan_yt_arbitrage(capital_usd=${capital_usd}) for spread-based opportunities`,
+          `• Drill into #1: spectra_get_looping_strategy(chain="${top.chain}", pt_address="${top.ptAddress}") for detailed leverage table`,
+          `• Quote entry: spectra_quote_trade(chain="${top.chain}", pt_address="${top.ptAddress}", amount=${capital_usd}, side="buy")`,
+          `• Preview portfolio: spectra_simulate_trade(chain="${top.chain}", pt_address="${top.ptAddress}", address=YOUR_WALLET, amount=${capital_usd}, side="buy")`,
+          `• Compare with YT arb: spectra_scan_yt_arbitrage(capital_usd=${capital_usd}) for spread-based opportunities`,
         ];
 
         // Add MetaVault modeling hint if any were shown
@@ -497,12 +497,12 @@ Use model_metavault_strategy to model MetaVault looping economics.`,
           const topMv = metavaultResult.metavaults
             .sort((a, b) => (b.metavault.liveApy?.total || 0) - (a.metavault.liveApy?.total || 0))[0];
           if (topMv) {
-            nextStepLines.push(`• Model MetaVault: model_metavault_strategy(chain="${topMv.chain}", metavault_address="${topMv.metavault.address}") for looping economics`);
+            nextStepLines.push(`• Model MetaVault: spectra_model_metavault(chain="${topMv.chain}", metavault_address="${topMv.metavault.address}") for looping economics`);
           }
         }
 
         // Cross-protocol pointer — Pendle markets may offer competitive yields
-        nextStepLines.push(`• Cross-protocol: scan_curator_opportunities(capital_usd=${capital_usd}) for unified Spectra + Pendle ranking`);
+        nextStepLines.push(`• Cross-protocol: mv_scan_curator_opportunities(capital_usd=${capital_usd}) for unified Spectra + Pendle ranking`);
 
         text += nextStepLines.join("\n");
 

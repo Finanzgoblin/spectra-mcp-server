@@ -1,5 +1,5 @@
 /**
- * Tool: get_yield_curve
+ * Tool: spectra_get_yield_curve
  *
  * Term structure view for a given underlying asset across all Spectra chains.
  * Shows all available PT maturities sorted chronologically with implied APY,
@@ -16,7 +16,7 @@ import type { RawPoolOpportunity } from "../types.js";
 
 export function register(server: McpServer): void {
   server.tool(
-    "get_yield_curve",
+    "spectra_get_yield_curve",
     `Show the yield curve (term structure) for a given underlying asset across all chains.
 
 Fetches all active Spectra PTs matching the underlying (e.g., "USDC", "ETH"),
@@ -28,9 +28,9 @@ rates at similar maturities, and choose optimal maturity targets.
 
 Handles symbol variants automatically (USDC.e, WETH, wstETH → normalized).
 
-Use get_pt_details or check_ibt_health to drill into a specific maturity.
-Use get_pool_capacity to check depth at your capital size.
-Use compare_yield for fixed-vs-variable analysis on a specific PT.`,
+Use spectra_get_pt_details or mv_check_ibt_health to drill into a specific maturity.
+Use spectra_get_pool_capacity to check depth at your capital size.
+Use spectra_compare_yield for fixed-vs-variable analysis on a specific PT.`,
     {
       underlying: z
         .string()
@@ -206,8 +206,8 @@ Use compare_yield for fixed-vs-variable analysis on a specific PT.`,
         }
 
         lines.push("");
-        lines.push("Use get_pt_details or check_ibt_health on a specific PT for deeper analysis.");
-        lines.push("Use get_pool_capacity to assess depth at your capital size.");
+        lines.push("Use spectra_get_pt_details or mv_check_ibt_health on a specific PT for deeper analysis.");
+        lines.push("Use spectra_get_pool_capacity to assess depth at your capital size.");
 
         const text = lines.join("\n");
         return { content: [{ type: "text" as const, text }] };
