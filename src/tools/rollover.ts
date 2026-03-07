@@ -260,13 +260,27 @@ Use spectra_get_pool_capacity to assess depth at your capital size for specific 
             .map(({ pt, chain: c }) => ({ address: pt.address, chain: c }));
 
           if (spectraPtAddresses.length > 0) {
-            try {
-              morphoMap = await findMorphoMarketsForPts(
-                spectraPtAddresses.map((p) => p.address),
-                spectraPtAddresses[0]?.chain || chain
-              );
-            } catch {
-              // Best-effort
+            // Group by chain to avoid querying only the first chain's markets
+            const ptsByChain: Record<string, string[]> = {};
+            for (const { address, chain: c } of spectraPtAddresses) {
+              if (!ptsByChain[c]) ptsByChain[c] = [];
+              ptsByChain[c].push(address);
+            }
+
+            const morphoResults = await Promise.allSettled(
+              Object.entries(ptsByChain).map(async ([c, addrs]) => {
+                const markets = await findMorphoMarketsForPts([...new Set(addrs)], c);
+                return markets;
+              })
+            );
+
+            // Merge all chain results into a single map
+            for (const result of morphoResults) {
+              if (result.status === "fulfilled") {
+                for (const [k, v] of result.value) {
+                  morphoMap.set(k, v);
+                }
+              }
             }
           }
         }
