@@ -2,7 +2,7 @@
 
 Makes [Spectra Finance](https://spectra.finance) discoverable and usable by AI agents via the [Model Context Protocol](https://modelcontextprotocol.io).
 
-38 tools · 10 chains · read-only · on-chain Curve quoting · ERC-4626 health checks · yield curve term structure · historical eth_getLogs · cross-protocol Pendle comparison · Morpho supply-side visibility · Morpho user positions & historical rates · Merkl campaign APR integration · curator risk monitoring · withdrawal stress testing · rollover planning · multi-vault portfolio aggregation · pool expiry monitoring · zero web3 library dependencies
+50 tools · 10+ chains · read-only · on-chain Curve quoting · ERC-4626 health checks · yield curve term structure · historical eth_getLogs · full Pendle protocol parity (13 tools) · cross-protocol Spectra↔Pendle comparison · Morpho supply-side visibility · Morpho user positions & historical rates · Merkl campaign APR integration · curator risk monitoring · withdrawal stress testing · rollover planning · multi-vault portfolio aggregation · pool expiry monitoring · zero web3 library dependencies
 
 ## What This Does
 
@@ -27,8 +27,9 @@ Any AI agent (Claude, GPT, open-source) that supports MCP can now:
 - **Query** protocol stats, tokenomics, and governance data
 - **Compare** Spectra vs Pendle yield opportunities side-by-side with maturity-aware matching on overlapping chains
 - **Scan** both Spectra and Pendle for the best curator opportunities with capital-aware sizing and cross-protocol match tagging
-- **Browse** Pendle markets across all Pendle-supported chains (including Pendle-only chains)
-- **Assess** pool depth with multi-size capacity curves — quote PT trades at geometric capital tiers ($1K→$1M) to find the sweet spot and exhaustion point
+- **Browse** Pendle markets across all Pendle-supported chains (including Pendle-only chains like Mantle, Berachain, HyperEVM, Corn)
+- **Analyze** Pendle markets in full depth — market details, portfolio tracking, trade quoting, trade simulation, looping strategies, YT arbitrage, expiry monitoring, yield curves, capacity analysis, and protocol-wide stats (full parity with Spectra tools)
+- **Assess** pool depth with multi-size capacity curves — quote PT trades at geometric capital tiers ($1K→$1M) to find the sweet spot and exhaustion point on both Spectra and Pendle
 - **Verify** IBT health before deploying — on-chain ERC-4626 conversion rate, APR sustainability (organic vs incentive), pool balance, protocol recognition, liquidity
 - **Visualize** yield curves (term structure) for any underlying across all chains — all maturities sorted chronologically with curve shape analysis
 - **Recover** historical on-chain pool activity via `eth_getLogs` when API data has aged out — with dynamic RPC URL support for any chain
@@ -39,7 +40,7 @@ Any AI agent (Claude, GPT, open-source) that supports MCP can now:
 - **Monitor** pool expiry across all chains with readiness assessment — successor pool detection, gauge status from governance API, and operator checklist (deploy pool / submit gauge / ready for migration)
 - **Learn** protocol mechanics on-demand via `mv_get_protocol_context` (PT/YT identity, Router batching, deposit paths, glossary, workflow routing)
 
-The agent doesn't need to understand PT/YT mechanics -- it just calls `spectra_scan_opportunities` with its capital size and gets ranked, actionable data. If it needs to understand *why* something works that way, it calls `mv_get_protocol_context`.
+The agent doesn't need to understand PT/YT mechanics -- it just calls `spectra_scan_opportunities` or `pendle_scan_opportunities` with its capital size and gets ranked, actionable data. For cross-protocol comparison, `mv_scan_curator_opportunities` ranks both protocols together. If it needs to understand *why* something works that way, it calls `mv_get_protocol_context`.
 
 ## Open Emergence Architecture
 
@@ -159,8 +160,20 @@ The observation coverage layer addresses a deeper problem: even perfect interpre
 | `spectra_model_metavault` | MetaVault "double loop" strategy modeler for curators. Live mode (chain + metavault_address) auto-fetches APY from API; manual mode accepts base_apy directly. Models curator economics (fee revenue, TVL creation, effective ROI). |
 | `spectra_get_curator_dashboard` | Operational dashboard for MetaVault curators. Vault health, position status with vault allocation (when available) vs pool TVL, depositor flows, fee revenue estimates, bridge activity, and actionable alerts. Explicitly disambiguates vault allocation from pool-level TVL to prevent misinterpretation. |
 | `pendle_list_markets` | List active Pendle markets on a given chain or all Pendle chains. Supports Pendle-only chains (Mantle, Berachain, HyperEVM, Corn). Supports `compact` mode. |
+| `pendle_get_market_details` | Deep dive on a single Pendle market — implied APY, LP APY breakdown (swap fees + PENDLE incentives + boost), underlying variable APY, pool reserves, fee rate, Merkl campaigns. |
+| `pendle_get_best_fixed_yields` | Scan all Pendle chains for top fixed-rate opportunities. Ranked by implied APY with TVL/liquidity filters. The Pendle equivalent of `spectra_get_best_fixed_yields`. |
+| `pendle_get_portfolio` | Wallet positions across all Pendle chains — PT, YT, LP balances with USD values and implied APY per position. |
+| `pendle_scan_opportunities` | Capital-aware Pendle opportunity scanner — price impact at your size using logit AMM model, effective APY, Morpho looping for Pendle PTs, Merkl campaigns. Supports `compact` mode. |
+| `pendle_get_market_capacity` | Multi-size capacity curve for a Pendle market — quotes at geometric capital tiers using logit AMM model to find sweet spot and exhaustion point. |
+| `pendle_get_yield_curve` | Term structure for a given underlying across Pendle chains. All maturities sorted chronologically with curve shape analysis (normal/inverted/flat), steepest segment, cross-chain pairs. |
+| `pendle_list_expiring_markets` | Scan Pendle chains for markets approaching maturity. Groups by urgency (CRITICAL ≤7d, WARNING ≤14d, ALERT ≤threshold). |
+| `pendle_scan_yt_arbitrage` | YT mispricing scanner — compares underlying variable APY vs implied rate. Pendle YT trades directly on AMM (simpler execution than Spectra's Router flash-mint/redeem). |
+| `pendle_get_protocol_stats` | Protocol-wide aggregate stats — total TVL, market count, volume, avg APY across all Pendle chains with per-chain breakdown and Spectra overlap indicator. |
+| `pendle_get_looping_strategy` | Leveraged PT + Morpho looping calculator for Pendle PTs — borrow rate sensitivity, break-even analysis, 30-day historical risk assessment with P(underwater) probability. Auto-detects Morpho markets. |
+| `pendle_quote_trade` | PT trade quote using Pendle logit AMM model — expected output, price impact, effective APY after entry cost, min output with slippage tolerance. |
+| `pendle_simulate_trade` | Portfolio impact simulation for Pendle PT trades — before/after position values, blended APY change, concentration analysis. |
 | `mv_compare_yield` | Side-by-side Pendle vs Spectra yield comparison on overlapping chains (mainnet, base, arbitrum, optimism, sonic, bsc). Maturity-aware matching with configurable tolerance (exact ≤7d, close ≤30d, loose ≤90d). |
-| `mv_scan_curator_opportunities` | Cross-protocol (Spectra + Pendle) capital-aware scanner for MetaVault curators. Price impact at your size, effective APY, Morpho looping (Spectra), cross-protocol match tagging. Supports `compact` mode. |
+| `mv_scan_curator_opportunities` | Cross-protocol (Spectra + Pendle) capital-aware scanner for MetaVault curators. Price impact at your size, effective APY, Morpho looping (Spectra + Pendle), cross-protocol match tagging. Supports `compact` mode. |
 | `spectra_get_onchain_activity` | Historical on-chain activity via `eth_getLogs` — recovers data when the API has aged out transactions. Supports dynamic `rpc_url` parameter for any chain, `token_decimals` for correct formatting (USDC=6, WBTC=8). Decodes **Curve pool events** (swaps, LP adds/removes) via `pool_address` AND **Spectra PT vault events** (Mint, Redeem, YieldClaimed) via `pt_address`. Both can be provided simultaneously for merged results. |
 | `spectra_get_pool_capacity` | Multi-size capacity curve — quotes PT trades at geometric capital tiers to show price impact and effective APY degradation. Identifies sweet spot and exhaustion point. On-chain Curve quotes. |
 | `mv_check_ibt_health` | Multi-signal IBT health assessment — on-chain ERC-4626 conversion rate, APR composition (organic vs incentive), pool balance ratio, protocol recognition, liquidity level. Returns HEALTHY/CAUTION/WARNING verdict. |
@@ -174,7 +187,9 @@ The observation coverage layer addresses a deeper problem: even perfect interpre
 
 ## Supported Chains
 
-Ethereum (mainnet), Base, Arbitrum, Optimism, Avalanche, Katana, Sonic, Flare, BSC, Monad
+**Spectra**: Ethereum (mainnet), Base, Arbitrum, Optimism, Avalanche, Katana, Sonic, Flare, BSC, Monad
+
+**Pendle**: Ethereum, Optimism, BSC, Sonic, Base, Arbitrum, Mantle, Berachain, HyperEVM, Corn
 
 ## veSPECTRA Boost
 
@@ -473,7 +488,7 @@ npm test
 # Schema/registration only (98 tests, no network)
 npm run test:offline
 
-# Unit tests (191 tests, no network)
+# Unit tests (242 tests, no network)
 npm run test:unit
 
 # Agent reasoning tests (82 assertions, requires network)
@@ -482,7 +497,7 @@ npm run test:agent
 
 ### Unit Tests (`api.test.ts`, `formatters.test.ts`, `config.test.ts`)
 
-191 tests covering pure-function logic: GraphQL sanitization, Morpho field constants, Merkl reward parsing (pool address extraction from reason keys, wei-to-human conversion, matched/unmatched categorization), Merkl reward formatting, balance formatting, cross-protocol maturity matching (normalizeUnderlyingSymbol, matchByAssetAndMaturity), and configuration validation. No network required.
+242 tests covering pure-function logic: GraphQL sanitization, Morpho field constants, Merkl reward parsing (pool address extraction from reason keys, wei-to-human conversion, matched/unmatched categorization), Merkl reward formatting, balance formatting, cross-protocol maturity matching (normalizeUnderlyingSymbol, matchByAssetAndMaturity), Pendle logit AMM price impact model (estimatePendlePriceImpact), Pendle date/maturity helpers (pendleDaysToMaturity), Pendle market formatters (compact + summary), and configuration validation. No network required.
 
 ### Integration Tests (`test.cjs`)
 
@@ -540,15 +555,45 @@ This server wraps these endpoints:
 
 Note: `{chain}` uses the slug `mainnet` for Ethereum (the alias `ethereum` is accepted by the server and mapped automatically).
 
-## Pendle Cross-Protocol Integration
+## Pendle Protocol Integration
 
-Three tools enable cross-protocol yield discovery and comparison between Spectra and Pendle:
+13 Pendle tools provide **full feature parity** with the Spectra toolset, plus 2 cross-protocol tools for unified analysis:
 
-**`pendle_list_markets`** — Lists active Pendle markets on a given chain or scans all Pendle-supported chains. Pendle-supported chains include both overlapping chains (mainnet, base, arbitrum, optimism, sonic, bsc) and Pendle-only chains (Mantle, Berachain, HyperEVM, Corn).
+### Pendle-Native Tools (13)
+
+| Category | Pendle Tool | Spectra Equivalent |
+|----------|------------|-------------------|
+| Discovery | `pendle_list_markets` | `spectra_list_pools` |
+| Discovery | `pendle_get_best_fixed_yields` | `spectra_get_best_fixed_yields` |
+| Analysis | `pendle_get_market_details` | `spectra_get_pt_details` |
+| Analysis | `pendle_get_market_capacity` | `spectra_get_pool_capacity` |
+| Analysis | `pendle_get_yield_curve` | `spectra_get_yield_curve` |
+| Portfolio | `pendle_get_portfolio` | `spectra_get_portfolio` |
+| Strategy | `pendle_scan_opportunities` | `spectra_scan_opportunities` |
+| Strategy | `pendle_scan_yt_arbitrage` | `spectra_scan_yt_arbitrage` |
+| Strategy | `pendle_get_looping_strategy` | `spectra_get_looping_strategy` |
+| Trading | `pendle_quote_trade` | `spectra_quote_trade` |
+| Trading | `pendle_simulate_trade` | `spectra_simulate_trade` |
+| Monitoring | `pendle_list_expiring_markets` | `spectra_list_expiring_pools` |
+| Protocol | `pendle_get_protocol_stats` | `spectra_get_protocol_stats` |
+
+### Cross-Protocol Tools (2)
 
 **`mv_compare_yield`** — Side-by-side comparison on overlapping chains with **maturity-aware matching**. Normalizes underlying symbols (wstETH↔stETH, USDC.e↔USDC) and matches by nearest maturity within configurable tolerance (exact ≤7d, close ≤30d, loose ≤90d). Shows match quality and maturity gap per pair.
 
-**`mv_scan_curator_opportunities`** — Cross-protocol capital-aware scanner for MetaVault curators. Scans both Spectra and Pendle in parallel, computes price impact at your capital size, effective APY after entry cost, Morpho looping availability (Spectra PTs), and tags cross-protocol matches. This tool intentionally produces different rankings than `spectra_scan_opportunities` (Spectra-only) — different scope, same design philosophy.
+**`mv_scan_curator_opportunities`** — Cross-protocol capital-aware scanner for MetaVault curators. Scans both Spectra and Pendle in parallel, computes price impact at your capital size, effective APY after entry cost, Morpho looping availability (both Spectra and Pendle PTs), and tags cross-protocol matches.
+
+### Pendle-Supported Chains
+
+Overlapping with Spectra: Ethereum, Base, Arbitrum, Optimism, Sonic, BSC
+Pendle-only: Mantle, Berachain, HyperEVM, Corn
+
+### Key Differences from Spectra
+
+- **AMM model**: Pendle uses a time-decay logit AMM (not Curve StableSwap). The capacity and quote tools use a conservative `scalarRoot=50` estimate.
+- **YT trading**: Pendle YT trades directly on the AMM (`SY↔YT`). Spectra YT trades indirectly via Router flash-mint/redeem.
+- **Incentives**: Pendle uses PENDLE token emissions + vePENDLE boosting (separate from Spectra's SPECTRA/veSPECTRA system).
+- **Token wrapping**: Pendle uses SY (Standardized Yield) tokens as the pool asset, not IBT (Interest-Bearing Token) like Spectra.
 
 ## On-Chain Historical Activity
 
