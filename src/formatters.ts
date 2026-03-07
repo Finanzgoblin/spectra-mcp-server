@@ -542,11 +542,6 @@ export function computeReallocatableUsd(m: MorphoMarket): number {
   return Number(BigInt(raw)) / (10 ** loanDecimals) * loanPrice;
 }
 
-/** Effective supply = direct market supply + reallocatable from Public Allocator. */
-export function getEffectiveSupplyUsd(m: MorphoMarket): number {
-  return (m.state?.supplyAssetsUsd || 0) + computeReallocatableUsd(m);
-}
-
 /** Effective liquidity = direct market liquidity + reallocatable from Public Allocator. */
 export function getEffectiveLiquidityUsd(m: MorphoMarket): number {
   return (m.state?.liquidityAssetsUsd || 0) + computeReallocatableUsd(m);
