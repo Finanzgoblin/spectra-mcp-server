@@ -1,5 +1,5 @@
 /**
- * Tool: scan_yt_arbitrage
+ * Tool: spectra_scan_yt_arbitrage
  *
  * Scans all Spectra chains for YT (Yield Token) arbitrage opportunities.
  * Compares the IBT's actual current APR against the rate implied by the
@@ -35,7 +35,7 @@ import type { BoostInfo } from "../formatters.js";
 
 export function register(server: McpServer): void {
   server.tool(
-    "scan_yt_arbitrage",
+    "spectra_scan_yt_arbitrage",
     `Scan all Spectra chains for YT (Yield Token) arbitrage opportunities.
 
 Compares the IBT's actual current variable APR against the rate implied by the YT's
@@ -59,8 +59,8 @@ Execution mechanics:
 - Break-even assumes the spread persists. Real variable rates fluctuate — spreads can
   close quickly. The break-even period is the minimum time needed, not a guarantee.
 
-Use compare_yield for a detailed fixed-vs-variable breakdown on a specific pool.
-Use get_pool_activity to monitor recent trading patterns in the target pool.`,
+Use spectra_compare_yield for a detailed fixed-vs-variable breakdown on a specific pool.
+Use spectra_get_pool_activity to monitor recent trading patterns in the target pool.`,
     {
       capital_usd: z
         .number()
@@ -290,8 +290,8 @@ Use get_pool_activity to monitor recent trading patterns in the target pool.`,
             ``,
             `Alternative approaches:`,
             `• Widen search: lower min_spread_pct${asset_filter ? " or remove asset_filter" : ""}, or lower min_tvl_usd/min_liquidity_usd`,
-            `• Check PT fixed yields instead: scan_opportunities(capital_usd=${capital_usd}) for capital-aware yield ranking`,
-            `• Raw APY scan: get_best_fixed_yields() for headline rates across all chains`,
+            `• Check PT fixed yields instead: spectra_scan_opportunities(capital_usd=${capital_usd}) for capital-aware yield ranking`,
+            `• Raw APY scan: spectra_get_best_fixed_yields() for headline rates across all chains`,
             `• Monitor: spreads change as IBT rates move — check back after rate changes`,
           ];
 
@@ -332,9 +332,9 @@ Use get_pool_activity to monitor recent trading patterns in the target pool.`,
         const nextSteps = [
           ``,
           `--- Next Steps ---`,
-          `• Drill into top opportunity: compare_yield(chain=CHAIN, pt_address=PT_ADDRESS) for detailed fixed vs variable breakdown`,
-          `• Check pool trading patterns: get_pool_activity(chain=CHAIN, pool_address=POOL_ADDRESS) to see recent activity`,
-          `• Compare strategies: scan_opportunities(capital_usd=${capital_usd}) to compare YT arb vs fixed yield vs looping`,
+          `• Drill into top opportunity: spectra_compare_yield(chain=CHAIN, pt_address=PT_ADDRESS) for detailed fixed vs variable breakdown`,
+          `• Check pool trading patterns: spectra_get_pool_activity(chain=CHAIN, pool_address=POOL_ADDRESS) to see recent activity`,
+          `• Compare strategies: spectra_scan_opportunities(capital_usd=${capital_usd}) to compare YT arb vs fixed yield vs looping`,
         ].join("\n");
 
         text += nextSteps;

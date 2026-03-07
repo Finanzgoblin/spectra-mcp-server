@@ -1,5 +1,5 @@
 /**
- * Tool: get_ve_info
+ * Tool: spectra_get_ve_info
  *
  * Reads live veSPECTRA on-chain data from Base and computes boost scenarios.
  * Uses raw eth_call to Base public RPC — no ethers/viem dependency needed.
@@ -13,7 +13,7 @@ import { formatUsd, formatPct, parsePtResponse, computeSpectraBoost } from "../f
 
 export function register(server: McpServer): void {
   server.tool(
-    "get_ve_info",
+    "spectra_get_ve_info",
     `Get live veSPECTRA governance token information and compute boost scenarios.
 
 Reads the current veSPECTRA total supply from Base chain on-chain, and given your
@@ -147,12 +147,12 @@ pool at a given deposit size.`,
         lines.push(``);
         lines.push(`--- Next Steps ---`);
         if (ve_spectra_balance !== undefined && ve_spectra_balance > 0) {
-          lines.push(`• See boosted opportunities: scan_opportunities(capital_usd=${capital_usd || "YOUR_AMOUNT"}, ve_spectra_balance=${ve_spectra_balance}) for boosted LP rankings`);
-          lines.push(`• YT arb with boost context: scan_yt_arbitrage(capital_usd=${capital_usd || "YOUR_AMOUNT"}, ve_spectra_balance=${ve_spectra_balance})`);
+          lines.push(`• See boosted opportunities: spectra_scan_opportunities(capital_usd=${capital_usd || "YOUR_AMOUNT"}, ve_spectra_balance=${ve_spectra_balance}) for boosted LP rankings`);
+          lines.push(`• YT arb with boost context: spectra_scan_yt_arbitrage(capital_usd=${capital_usd || "YOUR_AMOUNT"}, ve_spectra_balance=${ve_spectra_balance})`);
         } else {
           lines.push(`• Provide ve_spectra_balance + capital_usd to compute your actual boost`);
         }
-        lines.push(`• Boost only affects gauge-enabled LP positions — use compare_yield to see LP APY breakdown per pool`);
+        lines.push(`• Boost only affects gauge-enabled LP positions — use spectra_compare_yield to see LP APY breakdown per pool`);
 
         const text = lines.join("\n");
         return { content: [{ type: "text" as const, text }] };

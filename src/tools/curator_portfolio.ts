@@ -1,5 +1,5 @@
 /**
- * Tool: curator_portfolio
+ * Tool: mv_get_curator_portfolio
  *
  * Aggregates multiple MetaVaults managed by a single curator into one
  * portfolio view. Supports discovery by curator address (scans all chains)
@@ -196,9 +196,9 @@ function formatCuratorPortfolio(p: CuratorPortfolioSummary): string {
 
   lines.push(``);
   lines.push(`--- Next Steps ---`);
-  lines.push(`  • Dashboard for specific vault: get_curator_dashboard(chain, metavault_address)`);
-  lines.push(`  • Risk monitor: curator_risk_monitor(address) for Morpho position health`);
-  lines.push(`  • Stress test: stress_test_vault(chain, metavault_address) for withdrawal simulation`);
+  lines.push(`  • Dashboard for specific vault: spectra_get_curator_dashboard(chain, metavault_address)`);
+  lines.push(`  • Risk monitor: morpho_monitor_risk(address) for Morpho position health`);
+  lines.push(`  • Stress test: spectra_stress_test_vault(chain, metavault_address) for withdrawal simulation`);
 
   return lines.join("\n");
 }
@@ -207,7 +207,7 @@ function formatCuratorPortfolio(p: CuratorPortfolioSummary): string {
 
 export function register(server: McpServer): void {
   server.tool(
-    "curator_portfolio",
+    "mv_get_curator_portfolio",
     `Aggregate multiple MetaVaults managed by a single curator into one portfolio view.
 
 Supports two modes:
@@ -226,9 +226,9 @@ Returns:
   - Per-vault summary with position count and action items
   - Cross-vault action items (expiring positions, idle capital, etc.)
 
-Use get_curator_dashboard for deep-dive into a specific vault.
-Use curator_risk_monitor for Morpho position health across the curator's address.
-Use stress_test_vault for withdrawal simulation on a specific vault.`,
+Use spectra_get_curator_dashboard for deep-dive into a specific vault.
+Use morpho_monitor_risk for Morpho position health across the curator's address.
+Use spectra_stress_test_vault for withdrawal simulation on a specific vault.`,
     {
       curator_address: EVM_ADDRESS
         .optional()
@@ -251,7 +251,7 @@ Use stress_test_vault for withdrawal simulation on a specific vault.`,
       try {
         // Validate that at least one discovery method is provided
         if (!curator_address && !metavault_addresses) {
-          const text = `Error: provide either curator_address (to discover vaults) or metavault_addresses (explicit list). Use get_metavaults() to find curator addresses and vault addresses.`;
+          const text = `Error: provide either curator_address (to discover vaults) or metavault_addresses (explicit list). Use spectra_list_metavaults() to find curator addresses and vault addresses.`;
           return { content: [{ type: "text" as const, text }], isError: true };
         }
 
@@ -299,13 +299,13 @@ Use stress_test_vault for withdrawal simulation on a specific vault.`,
           }
 
           if (vaultSummaries.length === 0) {
-            const text = `No MetaVaults found for curator ${curator_address} across any chain.\nUse get_metavaults() to browse available MetaVaults and verify the curator address.`;
+            const text = `No MetaVaults found for curator ${curator_address} across any chain.\nUse spectra_list_metavaults() to browse available MetaVaults and verify the curator address.`;
             return { content: [{ type: "text" as const, text }] };
           }
         }
 
         if (vaultSummaries.length === 0) {
-          const text = `No MetaVaults found matching the provided addresses.\nVerify the chain and address values. Use get_metavaults() to discover available vaults.`;
+          const text = `No MetaVaults found matching the provided addresses.\nVerify the chain and address values. Use spectra_list_metavaults() to discover available vaults.`;
           return { content: [{ type: "text" as const, text }] };
         }
 
@@ -321,7 +321,7 @@ Use stress_test_vault for withdrawal simulation on a specific vault.`,
         const text = formatCuratorPortfolio(portfolio);
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
-        const text = `curator_portfolio error: ${e.message || e}`;
+        const text = `mv_get_curator_portfolio error: ${e.message || e}`;
         return { content: [{ type: "text" as const, text }], isError: true };
       }
     },

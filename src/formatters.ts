@@ -396,7 +396,7 @@ export function formatPositionSummary(pos: SpectraPt, chain: string): PositionRe
       const { lpApy, lpApyBoostedTotal, lpApyBreakdown } = extractLpApyBreakdown(pool, 0);
       const hasBoostedRewards = Object.keys(lpApyBreakdown.boostedRewards).length > 0;
       if (hasBoostedRewards && lpApyBoostedTotal > lpApy) {
-        lines.push(`    Gauge boost range: LP APY ${formatPct(lpApy)} (min) → ${formatPct(lpApyBoostedTotal)} (max 2.5x). Actual boost unknown — use get_ve_info to determine.`);
+        lines.push(`    Gauge boost range: LP APY ${formatPct(lpApy)} (min) → ${formatPct(lpApyBoostedTotal)} (max 2.5x). Actual boost unknown — use spectra_get_ve_info to determine.`);
       }
     }
     lines.push(`    IBT Variable APR: ${formatPct(pos.ibt?.apr?.total || 0)}`);
@@ -443,7 +443,7 @@ export function formatPositionSummary(pos: SpectraPt, chain: string): PositionRe
     lines.push(`  Position Shape: ${parts.join(" | ")}`);
     // Navigational hint: surface the temporal blind spot
     if (totalValue > 100) {
-      lines.push(`    Entry timing and cost basis unknown from portfolio alone. Use get_pool_activity with address parameter to reconstruct.`);
+      lines.push(`    Entry timing and cost basis unknown from portfolio alone. Use spectra_get_pool_activity with address parameter to reconstruct.`);
     }
   }
 
@@ -1110,7 +1110,7 @@ export function detectActivityCycles(
 }
 
 /**
- * Format cycle detection results as output lines for get_pool_activity.
+ * Format cycle detection results as output lines for spectra_get_pool_activity.
  *
  * Open Emergence design: present competing interpretation branches with equal
  * weight.  The agent (or user) must bring external evidence to collapse them.
@@ -1199,7 +1199,7 @@ export function formatCycleAnalysis(
     branches.forEach((b, i) => {
       lines.push(`      ${String.fromCharCode(65 + i)}) ${b}`);
     });
-    lines.push(`    → These branches predict different future behavior. Use get_portfolio to check actual holdings before selecting one.`);
+    lines.push(`    → These branches predict different future behavior. Use spectra_get_portfolio to check actual holdings before selecting one.`);
   }
 
   return lines;
@@ -1330,7 +1330,7 @@ export function formatFlowAccounting(opts: {
     lines.push(`    Position Shape: Fully exited (0 PT, 0 YT, LP: ${lpBalance.toFixed(4)})`);
     lines.push(`    Competing Hypotheses:`);
     lines.push(`      A) Completed round-trip: entered and fully exited. Strategy is finished for this pool.`);
-    lines.push(`      B) Capital recycled elsewhere: funds moved to another pool, chain, or protocol. Check get_address_activity for multi-pool patterns.`);
+    lines.push(`      B) Capital recycled elsewhere: funds moved to another pool, chain, or protocol. Check spectra_get_address_activity for multi-pool patterns.`);
     lines.push(`      C) Temporary exit: may re-enter if conditions (spread, liquidity, rates) become favorable again.`);
   }
 
@@ -1371,9 +1371,9 @@ export function formatObservationCoverage(opts: {
   portfolioFetched: boolean;
   /** Whether pool context (liquidity, APY) was successfully fetched */
   poolContextFetched: boolean;
-  /** Whether on-chain data was consulted (get_onchain_activity) */
+  /** Whether on-chain data was consulted (spectra_get_onchain_activity) */
   onchainConsulted?: boolean;
-  /** Whether cross-chain data was consulted (get_address_activity) */
+  /** Whether cross-chain data was consulted (spectra_get_address_activity) */
   crossChainConsulted?: boolean;
   /** Pool liquidity USD — for sizing context */
   poolLiquidityUsd?: number;
@@ -1607,7 +1607,7 @@ export function computeLpApyAtBoost(
 
 /**
  * Extract a full LP APY breakdown from a SpectraPool, normalizing missing fields.
- * Used by scan_opportunities and scan_yt_arbitrage to attach LP data.
+ * Used by spectra_scan_opportunities and spectra_scan_yt_arbitrage to attach LP data.
  *
  * @param boostFraction 0.0 = no veSPECTRA boost, 1.0 = max boost (2.5x). Default 0.
  */
@@ -1813,7 +1813,7 @@ export function estimateLoopingEntryCost(
 /**
  * Build a TradeQuote from PT + pool data. Pure computation — no API calls.
  * Returns null if PT price data is unavailable (zero or missing).
- * Used by both quote_trade and simulate_portfolio_after_trade tools.
+ * Used by both spectra_quote_trade and spectra_simulate_trade tools.
  */
 export function buildQuoteFromPt(
   pt: SpectraPt,
@@ -1931,7 +1931,7 @@ export function formatTradeQuote(q: TradeQuote): string {
 /**
  * Layer 3 output hint: volume context relative to pool liquidity.
  * Computes volume/liquidity ratio, trend direction, buy/sell imbalance.
- * Returns lines to append to get_pool_volume output.
+ * Returns lines to append to spectra_get_pool_volume output.
  *
  * Dissolution condition: This hint exists because volume data alone is
  * ambiguous without liquidity context. If a future API returns
@@ -1968,7 +1968,7 @@ export function formatVolumeHints(opts: {
       lines.push(`    Low turnover -- volume well below 1% of pool depth. Could indicate a mature/stable pool or declining interest.`);
     }
   } else {
-    lines.push(`    Pool liquidity unavailable -- use get_pt_details to get liquidity context.`);
+    lines.push(`    Pool liquidity unavailable -- use spectra_get_pt_details to get liquidity context.`);
   }
 
   // Buy/sell imbalance (recent)
@@ -2000,10 +2000,10 @@ export function formatVolumeHints(opts: {
 
 /**
  * Layer 3 output hint: is the spread between a Morpho market's borrow rate
- * and typical PT yields worth looping? Appended per-market in get_morpho_markets.
+ * and typical PT yields worth looping? Appended per-market in morpho_list_markets.
  *
- * Dissolution condition: When scan_opportunities becomes the default entry
- * point for all looping decisions (i.e., agents never call get_morpho_markets
+ * Dissolution condition: When spectra_scan_opportunities becomes the default entry
+ * point for all looping decisions (i.e., agents never call morpho_list_markets
  * directly for strategy), these hints are redundant and should be removed.
  */
 export function formatMorphoMarketHints(m: MorphoMarket): string[] {
@@ -2027,7 +2027,7 @@ export function formatMorphoMarketHints(m: MorphoMarket): string[] {
 
   // Spread hint
   if (borrowApy > 8) {
-    lines.push(`  Hint: Borrow rate ${formatPct(borrowApy)} is high. Looping is only profitable when PT implied APY exceeds this. Verify spread with get_looping_strategy.`);
+    lines.push(`  Hint: Borrow rate ${formatPct(borrowApy)} is high. Looping is only profitable when PT implied APY exceeds this. Verify spread with spectra_get_looping_strategy.`);
   } else if (borrowApy < 3) {
     lines.push(`  Hint: Borrow rate ${formatPct(borrowApy)} is low -- could indicate a favorable looping environment if PT APY is above this.`);
   }
@@ -2104,7 +2104,7 @@ export function formatPortfolioHints(
 
     if (withMorpho.length > 0) {
       const names = withMorpho.map(p => p.name).join(", ");
-      lines.push(`    Morpho markets exist for: ${names}. No looping detected in portfolio — could indicate risk-averse strategy or uninvestigated opportunity. Use get_looping_strategy to evaluate.`);
+      lines.push(`    Morpho markets exist for: ${names}. No looping detected in portfolio — could indicate risk-averse strategy or uninvestigated opportunity. Use spectra_get_looping_strategy to evaluate.`);
     }
     if (withoutMorpho.length > 0) {
       const names = withoutMorpho.map(p => p.name).join(", ");
@@ -2125,7 +2125,7 @@ export function formatPortfolioHints(
   // Gauge exposure without boost context (portfolio-level reminder)
   const lpPositions = positions.filter(p => p.lpBalance > 0 && p.totalValue > 100);
   if (lpPositions.length > 0) {
-    lines.push(`    ${lpPositions.length} LP position(s) detected. If gauge-boosted, veSPECTRA affects effective yield — use get_ve_info to check boost status.`);
+    lines.push(`    ${lpPositions.length} LP position(s) detected. If gauge-boosted, veSPECTRA affects effective yield — use spectra_get_ve_info to check boost status.`);
   }
 
   if (lines.length <= 2) return []; // Only header, no actual hints
@@ -2282,7 +2282,7 @@ export function formatScanOpportunity(opp: ScanOpportunity, rank: number, boostI
   lines.push(`    Entry Impact: ~${formatPct(opp.entryImpactPct)} | Capacity: ~${formatUsd(opp.capacityUsd)} at <threshold`);
 
   // APY lines
-  lines.push(`    Base APY: ${formatPct(opp.impliedApy)} | Effective APY: ≥${formatPct(opp.effectiveApy)} (conservative — verify with quote_trade)`);
+  lines.push(`    Base APY: ${formatPct(opp.impliedApy)} | Effective APY: ≥${formatPct(opp.effectiveApy)} (conservative — verify with spectra_quote_trade)`);
 
   // Looping section
   if (opp.looping) {
@@ -2416,7 +2416,7 @@ export function formatScanResults(
   lines.push(`  ⚠ Effective APY shown is a CONSERVATIVE LOWER BOUND.`);
   lines.push(`  Entry impact uses constant-product model. Real Curve StableSwap-NG pools are more`);
   lines.push(`  capital-efficient — actual effective APY is typically 30-60% higher than shown.`);
-  lines.push(`  → Verify top picks: quote_trade(chain, pt_address, amount, "buy") gives exact on-chain quotes.`);
+  lines.push(`  → Verify top picks: spectra_quote_trade(chain, pt_address, amount, "buy") gives exact on-chain quotes.`);
   lines.push(``);
   lines.push(`  Rankings reflect one dimension of a multi-dimensional space. A lower-ranked pool could be better`);
   lines.push(`  for a different strategy (YT accumulation, LP farming) or time horizon. See Yield Dimensions per opportunity.`);
@@ -2811,7 +2811,7 @@ export function formatMetavaultCompact(mv: SpectraMetavault, chain: string): str
   return `${mv.metadata?.title || mv.name} (${chain}) | ${mv.underlying?.symbol || "?"} | APY ${apy}${baseNote} | TVL ${tvl} | ${posCount} position(s) | Curator: ${mv.curator?.name || "?"} | ${mv.address}`;
 }
 
-/** Concise per-MetaVault format for the scan_opportunities output section. */
+/** Concise per-MetaVault format for the spectra_scan_opportunities output section. */
 export function formatMetavaultScanEntry(mv: SpectraMetavault, chain: string, rank: number): string {
   const lines: string[] = [];
   const apy = formatPct(mv.liveApy?.total || 0);
@@ -2847,12 +2847,12 @@ export function formatMetavaultScanEntry(mv: SpectraMetavault, chain: string, ra
 
   lines.push(`        Curator: ${curator} | ${posCount} active position(s)${bestLpApy > 0 ? ` (best LP APY: ${formatPct(bestLpApy)})` : ""}`);
   lines.push(`        Address: ${mv.address}`);
-  lines.push(`        \u2192 model_metavault_strategy(chain="${chain}", metavault_address="${mv.address}")`);
+  lines.push(`        \u2192 spectra_model_metavault(chain="${chain}", metavault_address="${mv.address}")`);
 
   return lines.join("\n");
 }
 
-/** Format the MetaVault alternatives section appended to scan_opportunities output. */
+/** Format the MetaVault alternatives section appended to spectra_scan_opportunities output. */
 export function formatMetavaultScanSection(
   entries: Array<{ metavault: SpectraMetavault; chain: string }>,
   compact: boolean,
@@ -2885,7 +2885,7 @@ export function formatMetavaultScanSection(
   return lines.join("\n");
 }
 
-/** Format the full get_metavaults output. */
+/** Format the full spectra_list_metavaults output. */
 export function formatMetavaultList(
   entries: Array<{ metavault: SpectraMetavault; chain: string }>,
   chainFilter: string | undefined,
@@ -2912,9 +2912,9 @@ export function formatMetavaultList(
   // Next-step hints
   lines.push(``);
   lines.push(`--- Next Steps ---`);
-  lines.push(`  • Model a strategy: model_metavault_strategy(chain=CHAIN, metavault_address=ADDRESS) for live-data-backed modeling`);
-  lines.push(`  • Compare yields: scan_opportunities(capital_usd=AMOUNT) to see MetaVault APYs in context of all opportunities`);
-  lines.push(`  • Check looping: get_looping_strategy(chain=CHAIN, pt_address=PT_ADDRESS) for any MetaVault position's PT`);
+  lines.push(`  • Model a strategy: spectra_model_metavault(chain=CHAIN, metavault_address=ADDRESS) for live-data-backed modeling`);
+  lines.push(`  • Compare yields: spectra_scan_opportunities(capital_usd=AMOUNT) to see MetaVault APYs in context of all opportunities`);
+  lines.push(`  • Check looping: spectra_get_looping_strategy(chain=CHAIN, pt_address=PT_ADDRESS) for any MetaVault position's PT`);
 
   // Curator activity hints — teach the Router mechanic
   const curators = new Map<string, { name: string; address: string }>();
@@ -2930,7 +2930,7 @@ export function formatMetavaultList(
   if (curators.size > 0) {
     lines.push(`  • Curator pool activity (LP adds/removes, rebalancing):`);
     for (const { name, address } of curators.values()) {
-      lines.push(`      ${name}: get_address_activity(address="${address}")`);
+      lines.push(`      ${name}: spectra_get_address_activity(address="${address}")`);
     }
     lines.push(`    MetaVault contracts operate via the Spectra Router, so vault/MetaVault`);
     lines.push(`    addresses won't appear in pool activity. The curator EOA is tx.origin.`);
@@ -3307,16 +3307,16 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
 
   // ── Next Steps ──────────────────────────────────────────────
   lines.push(`--- Next Steps ---`);
-  lines.push(`  - Model leverage: model_metavault_strategy(chain="${opts.chain}", metavault_address="${opts.metavaultAddress}")`);
+  lines.push(`  - Model leverage: spectra_model_metavault(chain="${opts.chain}", metavault_address="${opts.metavaultAddress}")`);
   if (opts.curatorAddresses.length > 0) {
-    lines.push(`  - Curator activity: get_address_activity(address="${opts.curatorAddresses[0]}")`);
+    lines.push(`  - Curator activity: spectra_get_address_activity(address="${opts.curatorAddresses[0]}")`);
   }
   if (opts.positions.length > 0) {
     const firstPt = opts.positions[0];
-    lines.push(`  - Pool activity: get_pool_activity(chain="${opts.chain}", pool_address="${firstPt.poolAddress || firstPt.ptAddress}")`);
+    lines.push(`  - Pool activity: spectra_get_pool_activity(chain="${opts.chain}", pool_address="${firstPt.poolAddress || firstPt.ptAddress}")`);
   }
-  lines.push(`  - Compare yields: scan_opportunities(capital_usd=YOUR_AMOUNT) for market context`);
-  lines.push(`  - Cross-protocol scan: scan_curator_opportunities(capital_usd=YOUR_AMOUNT) for unified Spectra + Pendle ranking`);
+  lines.push(`  - Compare yields: spectra_scan_opportunities(capital_usd=YOUR_AMOUNT) for market context`);
+  lines.push(`  - Cross-protocol scan: mv_scan_curator_opportunities(capital_usd=YOUR_AMOUNT) for unified Spectra + Pendle ranking`);
 
   return lines.join("\n");
 }
@@ -3786,7 +3786,7 @@ export function formatCuratorOpportunity(opp: CuratorOpportunity, rank: number):
   if (opp.ptAddress) lines.push(`    PT: ${opp.ptAddress}`);
   if (opp.poolAddress) lines.push(`    Pool: ${opp.poolAddress}`);
   if (opp.pendleMarketAddress) lines.push(`    Pendle Market: ${opp.pendleMarketAddress}`);
-  if (opp.pendleSyAddress) lines.push(`    SY: ${opp.pendleSyAddress} (use for check_ibt_health)`);
+  if (opp.pendleSyAddress) lines.push(`    SY: ${opp.pendleSyAddress} (use for mv_check_ibt_health)`);
 
   // Warnings
   if (opp.warnings.length > 0) {
@@ -3796,7 +3796,7 @@ export function formatCuratorOpportunity(opp: CuratorOpportunity, rank: number):
   return lines.join("\n");
 }
 
-/** Full output for scan_curator_opportunities results. */
+/** Full output for mv_scan_curator_opportunities results. */
 export function formatCuratorScanResults(
   opps: CuratorOpportunity[],
   capitalUsd: number,
@@ -3846,17 +3846,17 @@ export function formatCuratorScanResults(
   const topSpectra = opps.find(o => o.protocol === "spectra");
   const topPendle = opps.find(o => o.protocol === "pendle");
   if (topSpectra) {
-    lines.push(`  • Drill into top Spectra: get_looping_strategy(chain="${topSpectra.chain}", pt_address="${topSpectra.ptAddress}")`);
-    lines.push(`  • Quote entry: quote_trade(chain="${topSpectra.chain}", pt_address="${topSpectra.ptAddress}", amount=${capitalUsd}, side="buy")`);
+    lines.push(`  • Drill into top Spectra: spectra_get_looping_strategy(chain="${topSpectra.chain}", pt_address="${topSpectra.ptAddress}")`);
+    lines.push(`  • Quote entry: spectra_quote_trade(chain="${topSpectra.chain}", pt_address="${topSpectra.ptAddress}", amount=${capitalUsd}, side="buy")`);
   }
   if (topPendle) {
-    lines.push(`  • Pendle detail: list_pendle_markets(chain="${topPendle.chain}", asset_filter="${topPendle.underlying}")`);
+    lines.push(`  • Pendle detail: pendle_list_markets(chain="${topPendle.chain}", asset_filter="${topPendle.underlying}")`);
   }
   if (topSpectra && topPendle) {
-    lines.push(`  • Head-to-head: compare_pendle_spectra(chain="${topSpectra.chain}", asset_filter="${topSpectra.underlying}")`);
+    lines.push(`  • Head-to-head: mv_compare_yield(chain="${topSpectra.chain}", asset_filter="${topSpectra.underlying}")`);
   }
-  lines.push(`  • MetaVault modeling: model_metavault_strategy(chain=CHAIN, metavault_address=ADDR) for blended allocation`);
-  lines.push(`  • Curator dashboard: get_curator_dashboard(chain=CHAIN, metavault_address=ADDR) for operational overview`);
+  lines.push(`  • MetaVault modeling: spectra_model_metavault(chain=CHAIN, metavault_address=ADDR) for blended allocation`);
+  lines.push(`  • Curator dashboard: spectra_get_curator_dashboard(chain=CHAIN, metavault_address=ADDR) for operational overview`);
 
   lines.push(``);
   lines.push(`--- Protocol Legend ---`);
@@ -3871,7 +3871,7 @@ export function formatCuratorScanResults(
   if (pendleCount > 0) {
     lines.push(`  Pendle: logit AMM model (scalarRoot=50, conservative). Real impact likely lower.`);
   }
-  lines.push(`  → Verify: quote_trade(chain, pt_address, amount, "buy") for exact on-chain Curve quotes.`);
+  lines.push(`  → Verify: spectra_quote_trade(chain, pt_address, amount, "buy") for exact on-chain Curve quotes.`);
   lines.push(`  Curators: You control pool depth. Entry impact is a design choice, not a given constraint.`);
 
   return lines.join("\n");
@@ -3982,7 +3982,7 @@ export function formatCuratorRiskSummary(summary: CuratorRiskSummary): string {
       lines.push(`  - Elevated positions could indicate normal operation at high leverage, or genuine risk — context matters`);
     }
     lines.push(`  - Morpho Pre-Liquidation (opt-in Auto-Deleverage) reduces cliff risk for positions near threshold`);
-    lines.push(`  - Use get_morpho_history to assess whether current borrow rates are a spike or a trend`);
+    lines.push(`  - Use morpho_get_history to assess whether current borrow rates are a spike or a trend`);
   } else {
     lines.push(``);
     lines.push(`  All positions within safe parameters.`);
@@ -3990,10 +3990,10 @@ export function formatCuratorRiskSummary(summary: CuratorRiskSummary): string {
 
   lines.push(``);
   lines.push(`--- Next Steps ---`);
-  lines.push(`  • Rate history: get_morpho_history(chain, market_key) — assess borrow rate stability`);
-  lines.push(`  • Position details: get_morpho_positions(address) — full supply/vault/borrow view`);
-  lines.push(`  • Deleverage modeling: get_looping_strategy(chain, pt_address) — sensitivity at different leverage`);
-  lines.push(`  • MetaVault status: get_curator_dashboard(chain, metavault_address) — operational overview`);
+  lines.push(`  • Rate history: morpho_get_history(chain, market_key) — assess borrow rate stability`);
+  lines.push(`  • Position details: morpho_get_positions(address) — full supply/vault/borrow view`);
+  lines.push(`  • Deleverage modeling: spectra_get_looping_strategy(chain, pt_address) — sensitivity at different leverage`);
+  lines.push(`  • MetaVault status: spectra_get_curator_dashboard(chain, metavault_address) — operational overview`);
 
   return lines.join("\n");
 }

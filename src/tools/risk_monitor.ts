@@ -1,5 +1,5 @@
 /**
- * Tool: curator_risk_monitor
+ * Tool: morpho_monitor_risk
  *
  * Liquidation distance monitor for Morpho positions.
  * Surfaces health factor, distance-to-liquidation, borrow rate drift,
@@ -19,7 +19,7 @@ import { formatCuratorRiskSummary } from "../formatters.js";
 
 export function register(server: McpServer): void {
   server.tool(
-    "curator_risk_monitor",
+    "morpho_monitor_risk",
     `Monitor liquidation risk across a curator's Morpho positions.
 
 Computes health factor, liquidation price, distance-to-liquidation, and borrow rate
@@ -35,9 +35,9 @@ Alert levels scaffold attention, not action — multiple signals may disagree:
   - warning: health factor < 1.3 or distance dangerously low
   - critical: health factor < 1.1 or distance < 5% — immediate attention needed
 
-Use get_morpho_positions for raw position data without risk analysis.
-Use get_morpho_history to assess borrow rate stability over time.
-Use get_looping_strategy to model deleverage scenarios.`,
+Use morpho_get_positions for raw position data without risk analysis.
+Use morpho_get_history to assess borrow rate stability over time.
+Use spectra_get_looping_strategy to model deleverage scenarios.`,
     {
       address: z
         .string()
@@ -80,7 +80,7 @@ Use get_looping_strategy to model deleverage scenarios.`,
 
         if (allPositions.length === 0) {
           const scope = chain || "any Morpho-capable chain";
-          const text = `No active borrowing positions found for ${address} on ${scope}.\n\nThis could mean:\n  - The address has no Morpho positions\n  - Positions are supply-only (no borrows = no liquidation risk)\n  - The address uses a different wallet for Morpho\n\nUse get_morpho_positions to check for supply and vault positions.`;
+          const text = `No active borrowing positions found for ${address} on ${scope}.\n\nThis could mean:\n  - The address has no Morpho positions\n  - Positions are supply-only (no borrows = no liquidation risk)\n  - The address uses a different wallet for Morpho\n\nUse morpho_get_positions to check for supply and vault positions.`;
           return { content: [{ type: "text" as const, text }] };
         }
 
@@ -112,7 +112,7 @@ Use get_looping_strategy to model deleverage scenarios.`,
         const text = formatCuratorRiskSummary(summary);
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
-        const text = `curator_risk_monitor error: ${e.message || e}`;
+        const text = `morpho_monitor_risk error: ${e.message || e}`;
         return { content: [{ type: "text" as const, text }], isError: true };
       }
     },

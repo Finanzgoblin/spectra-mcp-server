@@ -39,7 +39,7 @@ export function register(server: McpServer): void {
   // ===========================================================================
 
   server.tool(
-    "list_pendle_markets",
+    "pendle_list_markets",
     `List active Pendle markets on a given chain, or scan all Pendle-supported chains.
 Returns: market name, implied APY (fixed rate), LP APY, TVL, liquidity, maturity, and token addresses.
 
@@ -60,9 +60,9 @@ Pendle-only chains (Spectra not deployed): ${PENDLE_CHAIN_KEYS.filter((k) => !SU
 Includes external Merkl campaign APR when available (LP, YT, and SY incentive programs).
 Merkl campaigns are fetched best-effort per chain and shown alongside native PENDLE incentives.
 
-Use compare_pendle_spectra to do a head-to-head comparison on a specific underlying.
-Use scan_curator_opportunities for unified cross-protocol ranking with capital-aware sizing.
-Use scan_opportunities for Spectra-native opportunity ranking.`,
+Use mv_compare_yield to do a head-to-head comparison on a specific underlying.
+Use mv_scan_curator_opportunities for unified cross-protocol ranking with capital-aware sizing.
+Use spectra_scan_opportunities for Spectra-native opportunity ranking.`,
     {
       chain: PENDLE_CHAIN_ENUM.optional().describe(
         "Pendle chain to query. Omit to scan all Pendle chains."
@@ -186,9 +186,9 @@ Use scan_opportunities for Spectra-native opportunity ranking.`,
         footer.push(`  Pendle-only (Spectra expansion opportunities): ${pendleOnly.join(", ")}`);
         footer.push(``);
         footer.push(`--- Next Steps ---`);
-        footer.push(`  • Compare with Spectra: compare_pendle_spectra(chain=CHAIN, asset_filter="ASSET") to find matching pools`);
-        footer.push(`  • Spectra pools on same chain: list_pools(chain=CHAIN) for head-to-head data`);
-        footer.push(`  • Capital-aware Spectra scan: scan_opportunities(capital_usd=AMOUNT) for Spectra-native ranking`);
+        footer.push(`  • Compare with Spectra: mv_compare_yield(chain=CHAIN, asset_filter="ASSET") to find matching pools`);
+        footer.push(`  • Spectra pools on same chain: spectra_list_pools(chain=CHAIN) for head-to-head data`);
+        footer.push(`  • Capital-aware Spectra scan: spectra_scan_opportunities(capital_usd=AMOUNT) for Spectra-native ranking`);
 
         const text = header + body + footer.join("\n");
         return { content: [{ type: "text" as const, text }] };
@@ -203,7 +203,7 @@ Use scan_opportunities for Spectra-native opportunity ranking.`,
   // ===========================================================================
 
   server.tool(
-    "compare_pendle_spectra",
+    "mv_compare_yield",
     `Compare Pendle and Spectra yield opportunities side-by-side on the same chain.
 Auto-matches markets by underlying asset AND maturity proximity for head-to-head comparison.
 
@@ -220,9 +220,9 @@ ${PENDLE_CHAIN_KEYS.filter((k) => SUPPORTED_CHAINS[k]).map((k) => PENDLE_CHAIN_N
 
 Includes external Merkl campaign APR for both protocols when available.
 
-Use list_pendle_markets for Pendle-only chain data.
-Use scan_curator_opportunities for unified cross-protocol ranking with capital-aware sizing.
-Use scan_opportunities for Spectra-native capital-aware ranking.`,
+Use pendle_list_markets for Pendle-only chain data.
+Use mv_scan_curator_opportunities for unified cross-protocol ranking with capital-aware sizing.
+Use spectra_scan_opportunities for Spectra-native capital-aware ranking.`,
     {
       chain: z.enum(
         PENDLE_CHAIN_KEYS.filter((k) => SUPPORTED_CHAINS[k]) as [string, ...string[]]
@@ -365,11 +365,11 @@ Use scan_opportunities for Spectra-native capital-aware ranking.`,
         }
 
         lines.push(`--- Next Steps ---`);
-        lines.push(`  • Cross-protocol scan: scan_curator_opportunities(capital_usd=AMOUNT) for unified ranking with capital-aware sizing`);
-        lines.push(`  • Drill into a Spectra pool: get_pt_details(chain="${chain}", pt_address="PT_ADDRESS")`);
-        lines.push(`  • List all Pendle markets: list_pendle_markets(chain="${chain}") for full Pendle data`);
-        lines.push(`  • Check MetaVault positions: get_metavaults() to see current curator allocations`);
-        lines.push(`  • Evaluate looping: get_looping_strategy(chain="${chain}", pt_address="PT_ADDRESS") for Morpho leverage`);
+        lines.push(`  • Cross-protocol scan: mv_scan_curator_opportunities(capital_usd=AMOUNT) for unified ranking with capital-aware sizing`);
+        lines.push(`  • Drill into a Spectra pool: spectra_get_pt_details(chain="${chain}", pt_address="PT_ADDRESS")`);
+        lines.push(`  • List all Pendle markets: pendle_list_markets(chain="${chain}") for full Pendle data`);
+        lines.push(`  • Check MetaVault positions: spectra_list_metavaults() to see current curator allocations`);
+        lines.push(`  • Evaluate looping: spectra_get_looping_strategy(chain="${chain}", pt_address="PT_ADDRESS") for Morpho leverage`);
 
         const text = lines.join("\n");
         return { content: [{ type: "text" as const, text }] };

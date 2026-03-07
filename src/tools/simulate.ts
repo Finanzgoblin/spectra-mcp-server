@@ -1,5 +1,5 @@
 /**
- * Tool: simulate_portfolio_after_trade
+ * Tool: spectra_simulate_trade
  *
  * Previews what a wallet's Spectra portfolio would look like after executing
  * a PT trade. Combines portfolio fetching + quote computation + simulation.
@@ -38,7 +38,7 @@ function buildSnapshot(
 
 export function register(server: McpServer): void {
   server.tool(
-    "simulate_portfolio_after_trade",
+    "spectra_simulate_trade",
     `Preview what a wallet's Spectra portfolio would look like after a PT trade.
 
 Fetches the wallet's current position (if any) and the PT pool data,
@@ -51,7 +51,7 @@ Note: This simulates PT trades only, not YT. YT is acquired by minting (deposit 
 to get PT+YT) and sold via the Router's flash-redeem mechanism, not through the Curve
 pool directly. The wallet's YT balance is shown but not modified by this simulation.
 
-Use get_portfolio to see current full positions. Use quote_trade for a standalone
+Use spectra_get_portfolio to see current full positions. Use spectra_quote_trade for a standalone
 price quote without portfolio context.`,
     {
       chain: CHAIN_ENUM.describe("The blockchain network"),
@@ -190,10 +190,10 @@ price quote without portfolio context.`,
         // Next-step hints
         const nextLines: string[] = [``, `--- Next Steps ---`];
         if (side === "buy") {
-          nextLines.push(`• Check looping potential: get_looping_strategy(chain="${chain}", pt_address="${pt_address}") for leveraged yield after this trade`);
+          nextLines.push(`• Check looping potential: spectra_get_looping_strategy(chain="${chain}", pt_address="${pt_address}") for leveraged yield after this trade`);
         }
-        nextLines.push(`• Compare yield: compare_yield(chain="${chain}", pt_address="${pt_address}") for fixed vs variable analysis`);
-        nextLines.push(`• View full portfolio: get_portfolio(address="${address}") for all positions across chains`);
+        nextLines.push(`• Compare yield: spectra_compare_yield(chain="${chain}", pt_address="${pt_address}") for fixed vs variable analysis`);
+        nextLines.push(`• View full portfolio: spectra_get_portfolio(address="${address}") for all positions across chains`);
 
         const text = simText + nextLines.join("\n");
 

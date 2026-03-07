@@ -1,5 +1,5 @@
 /**
- * Tools: get_pool_volume, get_pool_activity
+ * Tools: spectra_get_pool_volume, spectra_get_pool_activity
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -27,22 +27,22 @@ async function resolvePoolAddressFromPt(network: string, address: string): Promi
 
 export function register(server: McpServer): void {
   // ===========================================================================
-  // get_pool_volume
+  // spectra_get_pool_volume
   // ===========================================================================
 
   server.tool(
-    "get_pool_volume",
+    "spectra_get_pool_volume",
     `Get historical trading volume for a specific Spectra pool.
-Returns timestamped buy/sell volume in USD. Use list_pools first to find pool addresses.
+Returns timestamped buy/sell volume in USD. Use spectra_list_pools first to find pool addresses.
 Useful for assessing pool activity and liquidity depth before entering a position.
 
 Context: Volume alone doesn't indicate capital efficiency — $1M volume in a $5M liquidity
 pool is very different from $1M in a $500K pool. Combine volume data with pool liquidity
-(from list_pools or get_pt_details) to assess real trading conditions.
+(from spectra_list_pools or spectra_get_pt_details) to assess real trading conditions.
 
 Output includes volume/liquidity ratio analysis when pool data is available. For
-individual transaction details and whale activity, use get_pool_activity instead.
-Use quote_trade to estimate price impact for a specific trade size.`,
+individual transaction details and whale activity, use spectra_get_pool_activity instead.
+Use spectra_quote_trade to estimate price impact for a specific trade size.`,
     {
       chain: CHAIN_ENUM.describe("The blockchain network"),
       pool_address: EVM_ADDRESS.describe("The Curve pool address (0x...) OR a PT address. If a PT address is given, it will be resolved to the corresponding pool automatically."),
@@ -164,9 +164,9 @@ Use quote_trade to estimate price impact for a specific trade size.`,
         // Next-step hints
         lines.push(``);
         lines.push(`--- Next Steps ---`);
-        lines.push(`• Individual trades: get_pool_activity(chain="${chain}", pool_address="${effectivePoolAddr}") for transaction-level detail`);
-        lines.push(`• Quote a trade: quote_trade(chain="${chain}", pt_address="${pool_address}", amount=YOUR_AMOUNT, side="buy") to estimate entry cost`);
-        lines.push(`• Pool details: get_pt_details(chain="${chain}", pt_address="${pool_address}") for APY, maturity, and yield data`);
+        lines.push(`• Individual trades: spectra_get_pool_activity(chain="${chain}", pool_address="${effectivePoolAddr}") for transaction-level detail`);
+        lines.push(`• Quote a trade: spectra_quote_trade(chain="${chain}", pt_address="${pool_address}", amount=YOUR_AMOUNT, side="buy") to estimate entry cost`);
+        lines.push(`• Pool details: spectra_get_pt_details(chain="${chain}", pt_address="${pool_address}") for APY, maturity, and yield data`);
 
         const text = lines.join("\n");
         return { content: [{ type: "text" as const, text }] };
@@ -178,11 +178,11 @@ Use quote_trade to estimate price impact for a specific trade size.`,
   );
 
   // ===========================================================================
-  // get_pool_activity
+  // spectra_get_pool_activity
   // ===========================================================================
 
   server.tool(
-    "get_pool_activity",
+    "spectra_get_pool_activity",
     `Get recent trade and liquidity activity for a specific Spectra pool.
 Returns individual transactions: buys, sells, and liquidity adds/removes with
 USD values, timestamps, and tx hashes.
@@ -190,7 +190,7 @@ USD values, timestamps, and tx hashes.
 Pool activity shows only the Curve pool's perspective (IBT ↔ PT swaps and LP
 events). The Spectra Router batches operations atomically, so any single pool
 event may be one step of a multi-step strategy. There is no BUY_YT or SELL_YT
-event type — the pool never touches YT directly. Use get_protocol_context for
+event type — the pool never touches YT directly. Use mv_get_protocol_context for
 the full mechanics of how Router batching maps to pool activity types.
 
 Protocol mechanics that affect how activity appears:
@@ -212,13 +212,13 @@ Protocol mechanics that affect how activity appears:
 
 Key principle: any pool event type can be one step of a multi-step Router operation.
 Do not assume SELL_PT means "user is bearish on PT" or AMM_ADD_LIQUIDITY means
-"user is providing liquidity for yield." Always cross-reference with get_portfolio
+"user is providing liquidity for yield." Always cross-reference with spectra_get_portfolio
 to see what the address actually holds (PT, YT, LP balances) — the holdings reveal
 the true strategy better than the activity log alone.
 
 Analysis tips — IMPORTANT: each observation below has multiple valid interpretations.
 The tool output now presents these as competing branches. Do not collapse to one
-interpretation without cross-referencing get_portfolio and other data sources.
+interpretation without cross-referencing spectra_get_portfolio and other data sources.
 - High SELL_PT count: could be flash-mint YT accumulation (check YT balance >> PT)
   OR simple PT liquidation OR one leg of cross-protocol arb. Portfolio resolves this.
 - BUY_PT events: could be fixed-rate accumulation OR flash-redeem YT selling
@@ -229,9 +229,9 @@ interpretation without cross-referencing get_portfolio and other data sources.
   round-trip (entered and exited) OR funds moved to another venue.
 
 Output includes an Address Concentration section with full addresses and per-address
-type breakdowns. Use get_portfolio on those addresses to see their PT, YT, and LP
-balances. Most analysis can be done without a block explorer — use get_portfolio on
-addresses from Address Concentration, and compare_yield or get_pt_details for rate context.
+type breakdowns. Use spectra_get_portfolio on those addresses to see their PT, YT, and LP
+balances. Most analysis can be done without a block explorer — use spectra_get_portfolio on
+addresses from Address Concentration, and spectra_compare_yield or spectra_get_pt_details for rate context.
 
 Address isolation mode: When you provide an 'address' parameter, the tool filters to that
 address only, sorts chronologically (oldest first), and adds:
@@ -239,7 +239,7 @@ address only, sorts chronologically (oldest first), and adds:
   Presents COMPETING INTERPRETATION BRANCHES (A/B/C) that predict different future behavior.
   Small repetition counts (≤5) are flagged as statistically insufficient for extrapolation.
   CRITICAL: do NOT collapse these branches into a single narrative without external evidence
-  from get_portfolio or other tools. The branches exist as friction against premature
+  from spectra_get_portfolio or other tools. The branches exist as friction against premature
   pattern-matching — the tension between them IS the information.
 - Flow Accounting: cross-references portfolio data to show PT/YT flow reconciliation.
   When position shape is observable (e.g., YT-only, PT-only, fully exited), presents
@@ -267,7 +267,7 @@ address only, sorts chronologically (oldest first), and adds:
   minority of the address's actual behavior. Position sizing should reflect the coverage
   level, not the confidence of the best-fitting interpretation.
 
-For multi-pool activity scanning, use get_address_activity to find all pools an address
+For multi-pool activity scanning, use spectra_get_address_activity to find all pools an address
 has interacted with in a single call.`,
     {
       chain: CHAIN_ENUM.describe("The blockchain network"),
@@ -335,7 +335,7 @@ has interacted with in a single call.`,
           const addressHint = addressFilter
             ? `No visible pool activity for ${address} on this pool. ` +
               `This address may have entered via Spectra Router (atomic mint + LP), which is invisible in pool activity data. ` +
-              `Use get_portfolio to verify holdings, or get_address_activity to scan all pools.`
+              `Use spectra_get_portfolio to verify holdings, or spectra_get_address_activity to scan all pools.`
             : `The pool may have activity of other types -- try type_filter "all".`;
           return {
             content: [{
@@ -427,7 +427,7 @@ has interacted with in a single call.`,
 
           const hints: string[] = [];
           if (addLiq > 0 && (sellPt > 0 || remLiq > 0)) {
-            hints.push("LP adds may include minted YT (Router batching). Equally: could be pure LP provision. get_portfolio resolves this.");
+            hints.push("LP adds may include minted YT (Router batching). Equally: could be pure LP provision. spectra_get_portfolio resolves this.");
           }
           if (sellPt > 0 && buyPt === 0 && addLiq === 0) {
             hints.push("SELL_PT only — either flash-mint YT accumulation OR simple PT liquidation. These predict opposite future behavior.");
@@ -627,7 +627,7 @@ has interacted with in a single call.`,
 
           // High-frequency hint (existing, enhanced)
           if (entries.length > 10) {
-            lines.push(`    ⚠ High-frequency pattern (${entries.length} txns). Cross-reference with get_portfolio to see resulting PT/YT/LP balances.`);
+            lines.push(`    ⚠ High-frequency pattern (${entries.length} txns). Cross-reference with spectra_get_portfolio to see resulting PT/YT/LP balances.`);
           }
 
           // -------------------------------------------------------
@@ -689,14 +689,14 @@ has interacted with in a single call.`,
   );
 
   // ===========================================================================
-  // get_address_activity
+  // spectra_get_address_activity
   // ===========================================================================
 
   server.tool(
-    "get_address_activity",
+    "spectra_get_address_activity",
     `Scan all pools on a chain (or all chains) for a given address's activity.
 Returns per-pool breakdown and cross-pool aggregates. Useful for discovering
-multi-pool strategies without making N manual get_pool_activity calls.
+multi-pool strategies without making N manual spectra_get_pool_activity calls.
 
 When investigating a wallet that operates across multiple pools (e.g., a curator
 or yield farmer diversifying across maturities), this tool reveals the full scope
@@ -706,8 +706,8 @@ Each pool's activity is summarized with type breakdown and total volume.
 Cross-pool totals show the address's aggregate engagement with Spectra.
 
 For deep per-pool analysis (cycle detection, flow accounting, contract detection),
-use get_pool_activity with the address parameter on the specific pool of interest.
-Use get_portfolio to see current holdings across all pools.
+use spectra_get_pool_activity with the address parameter on the specific pool of interest.
+Use spectra_get_portfolio to see current holdings across all pools.
 
 Includes an Observation Coverage section that quantifies blind spots: which pools were
 scanned, what event types are visible vs invisible (standalone mints, yield claims, and
@@ -973,7 +973,7 @@ one chain. Position sizing should assume this scan is incomplete, not comprehens
         if (chainsWithActivity.size === 1 && !chain) {
           lines.push(`    Note: Activity concentrated on 1 chain (${[...chainsWithActivity][0]}). Cross-chain strategies would not appear as connected here.`);
         }
-        lines.push(`    This scan shows pool-level aggregates. For cycle detection, flow accounting, and coverage metrics per pool, use get_pool_activity with address parameter.`);
+        lines.push(`    This scan shows pool-level aggregates. For cycle detection, flow accounting, and coverage metrics per pool, use spectra_get_pool_activity with address parameter.`);
         lines.push(`    ─────────────────────────────────────────`);
         lines.push(`    Position sizing should assume this scan is incomplete, not comprehensive.`);
 
@@ -1056,7 +1056,7 @@ one chain. Position sizing should assume this scan is incomplete, not comprehens
             lines.push(`          driven by independent decisions (market conditions, gas costs, personal schedule).`);
             lines.push(`      (C) Maturity-driven rebalancing: positions exited at/near maturity and redeployed to`);
             lines.push(`          the next available maturity — a natural lifecycle, not an alpha signal.`);
-            lines.push(`    Cross-reference with get_portfolio and get_pool_activity per pool to determine which`);
+            lines.push(`    Cross-reference with spectra_get_portfolio and spectra_get_pool_activity per pool to determine which`);
             lines.push(`    interpretation fits. Pool maturity dates are especially informative for (A) vs (C).`);
           }
         }
@@ -1066,10 +1066,10 @@ one chain. Position sizing should assume this scan is incomplete, not comprehens
         lines.push(`--- Next Steps ---`);
         const topPool = allPoolActivities[0];
         if (topPool) {
-          lines.push(`• Highest-volume pool (${formatUsd(topPool.totalValueUsd)}): get_pool_activity(chain="${topPool.chain}", pool_address="${topPool.poolAddress}", address="${address}") for deep analysis`);
+          lines.push(`• Highest-volume pool (${formatUsd(topPool.totalValueUsd)}): spectra_get_pool_activity(chain="${topPool.chain}", pool_address="${topPool.poolAddress}", address="${address}") for deep analysis`);
         }
-        lines.push(`• Current holdings: get_portfolio(address="${address}") for PT/YT/LP balances`);
-        lines.push(`• Deep analysis on any pool: get_pool_activity(chain=CHAIN, pool_address=POOL, address="${address}") for cycle detection, flow accounting, gas estimates`);
+        lines.push(`• Current holdings: spectra_get_portfolio(address="${address}") for PT/YT/LP balances`);
+        lines.push(`• Deep analysis on any pool: spectra_get_pool_activity(chain=CHAIN, pool_address=POOL, address="${address}") for cycle detection, flow accounting, gas estimates`);
 
         return {
           content: [{ type: "text", text: lines.join("\n") }],

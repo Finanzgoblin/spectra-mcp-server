@@ -856,7 +856,7 @@ describe("formatCycleAnalysis", () => {
     assert.ok(joined.includes("Sell PT"));
     assert.ok(joined.includes("8×"), "Should show repetition count");
     assert.ok(joined.includes("Mint→LP→unwind→sell"), "Should include interpretive hint for ADD→REMOVE→SELL");
-    assert.ok(joined.includes("get_portfolio"), "Should cross-reference portfolio");
+    assert.ok(joined.includes("spectra_get_portfolio"), "Should cross-reference portfolio");
   });
 
   it("hints at flash-mint for SELL_PT-only cycle", () => {
@@ -1497,7 +1497,7 @@ describe("formatCuratorDashboard — protocol tags", () => {
       ...baseDashOpts,
       positions: [],
     });
-    assert.ok(result.includes("scan_curator_opportunities"), "should mention cross-protocol scanner");
+    assert.ok(result.includes("mv_scan_curator_opportunities"), "should mention cross-protocol scanner");
   });
 });
 

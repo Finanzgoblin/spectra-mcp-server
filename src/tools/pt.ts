@@ -1,5 +1,5 @@
 /**
- * Tools: get_pt_details, list_pools, get_best_fixed_yields, compare_yield
+ * Tools: spectra_get_pt_details, spectra_list_pools, spectra_get_best_fixed_yields, spectra_compare_yield
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -24,11 +24,11 @@ import {
 
 export function register(server: McpServer): void {
   // ===========================================================================
-  // get_pt_details
+  // spectra_get_pt_details
   // ===========================================================================
 
   server.tool(
-    "get_pt_details",
+    "spectra_get_pt_details",
     `Get detailed information about a specific Spectra Principal Token (PT).
 Returns: maturity date, TVL, implied APY, PT/YT prices, pool liquidity, LP APY breakdown,
 underlying asset info, IBT protocol, yield leverage, pool reserves (IBT/PT amounts),
@@ -46,9 +46,9 @@ Protocol context:
 Includes external Merkl campaign APR when available (incentive programs beyond the
 native IBT yield). Merkl campaigns are fetched best-effort and shown alongside pool data.
 
-Use compare_yield to compare fixed vs. variable rates. Use get_looping_strategy to
-calculate leveraged fixed yield via Morpho. Use get_portfolio to check wallet holdings.
-Use get_pool_activity to see trading patterns on this pool.`,
+Use spectra_compare_yield to compare fixed vs. variable rates. Use spectra_get_looping_strategy to
+calculate leveraged fixed yield via Morpho. Use spectra_get_portfolio to check wallet holdings.
+Use spectra_get_pool_activity to see trading patterns on this pool.`,
     {
       chain: CHAIN_ENUM.describe("The blockchain network"),
       pt_address: EVM_ADDRESS.describe("The PT contract address (0x...)"),
@@ -84,10 +84,10 @@ Use get_pool_activity to see trading patterns on this pool.`,
         const nextSteps = [
           ``,
           `--- Next Steps ---`,
-          `• Compare fixed vs variable yield: compare_yield(chain="${chain}", pt_address="${ptAddr}")`,
-          `• Check leverage potential: get_looping_strategy(chain="${chain}", pt_address="${ptAddr}")`,
-          ...(poolAddr ? [`• See trading patterns: get_pool_activity(chain="${chain}", pool_address="${poolAddr}")`] : []),
-          `• Capital-aware ranking: scan_opportunities(capital_usd=YOUR_AMOUNT) to see where this PT ranks at your size`,
+          `• Compare fixed vs variable yield: spectra_compare_yield(chain="${chain}", pt_address="${ptAddr}")`,
+          `• Check leverage potential: spectra_get_looping_strategy(chain="${chain}", pt_address="${ptAddr}")`,
+          ...(poolAddr ? [`• See trading patterns: spectra_get_pool_activity(chain="${chain}", pool_address="${poolAddr}")`] : []),
+          `• Capital-aware ranking: spectra_scan_opportunities(capital_usd=YOUR_AMOUNT) to see where this PT ranks at your size`,
         ];
 
         let text = summary + nextSteps.join("\n");
@@ -104,11 +104,11 @@ Use get_pool_activity to see trading patterns on this pool.`,
   );
 
   // ===========================================================================
-  // list_pools
+  // spectra_list_pools
   // ===========================================================================
 
   server.tool(
-    "list_pools",
+    "spectra_list_pools",
     `List all active Spectra pools on a given chain.
 Returns a summary of each pool including: asset name, maturity, TVL, implied APY,
 LP APY, pool liquidity, pool reserves (IBT/PT amounts with ratio), IBT APR breakdown
@@ -124,9 +124,9 @@ By default only active (non-expired) pools are shown.
 Includes external Merkl campaign APR when available (incentive programs like KAT rewards
 that supplement native pool yield). Merkl data is fetched best-effort per chain.
 
-For multi-chain discovery, use get_best_fixed_yields (raw APY ranking) or
-scan_opportunities (capital-aware with price impact and looping analysis).
-Use get_pool_activity on a specific pool to see recent trading patterns.`,
+For multi-chain discovery, use spectra_get_best_fixed_yields (raw APY ranking) or
+spectra_scan_opportunities (capital-aware with price impact and looping analysis).
+Use spectra_get_pool_activity on a specific pool to see recent trading patterns.`,
     {
       chain: CHAIN_ENUM.describe("The blockchain network to query"),
       sort_by: z
@@ -160,7 +160,7 @@ Use get_pool_activity on a specific pool to see recent trading patterns.`,
         const pts: SpectraPt[] = raw?.data || raw || [];
 
         if (!Array.isArray(pts) || pts.length === 0) {
-          const text = `No pools found on ${chain}. The endpoint may use a different format -- try get_pt_details with a specific address.`;
+          const text = `No pools found on ${chain}. The endpoint may use a different format -- try spectra_get_pt_details with a specific address.`;
           return { content: [{ type: "text" as const, text }] };
         }
 
@@ -211,9 +211,9 @@ Use get_pool_activity on a specific pool to see recent trading patterns.`,
         const footer = [
           ``,
           `--- Next Steps ---`,
-          `• Drill into a pool: get_pt_details(chain="${chain}", pt_address=PT_ADDRESS) for full details`,
-          `• Compare yield: compare_yield(chain="${chain}", pt_address=PT_ADDRESS) for fixed vs variable`,
-          `• Capital-aware ranking: scan_opportunities(capital_usd=YOUR_AMOUNT) for cross-chain comparison with price impact`,
+          `• Drill into a pool: spectra_get_pt_details(chain="${chain}", pt_address=PT_ADDRESS) for full details`,
+          `• Compare yield: spectra_compare_yield(chain="${chain}", pt_address=PT_ADDRESS) for fixed vs variable`,
+          `• Capital-aware ranking: spectra_scan_opportunities(capital_usd=YOUR_AMOUNT) for cross-chain comparison with price impact`,
         ].join("\n");
 
         let text = header + "\n" + body + footer;
@@ -229,17 +229,17 @@ Use get_pool_activity on a specific pool to see recent trading patterns.`,
   );
 
   // ===========================================================================
-  // get_best_fixed_yields
+  // spectra_get_best_fixed_yields
   // ===========================================================================
 
   server.tool(
-    "get_best_fixed_yields",
+    "spectra_get_best_fixed_yields",
     `Find the best fixed-rate yield opportunities across all Spectra chains.
 Scans all supported networks and returns the top opportunities ranked by implied APY.
 Filters by asset type if specified.
 
 Important: This ranks by raw implied APY without considering your capital size or pool
-liquidity. These rankings will often disagree with scan_opportunities (which ranks by
+liquidity. These rankings will often disagree with spectra_scan_opportunities (which ranks by
 effective APY after entry cost). That disagreement is intentional -- raw APY reflects
 the pool's headline rate while effective APY reflects what you actually capture at your
 capital size. Neither ranking is "correct" -- they measure different things. Use both to
@@ -300,10 +300,10 @@ develop conviction about which pools genuinely serve your strategy.`,
         const footer = [
           ``,
           `--- Next Steps ---`,
-          `• Capital-aware re-ranking: scan_opportunities(capital_usd=YOUR_AMOUNT) — ranks by effective APY after price impact (these rankings intentionally disagree with raw APY)`,
-          `• Drill into a pool: get_pt_details(chain=CHAIN, pt_address=PT_ADDRESS) for full details`,
-          `• Compare yield: compare_yield(chain=CHAIN, pt_address=PT_ADDRESS) for fixed vs variable spread`,
-          `• Check leverage: get_looping_strategy(chain=CHAIN, pt_address=PT_ADDRESS) for Morpho looping`,
+          `• Capital-aware re-ranking: spectra_scan_opportunities(capital_usd=YOUR_AMOUNT) — ranks by effective APY after price impact (these rankings intentionally disagree with raw APY)`,
+          `• Drill into a pool: spectra_get_pt_details(chain=CHAIN, pt_address=PT_ADDRESS) for full details`,
+          `• Compare yield: spectra_compare_yield(chain=CHAIN, pt_address=PT_ADDRESS) for fixed vs variable spread`,
+          `• Check leverage: spectra_get_looping_strategy(chain=CHAIN, pt_address=PT_ADDRESS) for Morpho looping`,
         ].join("\n");
 
         const text = header + chainWarning + "\n" + body + footer;
@@ -316,11 +316,11 @@ develop conviction about which pools genuinely serve your strategy.`,
   );
 
   // ===========================================================================
-  // compare_yield
+  // spectra_compare_yield
   // ===========================================================================
 
   server.tool(
-    "compare_yield",
+    "spectra_compare_yield",
     `Compare Spectra's fixed yield (via PT) against the variable yield of the underlying
 interest-bearing token. Helps users decide if locking in a fixed rate is worthwhile
 versus staying in the variable-rate position.
@@ -335,8 +335,8 @@ Protocol context:
 
 Includes external Merkl campaign APR when available, shown alongside LP and IBT data.
 
-Use get_looping_strategy to lever up the fixed yield via Morpho. Use get_portfolio to
-check your current positions. Use scan_opportunities for multi-chain comparison.`,
+Use spectra_get_looping_strategy to lever up the fixed yield via Morpho. Use spectra_get_portfolio to
+check your current positions. Use spectra_scan_opportunities for multi-chain comparison.`,
     {
       chain: CHAIN_ENUM.describe("The blockchain network"),
       pt_address: EVM_ADDRESS.describe("The PT contract address to compare"),
@@ -490,11 +490,11 @@ check your current positions. Use scan_opportunities for multi-chain comparison.
         lines.push(``);
         lines.push(`--- Next Steps ---`);
         if (effectiveFixedApy > variableApr) {
-          lines.push(`• Fixed yield exceeds variable — consider locking in: quote_trade(chain="${chain}", pt_address="${ptAddr}", amount=YOUR_AMOUNT, side="buy")`);
+          lines.push(`• Fixed yield exceeds variable — consider locking in: spectra_quote_trade(chain="${chain}", pt_address="${ptAddr}", amount=YOUR_AMOUNT, side="buy")`);
         }
-        lines.push(`• Leverage the spread: get_looping_strategy(chain="${chain}", pt_address="${ptAddr}") for Morpho looping`);
-        lines.push(`• Preview portfolio impact: simulate_portfolio_after_trade(chain="${chain}", pt_address="${ptAddr}", address=YOUR_WALLET, amount=YOUR_AMOUNT, side="buy")`);
-        lines.push(`• Cross-chain comparison: scan_opportunities(capital_usd=${capital_usd}) to compare this against all opportunities`);
+        lines.push(`• Leverage the spread: spectra_get_looping_strategy(chain="${chain}", pt_address="${ptAddr}") for Morpho looping`);
+        lines.push(`• Preview portfolio impact: spectra_simulate_trade(chain="${chain}", pt_address="${ptAddr}", address=YOUR_WALLET, amount=YOUR_AMOUNT, side="buy")`);
+        lines.push(`• Cross-chain comparison: spectra_scan_opportunities(capital_usd=${capital_usd}) to compare this against all opportunities`);
 
         if (!merklResult.available) {
           lines.push(``);

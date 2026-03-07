@@ -27,7 +27,7 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 ### Q1: Supported Chains
 **Prompt:** "What chains does Spectra support?"
 
-**Tests:** Can the agent call `get_supported_chains`?
+**Tests:** Can the agent call `spectra_list_chains`?
 
 **Expected:** Lists all 10 chains (Ethereum/mainnet, Base, Arbitrum, Optimism, Avalanche, Katana, Sonic, Flare, BSC, Monad). Should NOT hallucinate chains.
 
@@ -40,7 +40,7 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 ### Q2: Highest Fixed Yield (Anomaly Detection)
 **Prompt:** "What's the highest fixed-rate yield available on Spectra right now? Should I invest in it?"
 
-**Tests:** `get_best_fixed_yields` usage. Does the agent flag anomalous extreme APYs?
+**Tests:** `spectra_get_best_fixed_yields` usage. Does the agent flag anomalous extreme APYs?
 
 **Expected:** The raw #1 result will likely be an anomalous pool (extreme APY with tiny liquidity). A good agent should immediately flag this as suspect — check liquidity, maturity, and IBT health. Should recommend the real highest-quality opportunity instead.
 
@@ -56,7 +56,7 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 ### Q3: Pool Count
 **Prompt:** "How many active pools are on Ethereum mainnet?"
 
-**Tests:** `list_pools` with correct chain parameter.
+**Tests:** `spectra_list_pools` with correct chain parameter.
 
 **Expected:** Returns the current count of active mainnet pools.
 
@@ -69,7 +69,7 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 ### Q4: MetaVault Discovery
 **Prompt:** "What MetaVaults exist on Spectra?"
 
-**Tests:** `get_metavaults` usage.
+**Tests:** `spectra_list_metavaults` usage.
 
 **Expected:** Lists all MetaVaults with curator names, chains, TVLs, and live APYs.
 
@@ -84,9 +84,9 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 ### Q5: Capital-Aware Opportunity Selection
 **Prompt:** "I have $50,000 to deploy into Spectra. What's the best opportunity?"
 
-**Tests:** Does agent use `scan_opportunities` (capital-aware) vs `get_best_fixed_yields` (raw APY)?
+**Tests:** Does agent use `spectra_scan_opportunities` (capital-aware) vs `spectra_get_best_fixed_yields` (raw APY)?
 
-**Expected:** Should use `scan_opportunities(capital_usd=50000)` because price impact matters at $50K. Should discuss effective APY after entry cost. Should NOT just report raw APY rankings.
+**Expected:** Should use `spectra_scan_opportunities(capital_usd=50000)` because price impact matters at $50K. Should discuss effective APY after entry cost. Should NOT just report raw APY rankings.
 
 **Grading:**
 - ✅ Uses capital-aware tool, discusses price impact and effective APY
@@ -98,7 +98,7 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 ### Q6: Cross-Protocol Comparison
 **Prompt:** "Compare the STAK pool on mainnet to the same asset on Pendle."
 
-**Tests:** `compare_pendle_spectra` or manual cross-referencing.
+**Tests:** `mv_compare_yield` or manual cross-referencing.
 
 **Expected:** Should note that Spectra and Pendle have the same underlying (yn-RWA/USD) but VERY different maturities. A good agent catches this maturity mismatch and explains they aren't directly comparable on a like-for-like basis.
 
@@ -112,7 +112,7 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 ### Q7: Morpho Looping Availability
 **Prompt:** "Is there a Morpho looping opportunity for the STAK PT on mainnet?"
 
-**Tests:** `get_looping_strategy` or `get_morpho_markets` check.
+**Tests:** `spectra_get_looping_strategy` or `morpho_list_markets` check.
 
 **Expected:** Should clearly state whether a Morpho market exists. Should NOT hallucinate a looping strategy if no market is available.
 
@@ -125,7 +125,7 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 ### Q8: Trade Simulation
 **Prompt:** "What would my portfolio look like if I bought $500 of STAK PT on mainnet?"
 
-**Tests:** `simulate_portfolio_after_trade` usage.
+**Tests:** `spectra_simulate_trade` usage.
 
 **Expected:** Should call the tool with correct parameters (needs a wallet address — should ask for one or use a zero address for new position). Should discuss price impact and effective APY.
 
@@ -140,11 +140,11 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 ### Q9: Router Batching — SELL_PT Interpretation ⭐
 **Prompt:** "I see a wallet with many SELL_PT transactions on a Spectra pool. Is this person bearish on the protocol?"
 
-*(For a specific test, use a known active address from `get_pool_activity` output.)*
+*(For a specific test, use a known active address from `spectra_get_pool_activity` output.)*
 
 **Tests:** Understanding of Router batching. SELL_PT can be flash-mint-to-acquire-YT. Also tests whether agent presents SELL_PT's multiple interpretations or collapses to one.
 
-**Expected:** Agent should explain that SELL_PT has multiple valid interpretations: YT acquisition (bullish variable rate), PT liquidation (reducing exposure), or cross-protocol arb (neutral). Should present these as competing branches, then recommend `get_portfolio` to narrow. Even after portfolio check, should note which ambiguities remain.
+**Expected:** Agent should explain that SELL_PT has multiple valid interpretations: YT acquisition (bullish variable rate), PT liquidation (reducing exposure), or cross-protocol arb (neutral). Should present these as competing branches, then recommend `spectra_get_portfolio` to narrow. Even after portfolio check, should note which ambiguities remain.
 
 **Grading:**
 - ✅ Presents ≥2 interpretations of SELL_PT, recommends portfolio cross-reference, preserves ambiguity even after narrowing
@@ -255,9 +255,9 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 ### Q17: Wallet Strategy Analysis ⭐
 **Prompt:** "Analyze wallet [ADDRESS] and tell me their strategy on the [POOL_NAME] pool."
 
-*(Use a real address from `get_pool_activity` output.)*
+*(Use a real address from `spectra_get_pool_activity` output.)*
 
-**Tests:** Multi-tool workflow — `get_pool_activity` (with address) → `get_portfolio` → cross-reference. Also tests whether the agent presents competing interpretations or collapses to one.
+**Tests:** Multi-tool workflow — `spectra_get_pool_activity` (with address) → `spectra_get_portfolio` → cross-reference. Also tests whether the agent presents competing interpretations or collapses to one.
 
 **Expected:** Agent should use ≥2 tools and cross-reference. Should identify activity patterns (cycles, dominant event types) and compare to current holdings. Should present the competing interpretation branches from tool output and use portfolio data to narrow — but should note which ambiguities remain even after cross-referencing.
 
@@ -285,7 +285,7 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 ### Q19: YT Arb vs LP Strategy Comparison
 **Prompt:** "Compare the YT arbitrage opportunity on the STAK pool vs just LPing with max boost."
 
-**Tests:** Multi-strategy comparison requiring `compare_yield` and `scan_yt_arbitrage`.
+**Tests:** Multi-strategy comparison requiring `spectra_compare_yield` and `spectra_scan_yt_arbitrage`.
 
 **Expected:** Should compare: YT arb (speculative, leveraged, bet on variable rates staying high) vs LP (trading fees + gauge emissions, more predictable, benefits from veSPECTRA boost). Should discuss risk/reward tradeoffs.
 
@@ -326,23 +326,23 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 ### Q22: Expired Pool Discovery ⭐
 **Prompt:** "Show me all expired pools that wallet [ADDRESS] interacted with."
 
-**Tests:** Understanding that `list_pools` doesn't return expired pools, but `get_portfolio` does.
+**Tests:** Understanding that `spectra_list_pools` doesn't return expired pools, but `spectra_get_portfolio` does.
 
-**Expected:** Should use `get_portfolio` (which returns expired positions) or `get_address_activity` (which internally fetches portfolio). Should NOT try `list_pools(include_expired=True)` and expect results.
+**Expected:** Should use `spectra_get_portfolio` (which returns expired positions) or `spectra_get_address_activity` (which internally fetches portfolio). Should NOT try `spectra_list_pools(include_expired=True)` and expect results.
 
 **Grading:**
-- ✅ Uses `get_portfolio` or `get_address_activity`, explains limitation
-- ⚠️ Uses the right tool but doesn't explain why `list_pools` won't work
-- ❌ Tries `list_pools` for expired data
+- ✅ Uses `spectra_get_portfolio` or `spectra_get_address_activity`, explains limitation
+- ⚠️ Uses the right tool but doesn't explain why `spectra_list_pools` won't work
+- ❌ Tries `spectra_list_pools` for expired data
 
 ---
 
 ### Q23: Router Limitation on On-Chain Filtering ⭐
 **Prompt:** "Filter on-chain logs for my wallet [ADDRESS] on the STAK pool."
 
-**Tests:** Understanding the Router limitation with `get_onchain_activity` address filtering.
+**Tests:** Understanding the Router limitation with `spectra_get_onchain_activity` address filtering.
 
-**Expected:** Should warn that `get_onchain_activity` with address filter only catches direct calls, NOT Router-batched operations. Should recommend `get_pool_activity` (API-based) instead.
+**Expected:** Should warn that `spectra_get_onchain_activity` with address filter only catches direct calls, NOT Router-batched operations. Should recommend `spectra_get_pool_activity` (API-based) instead.
 
 **Grading:**
 - ✅ Explains Router limitation AND recommends API-based alternative
@@ -365,11 +365,11 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 ---
 
 ### Q25: Tool Ranking Disagreement ⭐
-**Prompt:** "I ran get_best_fixed_yields and scan_opportunities with $10,000 and they gave different rankings. Which is right? Is one broken?"
+**Prompt:** "I ran spectra_get_best_fixed_yields and spectra_scan_opportunities with $10,000 and they gave different rankings. Which is right? Is one broken?"
 
 **Tests:** Understanding intentional tool disagreement.
 
-**Expected:** Both are "right" — they measure different things. `get_best_fixed_yields` = raw headline APY. `scan_opportunities` = effective APY after capital-sized price impact. Should give concrete examples showing how the same pool ranks differently. Should say "use both to develop conviction."
+**Expected:** Both are "right" — they measure different things. `spectra_get_best_fixed_yields` = raw headline APY. `spectra_scan_opportunities` = effective APY after capital-sized price impact. Should give concrete examples showing how the same pool ranks differently. Should say "use both to develop conviction."
 
 **Grading:**
 - ✅ Explains the distinction clearly with examples
@@ -385,7 +385,7 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 
 **Tests:** Can the agent decompose yield into its constituent parts using tool data?
 
-**Expected:** Agent should call `get_metavaults` and see the APY breakdown (base ~3.5% + KAT incentive programs ~147%). Should explicitly note that ~97% of the APY comes from external incentive programs (KAT tokens), not organic yield. Should discuss sustainability: incentive programs can end, token price can drop.
+**Expected:** Agent should call `spectra_list_metavaults` and see the APY breakdown (base ~3.5% + KAT incentive programs ~147%). Should explicitly note that ~97% of the APY comes from external incentive programs (KAT tokens), not organic yield. Should discuss sustainability: incentive programs can end, token price can drop.
 
 **Grading:**
 - ✅ Decomposes APY into base vs incentives, quantifies the split, discusses sustainability
@@ -399,7 +399,7 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 ### Q27: IBT APR Composition
 **Prompt:** "What's driving the variable rate on the syUSD pool on Katana?"
 
-**Tests:** Can the agent read IBT APR breakdown from `get_pt_details` or `compare_yield`?
+**Tests:** Can the agent read IBT APR breakdown from `spectra_get_pt_details` or `spectra_compare_yield`?
 
 **Expected:** Should call a tool that surfaces IBT APR details and identify that the variable rate is composed of a base organic rate plus external incentives (e.g., KAT Base, KAT App Rewards). Should note the split between organic and incentivized yield.
 
@@ -415,7 +415,7 @@ Companion to `test-agent.cjs` (automated multi-tool workflow tests).
 
 **Tests:** Can the agent discover and report multipliers from pool data?
 
-**Expected:** Should use `list_pools` on Katana/Flare and identify multipliers (e.g., Drops 3x, InfiniFi 12x, Firelight 1x). Should explain these are external points programs layered on top of yield.
+**Expected:** Should use `spectra_list_pools` on Katana/Flare and identify multipliers (e.g., Drops 3x, InfiniFi 12x, Firelight 1x). Should explain these are external points programs layered on top of yield.
 
 **Grading:**
 - ✅ Discovers multipliers, names the programs, explains what they mean
@@ -436,7 +436,7 @@ A weak agent picks one branch and runs with it.
 
 **Tests:** Does the agent present multiple competing interpretations from tool output, or collapse to one?
 
-**Expected:** The tool output will present competing branches (A: flash-mint YT accumulation, B: PT liquidation, C: cross-protocol arb). The agent should present MULTIPLE interpretations to the user, then use `get_portfolio` to narrow — but even after seeing YT-heavy holdings, should note that the *reason* for holding YT (directional bet vs intermediate state vs partial unwind) remains ambiguous. Should NOT say "they are accumulating YT" as a flat conclusion without qualifying what that implies about future behavior.
+**Expected:** The tool output will present competing branches (A: flash-mint YT accumulation, B: PT liquidation, C: cross-protocol arb). The agent should present MULTIPLE interpretations to the user, then use `spectra_get_portfolio` to narrow — but even after seeing YT-heavy holdings, should note that the *reason* for holding YT (directional bet vs intermediate state vs partial unwind) remains ambiguous. Should NOT say "they are accumulating YT" as a flat conclusion without qualifying what that implies about future behavior.
 
 **Grading:**
 - ✅ A+ Presents ≥2 competing interpretations from tool output, uses portfolio to narrow but preserves residual ambiguity, explicitly states which interpretations remain open after cross-referencing
@@ -529,7 +529,7 @@ level. A weak agent ignores coverage and presents high-confidence conclusions fr
 ---
 
 ### Q34: Data Source Coverage — Tool Composition Awareness ⭐⭐
-**Prompt:** "I've analyzed this wallet using get_pool_activity. Can I now confidently say what their strategy is?"
+**Prompt:** "I've analyzed this wallet using spectra_get_pool_activity. Can I now confidently say what their strategy is?"
 
 **Tests:** Does the agent understand what a single tool's coverage means, and what's missing?
 
@@ -551,13 +551,13 @@ level. A weak agent ignores coverage and presents high-confidence conclusions fr
 ### Q35: Merkl Rewards in PnL Analysis ⭐
 **Prompt:** "I have an LP position on Spectra that looks underwater. How do I get a complete picture of my PnL?"
 
-**Tests:** Does the agent mention Merkl rewards (SPECTRA gauge emissions) as part of a complete PnL analysis? `get_portfolio` now returns Merkl rewards alongside position data.
+**Tests:** Does the agent mention Merkl rewards (SPECTRA gauge emissions) as part of a complete PnL analysis? `spectra_get_portfolio` now returns Merkl rewards alongside position data.
 
-**Expected:** Should explain that `get_portfolio` automatically fetches Merkl rewards (SPECTRA gauge emissions and other incentive programs) in parallel with position data. A complete PnL analysis MUST include Merkl rewards alongside position value and claimable yield. Should note that Merkl rewards can be a dominant source of LP yield on Spectra — positions that appear underwater on PT/YT value alone may actually be profitable when gauge emissions are included.
+**Expected:** Should explain that `spectra_get_portfolio` automatically fetches Merkl rewards (SPECTRA gauge emissions and other incentive programs) in parallel with position data. A complete PnL analysis MUST include Merkl rewards alongside position value and claimable yield. Should note that Merkl rewards can be a dominant source of LP yield on Spectra — positions that appear underwater on PT/YT value alone may actually be profitable when gauge emissions are included.
 
 **Grading:**
 - ✅ Explains that Merkl rewards are included in portfolio output and can flip apparent losses into profits
-- ⚠️ Mentions `get_portfolio` but doesn't specifically call out Merkl rewards as a PnL component
+- ⚠️ Mentions `spectra_get_portfolio` but doesn't specifically call out Merkl rewards as a PnL component
 - ❌ Ignores Merkl rewards entirely or suggests manual Merkl lookups as if portfolio doesn't include them
 
 **Key failure mode:** Reward blindness — analyzing position profitability without accounting for gauge emissions that are a primary revenue source for LP positions on Spectra.
@@ -575,10 +575,10 @@ DeFi jargon, explains deposit paths, and routes to the right tools.
 
 **Tests:** Does the agent explain the deposit path clearly without jargon?
 
-**Expected:** Should explain: (1) use scan_opportunities or scan_curator_opportunities to find opportunities on Base, (2) the actual entry mechanic: send USDC → Router handles wrapping to IBT and swapping to PT atomically, (3) at maturity PT redeems back to underlying, (4) mention that the maturity value shown may be < 1.0 but that's the IBT rate, not a loss. Should call get_protocol_context("deposit_path") or explain the mechanics directly. Should NOT assume the user knows what IBT, PT, or flash-minting means.
+**Expected:** Should explain: (1) use spectra_scan_opportunities or mv_scan_curator_opportunities to find opportunities on Base, (2) the actual entry mechanic: send USDC → Router handles wrapping to IBT and swapping to PT atomically, (3) at maturity PT redeems back to underlying, (4) mention that the maturity value shown may be < 1.0 but that's the IBT rate, not a loss. Should call mv_get_protocol_context("deposit_path") or explain the mechanics directly. Should NOT assume the user knows what IBT, PT, or flash-minting means.
 
 **Grading:**
-- ✅ A+ Explains full deposit path in plain language, calls relevant tools, mentions maturity value is not a loss, suggests verifying with quote_trade
+- ✅ A+ Explains full deposit path in plain language, calls relevant tools, mentions maturity value is not a loss, suggests verifying with spectra_quote_trade
 - ✅ A  Explains deposit path correctly but uses some unexplained jargon
 - ⚠️ B  Points to the right tools but doesn't explain the mechanics
 - ❌ C  Says "buy PT" without explaining how
@@ -587,14 +587,14 @@ DeFi jargon, explains deposit paths, and routes to the right tools.
 ---
 
 ### Q37: Impact Accuracy — Does the Agent Know Estimates Are Conservative? ⭐⭐
-**Prompt:** "scan_opportunities shows an effective APY of 3.06% for a pool. Should I skip it?"
+**Prompt:** "spectra_scan_opportunities shows an effective APY of 3.06% for a pool. Should I skip it?"
 
 **Tests:** Does the agent know that scanner effective APY is a conservative lower bound?
 
-**Expected:** Should explain that the scanner uses a constant-product impact model which is a conservative upper bound on price impact. Real Curve StableSwap-NG pools are more capital-efficient, so actual effective APY is typically 30-60% higher. Should recommend quote_trade() for an exact on-chain quote before dismissing the opportunity. Should NOT say "yes, 3% is low, skip it" without caveat.
+**Expected:** Should explain that the scanner uses a constant-product impact model which is a conservative upper bound on price impact. Real Curve StableSwap-NG pools are more capital-efficient, so actual effective APY is typically 30-60% higher. Should recommend spectra_quote_trade() for an exact on-chain quote before dismissing the opportunity. Should NOT say "yes, 3% is low, skip it" without caveat.
 
 **Grading:**
-- ✅ A+ Explains the model gap, recommends quote_trade verification, notes the opportunity may actually be much better
+- ✅ A+ Explains the model gap, recommends spectra_quote_trade verification, notes the opportunity may actually be much better
 - ✅ A  Mentions estimates are conservative but doesn't quantify the gap or suggest verification
 - ⚠️ B  Says "it depends" without explaining why the estimate might be wrong
 - ❌ C  Accepts 3.06% at face value and recommends skipping
@@ -609,13 +609,13 @@ DeFi jargon, explains deposit paths, and routes to the right tools.
 
 **Tests:** Does the agent route to the broadest scanner?
 
-**Expected:** Should recommend scan_curator_opportunities as the broadest starting point (covers both Spectra and Pendle). Should explain that scan_opportunities is Spectra-only and may return fewer results. Should mention get_best_fixed_yields as an alternative that ranks by raw APY without capital awareness. Should note that these tools intentionally disagree on "best" — different metrics for different goals. Should NOT just say "use scan_opportunities" without mentioning alternatives.
+**Expected:** Should recommend mv_scan_curator_opportunities as the broadest starting point (covers both Spectra and Pendle). Should explain that spectra_scan_opportunities is Spectra-only and may return fewer results. Should mention spectra_get_best_fixed_yields as an alternative that ranks by raw APY without capital awareness. Should note that these tools intentionally disagree on "best" — different metrics for different goals. Should NOT just say "use spectra_scan_opportunities" without mentioning alternatives.
 
 **Grading:**
-- ✅ A+ Recommends scan_curator_opportunities, explains the difference between scanners, notes intentional disagreement
+- ✅ A+ Recommends mv_scan_curator_opportunities, explains the difference between scanners, notes intentional disagreement
 - ✅ A  Recommends a reasonable scanner and mentions alternatives exist
-- ⚠️ B  Recommends scan_opportunities without mentioning the broader cross-protocol option
-- ❌ C  Recommends get_best_fixed_yields (no capital awareness) as the primary tool
+- ⚠️ B  Recommends spectra_scan_opportunities without mentioning the broader cross-protocol option
+- ❌ C  Recommends spectra_get_best_fixed_yields (no capital awareness) as the primary tool
 - ❌ F  Doesn't know which tool to recommend or hallucinates a tool name
 
 ---
@@ -626,7 +626,7 @@ DeFi jargon, explains deposit paths, and routes to the right tools.
 2. **Hallucination** — Invents Morpho markets, pools, or strategies that don't exist
 3. **Router blindness** — Interprets SELL_PT as always bearish, BUY_PT as always bullish
 4. **Anomaly blindness** — Reports extreme APYs without questioning them
-5. **Wrong tool** — Uses `list_pools(include_expired=True)` expecting expired data, or `get_onchain_activity` with address filter for Router-mediated activity
+5. **Wrong tool** — Uses `spectra_list_pools(include_expired=True)` expecting expired data, or `spectra_get_onchain_activity` with address filter for Router-mediated activity
 6. **No cross-referencing** — Analyzes wallet activity without checking portfolio, or vice versa
 7. **Risk blindness** — Recommends high-APY vaults without discussing composability risk, chain maturity, or curator dependency
 8. **Inconsistent skepticism** — Flags risks on one vault but not another with similar risk profile
@@ -639,8 +639,8 @@ DeFi jargon, explains deposit paths, and routes to the right tools.
 15. **Continuity assumption** — Two phases of activity separated by a long dark period get stitched into one continuous strategy, ignoring that the gap may represent a context change
 16. **Tool sufficiency illusion** — Single tool's detailed output is treated as a complete picture. The structure and detail of the output creates false confidence about coverage
 17. **Reward blindness** — Analyzes position PnL without accounting for Merkl gauge emissions (SPECTRA rewards), which can be a dominant source of LP yield and flip apparent losses into profits
-18. **Face-value acceptance** — Treats scanner effective APY as ground truth. The constant-product model is a conservative upper bound on impact — real Curve pools are more efficient. An agent that dismisses a 3% effective APY pool without checking quote_trade() may be discarding a pool that's actually at 11%
-19. **Tool routing failure** — Recommends scan_opportunities to newcomers without mentioning scan_curator_opportunities (broader, includes Pendle) or sends users to get_best_fixed_yields (no capital awareness) as the primary discovery tool
+18. **Face-value acceptance** — Treats scanner effective APY as ground truth. The constant-product model is a conservative upper bound on impact — real Curve pools are more efficient. An agent that dismisses a 3% effective APY pool without checking spectra_quote_trade() may be discarding a pool that's actually at 11%
+19. **Tool routing failure** — Recommends spectra_scan_opportunities to newcomers without mentioning mv_scan_curator_opportunities (broader, includes Pendle) or sends users to spectra_get_best_fixed_yields (no capital awareness) as the primary discovery tool
 
 ## Running These Tests
 
