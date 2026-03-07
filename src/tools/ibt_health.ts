@@ -1,5 +1,5 @@
 /**
- * Tool: check_ibt_health
+ * Tool: mv_check_ibt_health
  *
  * Multi-signal health assessment of the IBT (interest-bearing token) underlying
  * a PT pool. Checks conversion rate, APR composition, pool balance, protocol
@@ -24,7 +24,7 @@ const ICON: Record<Signal, string> = { ok: "OK", caution: "CAUTION", warning: "W
 
 export function register(server: McpServer): void {
   server.tool(
-    "check_ibt_health",
+    "mv_check_ibt_health",
     `Perform a multi-signal health assessment of the IBT underlying a PT pool.
 
 Checks conversion rate (on-chain ERC-4626), APR composition (organic vs incentive),
@@ -45,8 +45,8 @@ Two modes:
 
 If both are provided, pt_address takes priority (richer data from Spectra API).
 
-Use get_pool_capacity to assess how much capital the pool can absorb.
-Use compare_yield for fixed-vs-variable rate analysis on the same PT.`,
+Use spectra_get_pool_capacity to assess how much capital the pool can absorb.
+Use spectra_compare_yield for fixed-vs-variable rate analysis on the same PT.`,
     {
       chain: CHAIN_ENUM.describe("The blockchain network"),
       pt_address: EVM_ADDRESS.optional().describe("The PT contract address (resolves to underlying IBT). Provide this OR ibt_address."),
@@ -367,8 +367,8 @@ Use compare_yield for fixed-vs-variable rate analysis on the same PT.`,
         }
 
         lines.push("");
-        lines.push("Use compare_yield for fixed-vs-variable rate analysis.");
-        lines.push("Use get_pool_capacity for capital-aware depth assessment.");
+        lines.push("Use spectra_compare_yield for fixed-vs-variable rate analysis.");
+        lines.push("Use spectra_get_pool_capacity for capital-aware depth assessment.");
 
         const text = lines.join("\n");
         return { content: [{ type: "text" as const, text }] };
@@ -500,7 +500,7 @@ async function runDirectMode(chain: string, ibtAddress: string) {
   lines.push("");
   lines.push("Direct mode: on-chain ERC-4626 checks only.");
   lines.push("APR composition, pool balance, and liquidity checks require a Spectra PT address.");
-  lines.push("Use get_pt_details with a Spectra PT for full analysis.");
+  lines.push("Use spectra_get_pt_details with a Spectra PT for full analysis.");
 
   const text = lines.join("\n");
   return { content: [{ type: "text" as const, text }] };

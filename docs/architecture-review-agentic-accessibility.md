@@ -2,7 +2,7 @@
 
 ## Scope
 
-A thorough review of the spectra-mcp-server architecture through the lens of the
+A thorough review of the metavault-mcp architecture through the lens of the
 Open Emergence design principles (recursive-meta-process.md, dissolution-conditions.md)
 with the specific question: **what would make this server more accessible to autonomous
 agents?**
@@ -26,7 +26,7 @@ and hope the agent figures it out.
 
 ### Generative Friction Is Real
 
-The `get_best_fixed_yields` (raw APY) vs `scan_opportunities` (effective APY) disagreement
+The `spectra_get_best_fixed_yields` (raw APY) vs `spectra_scan_opportunities` (effective APY) disagreement
 is genuinely productive. In testing, agents that encounter both tools develop richer
 reasoning about "what does best mean at my capital size?" This should be preserved.
 
@@ -45,7 +45,7 @@ This pattern should be extended to more tools.
 
 ### Capital-Aware Metrics Solve a Real Agent Problem
 
-Raw APY rankings are misleading for capital-deployed agents. `scan_opportunities`
+Raw APY rankings are misleading for capital-deployed agents. `spectra_scan_opportunities`
 computing price impact at YOUR capital size is the single most agent-relevant feature.
 Without it, an agent sees "50% APY" on a $10K liquidity pool and wastes its principal
 learning why the trade failed.
@@ -58,26 +58,26 @@ learning why the trade failed.
 
 The design principle says "every tool cross-references at least one other tool." This is
 mostly true in descriptions, but the OUTPUTS don't carry forward. An agent calling
-`get_pt_details` gets rich data about a PT but no structured pointer saying "here are
+`spectra_get_pt_details` gets rich data about a PT but no structured pointer saying "here are
 your logical next steps with this data."
 
 **Current state of cross-references in output (not descriptions):**
 
 | Tool | Output cross-references | Missing |
 |------|------------------------|---------|
-| `get_pt_details` | None in output | compare_yield, get_looping_strategy, get_pool_activity |
-| `list_pools` | None in output | get_pt_details on interesting pools |
-| `get_best_fixed_yields` | Footer disclaimer about scan_opportunities | No per-pool next-step |
-| `get_portfolio` | Portfolio hints mention Morpho availability | No specific tool call with params |
-| `get_pool_volume` | None in output | get_pool_activity for detail |
-| `get_morpho_markets` | None in output | get_morpho_rate, get_looping_strategy |
-| `compare_yield` | None in output | get_looping_strategy, quote_trade |
-| `scan_opportunities` | Description mentions drill-down tools | No per-opportunity next-step |
-| `scan_yt_arbitrage` | None in output | Execution mechanics unclear |
-| `get_ve_info` | None in output | How boost affects scan_opportunities results |
+| `spectra_get_pt_details` | None in output | spectra_compare_yield, spectra_get_looping_strategy, spectra_get_pool_activity |
+| `spectra_list_pools` | None in output | spectra_get_pt_details on interesting pools |
+| `spectra_get_best_fixed_yields` | Footer disclaimer about spectra_scan_opportunities | No per-pool next-step |
+| `spectra_get_portfolio` | Portfolio hints mention Morpho availability | No specific tool call with params |
+| `spectra_get_pool_volume` | None in output | spectra_get_pool_activity for detail |
+| `morpho_list_markets` | None in output | morpho_get_rate, spectra_get_looping_strategy |
+| `spectra_compare_yield` | None in output | spectra_get_looping_strategy, spectra_quote_trade |
+| `spectra_scan_opportunities` | Description mentions drill-down tools | No per-opportunity next-step |
+| `spectra_scan_yt_arbitrage` | None in output | Execution mechanics unclear |
+| `spectra_get_ve_info` | None in output | How boost affects spectra_scan_opportunities results |
 
 The descriptions teach cross-references well — but descriptions are only read once. The
-output is read every time. An agent that called `get_pt_details` three calls ago has
+output is read every time. An agent that called `spectra_get_pt_details` three calls ago has
 already forgotten the description cross-references. The output needs to remind it.
 
 **Dissolution condition**: This gap dissolves if agents develop persistent memory of tool
@@ -88,23 +88,23 @@ consumption.
 
 **Dead End A: Discovery → Details → ???**
 ```
-list_pools → pick interesting pool → get_pt_details → rich data → ...what now?
+spectra_list_pools → pick interesting pool → spectra_get_pt_details → rich data → ...what now?
 ```
 Agent has APY, TVL, liquidity but no guidance on whether to compare yields, check
-looping, or move to a different pool. The description says "use compare_yield" but by
+looping, or move to a different pool. The description says "use spectra_compare_yield" but by
 this point the agent has consumed the description 2 calls ago.
 
 **Dead End B: Portfolio → Morpho Flags → Manual Dispatch**
 ```
-get_portfolio → sees "Morpho markets exist for: PT-ibUSDC" → ...how to act on this?
+spectra_get_portfolio → sees "Morpho markets exist for: PT-ibUSDC" → ...how to act on this?
 ```
 The portfolio surfaces that looping is POSSIBLE but doesn't provide the chain + pt_address
-needed to call `get_looping_strategy`. The agent must re-find the PT address from the
+needed to call `spectra_get_looping_strategy`. The agent must re-find the PT address from the
 portfolio output (it's there, but buried in position details).
 
 **Dead End C: Opportunity Found → No Execution Path**
 ```
-scan_opportunities → #1 ranked: 28.5% net APY via looping → ...execute how?
+spectra_scan_opportunities → #1 ranked: 28.5% net APY via looping → ...execute how?
 ```
 Agent has the opportunity ranked but no checklist: quote the trade, simulate portfolio
 impact, verify Morpho liquidity, check gas costs. Each of these requires a separate tool
@@ -112,7 +112,7 @@ call with parameters the agent must extract from the scan output.
 
 **Dead End D: Activity Pattern → No Strategy Inference**
 ```
-get_pool_activity(address=whale) → cycle detected: ADD→REMOVE→SELL × 12 → ...so what?
+spectra_get_pool_activity(address=whale) → cycle detected: ADD→REMOVE→SELL × 12 → ...so what?
 ```
 Output says "could indicate mint→LP→unwind loop" — correctly using "could be" language.
 But the agent has no structured path to verify: check portfolio for resulting position,
@@ -121,13 +121,13 @@ check if this pattern is profitable, compare to alternative strategies.
 ### Issue 3: Three Discovery Entry Points, No Meta-Router
 
 An agent facing the tool list sees three ways to find opportunities:
-1. `get_best_fixed_yields` — raw APY, all chains
-2. `scan_opportunities` — effective APY, capital-aware
-3. `scan_yt_arbitrage` — YT spread opportunities
+1. `spectra_get_best_fixed_yields` — raw APY, all chains
+2. `spectra_scan_opportunities` — effective APY, capital-aware
+3. `spectra_scan_yt_arbitrage` — YT spread opportunities
 
-There's no guidance on WHEN to use each. The description of `scan_opportunities` says
-"unlike get_best_fixed_yields..." but an agent must read both descriptions to understand
-the distinction. A meta-tool or enhanced `get_protocol_context` topic could route agents
+There's no guidance on WHEN to use each. The description of `spectra_scan_opportunities` says
+"unlike spectra_get_best_fixed_yields..." but an agent must read both descriptions to understand
+the distinction. A meta-tool or enhanced `mv_get_protocol_context` topic could route agents
 based on their goal.
 
 This is NOT the same as the raw-vs-effective generative friction (which should stay). The
@@ -143,24 +143,24 @@ surfacing when data is ABSENT and what that absence means.
 **Current negative signals (good):**
 - Portfolio: "No Morpho markets found" for positions
 - Portfolio: Expired positions aggregate with unclaimed value
-- scan_opportunities: Negative-APY opportunities filtered out (with parameter guidance)
-- get_pool_activity: "No activity found for address — Router operations are invisible"
+- spectra_scan_opportunities: Negative-APY opportunities filtered out (with parameter guidance)
+- spectra_get_pool_activity: "No activity found for address — Router operations are invisible"
 
 **Missing negative signals:**
-- `get_looping_strategy` with no Morpho market: returns default LTV warning but doesn't
-  suggest alternatives ("can't loop this PT — consider compare_yield for unleveraged
-  analysis, or scan_opportunities for loopable alternatives")
-- `get_morpho_markets` returning zero results for a chain: says "No markets found" but
+- `spectra_get_looping_strategy` with no Morpho market: returns default LTV warning but doesn't
+  suggest alternatives ("can't loop this PT — consider spectra_compare_yield for unleveraged
+  analysis, or spectra_scan_opportunities for loopable alternatives")
+- `morpho_list_markets` returning zero results for a chain: says "No markets found" but
   doesn't tell agent which chains DO have Morpho markets
-- `quote_trade` with high impact (>5%): shows the number but doesn't say "this impact
-  level is unusual — check pool liquidity via get_pool_volume, or try smaller size"
-- `scan_yt_arbitrage` with zero opportunities: says "no opportunities" but doesn't
+- `spectra_quote_trade` with high impact (>5%): shows the number but doesn't say "this impact
+  level is unusual — check pool liquidity via spectra_get_pool_volume, or try smaller size"
+- `spectra_scan_yt_arbitrage` with zero opportunities: says "no opportunities" but doesn't
   suggest that spreads are currently tight and to check back later, or try
-  scan_opportunities for PT-based yields instead
+  spectra_scan_opportunities for PT-based yields instead
 
-### Issue 5: The get_protocol_context Tool Is Underleveraged
+### Issue 5: The mv_get_protocol_context Tool Is Underleveraged
 
-`get_protocol_context` has 5 topics: pt_yt_mechanics, router_batching, position_analysis,
+`mv_get_protocol_context` has 5 topics: pt_yt_mechanics, router_batching, position_analysis,
 looping, networks. These are good but static. The tool could serve as the agent's
 NAVIGATION SYSTEM — not just mechanics reference, but workflow routing.
 
@@ -181,31 +181,31 @@ the agentic accessibility gain, and a dissolution condition.
 **What**: Add structured "next step" suggestions to tool outputs — not prescriptive
 commands, but mechanics-aware pointers.
 
-**Example (get_pt_details output, after the data block):**
+**Example (spectra_get_pt_details output, after the data block):**
 ```
 --- Next Steps ---
-• Compare fixed vs variable: compare_yield on this PT
-• Check leverage potential: get_looping_strategy (requires Morpho market for this PT)
-• See trading patterns: get_pool_activity on pool 0x...
-• Capital-aware ranking: scan_opportunities to see where this PT ranks at your size
+• Compare fixed vs variable: spectra_compare_yield on this PT
+• Check leverage potential: spectra_get_looping_strategy (requires Morpho market for this PT)
+• See trading patterns: spectra_get_pool_activity on pool 0x...
+• Capital-aware ranking: spectra_scan_opportunities to see where this PT ranks at your size
 ```
 
-**Example (get_portfolio output, when Morpho flag is true):**
+**Example (spectra_get_portfolio output, when Morpho flag is true):**
 ```
 --- Looping Opportunities ---
 • PT-ibUSDC (base, 0x1234...): Morpho market available
-  → get_looping_strategy(chain="base", pt_address="0x1234...")
+  → spectra_get_looping_strategy(chain="base", pt_address="0x1234...")
 • PT-wstETH (mainnet, 0x5678...): No Morpho market (can't loop)
-  → compare_yield(chain="mainnet", pt_address="0x5678...") for unleveraged analysis
+  → spectra_compare_yield(chain="mainnet", pt_address="0x5678...") for unleveraged analysis
 ```
 
-**Example (scan_opportunities output, per-opportunity):**
+**Example (spectra_scan_opportunities output, per-opportunity):**
 ```
 #1: PT-ibUSDC on Base — 28.5% net APY (3x looping)
   [...existing data...]
-  → Deep dive: get_looping_strategy(chain="base", pt_address="0x1234...")
-  → Quote entry: quote_trade(chain="base", pt_address="0x1234...", amount=..., side="buy")
-  → Preview impact: simulate_portfolio_after_trade(...)
+  → Deep dive: spectra_get_looping_strategy(chain="base", pt_address="0x1234...")
+  → Quote entry: spectra_quote_trade(chain="base", pt_address="0x1234...", amount=..., side="buy")
+  → Preview impact: spectra_simulate_trade(...)
 ```
 
 **Open Emergence alignment**: This is Layer 3 (structured output hints). It doesn't
@@ -225,9 +225,9 @@ longer needed.
 
 ---
 
-### Feature 2: Workflow Routing Topic in get_protocol_context
+### Feature 2: Workflow Routing Topic in mv_get_protocol_context
 
-**What**: Add a new topic `"workflow_routing"` to `get_protocol_context` that maps agent
+**What**: Add a new topic `"workflow_routing"` to `mv_get_protocol_context` that maps agent
 goals to tool sequences — not as prescriptions, but as common patterns.
 
 **Content:**
@@ -235,34 +235,34 @@ goals to tool sequences — not as prescriptions, but as common patterns.
 Workflow Patterns (how tools compose)
 
 Goal: "Find the best yield for my capital"
-  Start: scan_opportunities(capital_usd=YOUR_AMOUNT)
+  Start: spectra_scan_opportunities(capital_usd=YOUR_AMOUNT)
   This computes price impact at your size, effective APY, and Morpho looping.
-  Different from get_best_fixed_yields (raw APY, no capital awareness).
+  Different from spectra_get_best_fixed_yields (raw APY, no capital awareness).
   The two tools intentionally disagree on "best" — raw APY vs effective APY are
   different questions. Both are valid depending on your assumptions.
 
 Goal: "Analyze a wallet's strategy"
-  Start: get_portfolio(address) → see position shapes
-  Then: get_pool_activity(chain, pool, address) on pools where they're active
-  Then: get_address_activity(address) for cross-pool pattern
+  Start: spectra_get_portfolio(address) → see position shapes
+  Then: spectra_get_pool_activity(chain, pool, address) on pools where they're active
+  Then: spectra_get_address_activity(address) for cross-pool pattern
   Portfolio shows WHAT they hold; activity shows HOW they got there.
 
 Goal: "Evaluate a specific opportunity"
-  Start: get_pt_details(chain, pt) → base data
-  Then: compare_yield(chain, pt) → fixed vs variable spread
-  Then: get_looping_strategy(chain, pt) → if Morpho market exists
-  Then: quote_trade(chain, pt, amount, side) → entry cost
-  Then: simulate_portfolio_after_trade → preview result
+  Start: spectra_get_pt_details(chain, pt) → base data
+  Then: spectra_compare_yield(chain, pt) → fixed vs variable spread
+  Then: spectra_get_looping_strategy(chain, pt) → if Morpho market exists
+  Then: spectra_quote_trade(chain, pt, amount, side) → entry cost
+  Then: spectra_simulate_trade → preview result
 
 Goal: "Find YT mispricing"
-  Start: scan_yt_arbitrage(capital_usd) → spread-sorted opportunities
+  Start: spectra_scan_yt_arbitrage(capital_usd) → spread-sorted opportunities
   YT arbitrage is a different axis than PT yield optimization.
   Large spreads could mean: (a) real mispricing, (b) IBT APR about to drop,
   (c) liquidity event. The tool can't distinguish — that's agent judgment.
 
 Goal: "Optimize governance position"
-  Start: get_ve_info(ve_balance, capital) → boost scenarios
-  Then: scan_opportunities(capital, ve_spectra_balance) → boosted rankings
+  Start: spectra_get_ve_info(ve_balance, capital) → boost scenarios
+  Then: spectra_scan_opportunities(capital, ve_spectra_balance) → boosted rankings
   veSPECTRA boost only affects gauge-enabled LP positions, not PT or YT.
 ```
 
@@ -284,7 +284,7 @@ about what the absence means and what alternatives exist.
 
 **Examples:**
 
-`get_looping_strategy` when auto-detect finds no Morpho market:
+`spectra_get_looping_strategy` when auto-detect finds no Morpho market:
 ```
 ⚠ No Morpho market found for this PT on [chain].
 Using default parameters (may not reflect real market conditions).
@@ -294,13 +294,13 @@ What this means:
 - This could change if a curator creates a market for it
 
 Alternative strategies for this PT:
-- Unleveraged fixed yield: compare_yield to evaluate the raw spread
-- LP yield: check pool APY in get_pt_details (may include gauge emissions)
-- Find loopable alternatives: scan_opportunities(include_looping=true)
-- Check other chains: get_morpho_markets(pt_symbol="[SYMBOL]") across all chains
+- Unleveraged fixed yield: spectra_compare_yield to evaluate the raw spread
+- LP yield: check pool APY in spectra_get_pt_details (may include gauge emissions)
+- Find loopable alternatives: spectra_scan_opportunities(include_looping=true)
+- Check other chains: morpho_list_markets(pt_symbol="[SYMBOL]") across all chains
 ```
 
-`scan_yt_arbitrage` with zero results:
+`spectra_scan_yt_arbitrage` with zero results:
 ```
 No YT arbitrage opportunities found matching criteria.
 
@@ -309,17 +309,17 @@ What this means:
 - This is normal — spreads widen during rate volatility events
 
 Alternative approaches:
-- Check PT fixed yields instead: scan_opportunities(capital_usd=...)
+- Check PT fixed yields instead: spectra_scan_opportunities(capital_usd=...)
 - Widen search: lower min_spread or remove asset_filter
 - Monitor: spreads change as IBT rates move — check back after rate changes
 ```
 
-`get_morpho_markets` with zero results on a non-Morpho chain:
+`morpho_list_markets` with zero results on a non-Morpho chain:
 ```
 No Morpho PT markets found on [chain].
 
 Morpho PT markets are available on: mainnet, base, arbitrum, katana.
-Try: get_morpho_markets(chain="mainnet") or omit chain to search all.
+Try: morpho_list_markets(chain="mainnet") or omit chain to search all.
 ```
 
 **Open Emergence alignment**: This is the anti-fragmentation mechanism (Movement 2).
@@ -328,7 +328,7 @@ agent from stalling without prescribing a specific path. The agent still chooses
 it chooses from a menu, not a void.
 
 **Dissolution condition**: When agents develop robust fallback reasoning on their own
-(e.g., an agent that gets "no Morpho market" automatically tries scan_opportunities).
+(e.g., an agent that gets "no Morpho market" automatically tries spectra_scan_opportunities).
 If agents always follow the suggested alternatives without reasoning about them, the
 guidance has become prescriptive and should be relaxed.
 
@@ -354,13 +354,13 @@ top_n?: number            (default 5 per category)
 === Opportunity Discovery: $500K capital ===
 
 --- Fixed Yield (capital-aware, ranked by effective APY) ---
-[top 5 from scan_opportunities logic]
+[top 5 from spectra_scan_opportunities logic]
 
 --- YT Arbitrage (ranked by spread) ---
-[top 5 from scan_yt_arbitrage logic]
+[top 5 from spectra_scan_yt_arbitrage logic]
 
 --- Raw APY Headlines (for reference — NOT capital-adjusted) ---
-[top 5 from get_best_fixed_yields logic]
+[top 5 from spectra_get_best_fixed_yields logic]
 
 ⚠ These three views intentionally show different rankings.
   "Best" depends on: your capital size, your rate conviction, your risk tolerance.
@@ -388,8 +388,8 @@ they always pick the top result from one category?
 
 ### Feature 5: Portfolio Enrichment with Actionable Looping Analysis
 
-**What**: Add an optional `include_looping_analysis` parameter to `get_portfolio` that,
-when true, runs `get_looping_strategy` logic inline for each Morpho-eligible position.
+**What**: Add an optional `include_looping_analysis` parameter to `spectra_get_portfolio` that,
+when true, runs `spectra_get_looping_strategy` logic inline for each Morpho-eligible position.
 
 **Output enhancement**:
 ```
@@ -404,7 +404,7 @@ Position: PT-ibUSDC (Base)
   ├─ 3x: 15.9% net APY (margin: 28%)  ← sweet spot
   └─ 4x: 19.8% net APY (margin: 15%)
   Borrow rate: 3.8% (live from Morpho)
-  → Deep dive: get_looping_strategy(chain="base", pt_address="0x...")
+  → Deep dive: spectra_get_looping_strategy(chain="base", pt_address="0x...")
 ```
 
 For non-eligible positions:
@@ -412,7 +412,7 @@ For non-eligible positions:
 Position: PT-wstETH (Mainnet)
   [existing position data...]
   Morpho: No market available — can't loop this position
-  → Alternative: compare_yield to evaluate unleveraged spread
+  → Alternative: spectra_compare_yield to evaluate unleveraged spread
 ```
 
 **Open Emergence alignment**: This is Layer 3 enrichment — computing signals from data
@@ -421,9 +421,9 @@ the agent already has (portfolio positions + Morpho availability). It doesn't pr
 The existing `formatPortfolioHints` already surfaces Morpho availability; this extends
 that from a flag ("market exists") to a projection ("here's what it would yield").
 
-**Dissolution condition**: When `scan_opportunities` becomes the universal entry point
+**Dissolution condition**: When `spectra_scan_opportunities` becomes the universal entry point
 and agents rarely start from portfolio analysis. Also dissolves if agents always call
-`get_looping_strategy` separately after seeing portfolio flags — in that case, the
+`spectra_get_looping_strategy` separately after seeing portfolio flags — in that case, the
 inline analysis is redundant computation.
 
 ---
@@ -456,7 +456,7 @@ Pending Orders on Base:
   Net pending demand: +$37K buy-side pressure
 
   ⚠ Pending orders may execute or expire. This is intent data, not committed flow.
-  Use get_pool_activity to see what actually executed.
+  Use spectra_get_pool_activity to see what actually executed.
 ```
 
 **Open Emergence alignment**: This is a genuinely new data axis. It doesn't overlap with
@@ -476,7 +476,7 @@ orders as certainty (they should treat them as intent, not commitment).
 This provides APR data for specific tokens — a rate-tracking capability that would
 complete the YT arbitrage workflow.
 
-**Why this matters for agents**: `scan_yt_arbitrage` detects CURRENT spread between YT
+**Why this matters for agents**: `spectra_scan_yt_arbitrage` detects CURRENT spread between YT
 implied rate and IBT variable rate. But "current" is a snapshot. An agent can't tell if
 the spread is widening, narrowing, or mean-reverting. With vision/APR history, it could
 reason about rate trends.
@@ -498,16 +498,16 @@ Rate History for ibUSDC (Base):
   Trend: rising (+1.7% over 30d)
 
   ⚠ Past rates don't predict future rates. Use this to contextualize
-  scan_yt_arbitrage spreads — a spread that's widening may persist longer
+  spectra_scan_yt_arbitrage spreads — a spread that's widening may persist longer
   than one that's mean-reverting.
 ```
 
 **Open Emergence alignment**: This fills the temporal blind spot in YT arbitrage analysis.
-Currently, `scan_yt_arbitrage` sees "IBT APR: 8.2%, YT implied: 5.5%" and can't say
+Currently, `spectra_scan_yt_arbitrage` sees "IBT APR: 8.2%, YT implied: 5.5%" and can't say
 whether 8.2% is a spike or a new normal. Rate history transforms a point-in-time
 comparison into a trajectory analysis — without prescribing the conclusion.
 
-**Dissolution condition**: Listed in dissolution-conditions.md for `scan_yt_arbitrage`:
+**Dissolution condition**: Listed in dissolution-conditions.md for `spectra_scan_yt_arbitrage`:
 "When the tool can track IBT APR history (not just the current snapshot) and provide
 statistically grounded spread persistence estimates." This feature partially addresses
 that condition — it provides the raw history, though not yet statistical persistence
@@ -525,31 +525,31 @@ flow between them, and what workflows they compose into.
 ```json
 {
   "tools": {
-    "scan_opportunities": {
+    "spectra_scan_opportunities": {
       "produces": ["chain", "pt_address", "pool_address", "morpho_market_key"],
-      "feeds_into": ["get_looping_strategy", "quote_trade", "get_pt_details",
-                      "get_pool_activity", "get_morpho_rate"],
+      "feeds_into": ["spectra_get_looping_strategy", "spectra_quote_trade", "spectra_get_pt_details",
+                      "spectra_get_pool_activity", "morpho_get_rate"],
       "category": "discovery",
       "capital_aware": true
     },
-    "get_portfolio": {
+    "spectra_get_portfolio": {
       "produces": ["chain", "pt_address", "address"],
-      "feeds_into": ["get_looping_strategy", "get_pool_activity",
-                      "get_address_activity", "compare_yield"],
+      "feeds_into": ["spectra_get_looping_strategy", "spectra_get_pool_activity",
+                      "spectra_get_address_activity", "spectra_compare_yield"],
       "category": "analysis",
       "capital_aware": false
     }
   },
   "workflows": {
-    "yield_optimization": ["scan_opportunities", "get_looping_strategy",
-                           "quote_trade", "simulate_portfolio_after_trade"],
-    "wallet_investigation": ["get_portfolio", "get_pool_activity",
-                             "get_address_activity"],
-    "yt_arbitrage": ["scan_yt_arbitrage", "get_pt_details", "compare_yield"]
+    "yield_optimization": ["spectra_scan_opportunities", "spectra_get_looping_strategy",
+                           "spectra_quote_trade", "spectra_simulate_trade"],
+    "wallet_investigation": ["spectra_get_portfolio", "spectra_get_pool_activity",
+                             "spectra_get_address_activity"],
+    "yt_arbitrage": ["spectra_scan_yt_arbitrage", "spectra_get_pt_details", "spectra_compare_yield"]
   },
   "friction_points": {
     "raw_vs_effective_apy": {
-      "tools": ["get_best_fixed_yields", "scan_opportunities"],
+      "tools": ["spectra_get_best_fixed_yields", "spectra_scan_opportunities"],
       "description": "These tools intentionally disagree on rankings"
     }
   }
@@ -587,7 +587,7 @@ compositional fluency.
 A `batch(operations: [{tool, params}, ...])` that runs multiple tool calls in one
 request. **Rejected because**: MCP protocol already supports concurrent tool calls from
 the agent side. A server-side batch endpoint adds complexity without solving a real
-problem. If an agent needs to call `get_looping_strategy` on 5 PTs, it should make 5
+problem. If an agent needs to call `spectra_get_looping_strategy` on 5 PTs, it should make 5
 concurrent calls — the MCP transport handles this. Server-side batching is a performance
 optimization that doesn't improve agentic accessibility.
 
@@ -651,21 +651,21 @@ removes generative friction, or uses deterministic language where ambiguity exis
 Since this review was written, several changes have been implemented:
 
 - **Feature 2 (Workflow Routing)**: Implemented as the `workflow_routing` topic in
-  `get_protocol_context`. Maps agent goals to tool sequences.
+  `mv_get_protocol_context`. Maps agent goals to tool sequences.
 - **Feature 3 (Negative Signal Guidance)**: Partially addressed. The new
-  `get_onchain_activity` tool provides a concrete fallback path when
-  `get_pool_activity` returns empty results for historical data. The tool's
-  description cross-references `get_pool_activity` as the primary path, with
-  `get_onchain_activity` as the on-chain fallback. This directly resolves the
+  `spectra_get_onchain_activity` tool provides a concrete fallback path when
+  `spectra_get_pool_activity` returns empty results for historical data. The tool's
+  description cross-references `spectra_get_pool_activity` as the primary path, with
+  `spectra_get_onchain_activity` as the on-chain fallback. This directly resolves the
   "Dead End B" scenario where API data has aged out.
-- **Pendle Integration**: Two new tools (`list_pendle_markets`,
-  `compare_pendle_spectra`) add a cross-protocol dimension not covered in
+- **Pendle Integration**: Two new tools (`pendle_list_markets`,
+  `mv_compare_yield`) add a cross-protocol dimension not covered in
   the original review. This creates a new generative friction point: Spectra
   vs Pendle yields on the same underlying asset.
-- **Curator Dashboard**: `get_curator_dashboard` added — operational dashboard
+- **Curator Dashboard**: `spectra_get_curator_dashboard` added — operational dashboard
   for MetaVault curators with vault allocation disambiguation.
-- **Tool count**: 21 → 25 tools (added `list_pendle_markets`,
-  `compare_pendle_spectra`, `get_onchain_activity`, `get_curator_dashboard`).
+- **Tool count**: 21 → 25 tools (added `pendle_list_markets`,
+  `mv_compare_yield`, `spectra_get_onchain_activity`, `spectra_get_curator_dashboard`).
 - **Open Emergence Audit (2026-02-28)**: Full audit of emergence patterns
   confirmed the competing-branch design (formatCycleAnalysis, formatFlowAccounting)
   and observation coverage metrics (formatObservationCoverage) are working as designed.

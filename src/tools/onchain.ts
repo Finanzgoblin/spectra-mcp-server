@@ -1,5 +1,5 @@
 /**
- * Tool: get_onchain_activity
+ * Tool: spectra_get_onchain_activity
  *
  * Fetches historical pool activity directly from on-chain event logs via eth_getLogs.
  * Fills the gap when the Spectra API's activity endpoint returns empty or incomplete
@@ -314,9 +314,9 @@ const MAX_TOTAL_BLOCK_RANGE = 500_000;
 
 export function register(server: McpServer): void {
   server.tool(
-    "get_onchain_activity",
+    "spectra_get_onchain_activity",
     `Fetch historical on-chain activity directly from event logs via eth_getLogs.
-Use this when the API-based get_pool_activity returns empty or incomplete data
+Use this when the API-based spectra_get_pool_activity returns empty or incomplete data
 (the API only stores a limited time window of recent transactions).
 
 Supports TWO contract types:
@@ -345,7 +345,7 @@ Limitations:
 - Public RPCs may rate-limit large scans; use a premium RPC for deep history
 - Maximum ${MAX_TOTAL_BLOCK_RANGE.toLocaleString()} blocks per request (to prevent timeout)
 
-Use get_pool_activity for recent data with USD values and rich analysis.
+Use spectra_get_pool_activity for recent data with USD values and rich analysis.
 Use this tool for historical data beyond the API's retention window.`,
     {
       chain: CHAIN_ENUM.describe("The blockchain network"),
@@ -401,7 +401,7 @@ Use this tool for historical data beyond the API's retention window.`,
         .min(0)
         .max(36)
         .default(18)
-        .describe("Token decimals for formatting amounts (default 18). Use get_pt_details to find actual decimals — USDC=6, WBTC=8, most IBTs/PTs=18."),
+        .describe("Token decimals for formatting amounts (default 18). Use spectra_get_pt_details to find actual decimals — USDC=6, WBTC=8, most IBTs/PTs=18."),
     },
     async ({ chain, pool_address, pt_address, rpc_url, from_block, to_block, lookback_hours, address, type_filter, limit, token_decimals }) => {
       try {
@@ -426,7 +426,7 @@ Use this tool for historical data beyond the API's retention window.`,
           return {
             content: [{
               type: "text" as const,
-              text: `No RPC URL available for ${chain}. Provide an rpc_url parameter, or use get_pool_activity for API-based data.\n` +
+              text: `No RPC URL available for ${chain}. Provide an rpc_url parameter, or use spectra_get_pool_activity for API-based data.\n` +
                 `Chains with default RPCs: mainnet, base, arbitrum, optimism, avalanche, sonic, bsc, flare.`,
             }],
             isError: true,
@@ -589,7 +589,7 @@ Use this tool for historical data beyond the API's retention window.`,
             `  • Try a larger lookback_hours (current: ${lookback_hours}h, max: 720h)`,
             ...(pool_address && !pt_address ? [`  • Try pt_address instead — the activity may be vault operations (Mint/Redeem), not pool swaps`] : []),
             ...(pt_address && !pool_address ? [`  • Try pool_address instead — the activity may be pool swaps, not vault operations`] : []),
-            `  • Check get_pool_activity for API-based recent data`,
+            `  • Check spectra_get_pool_activity for API-based recent data`,
           ];
           return { content: [{ type: "text" as const, text: lines.join("\n") }] };
         }
@@ -685,22 +685,22 @@ Use this tool for historical data beyond the API's retention window.`,
         } else {
           lines.push(`  Note: Token amounts assume 18 decimals (default). If amounts look wrong (e.g. USDC shows trillions), pass token_decimals=6.`);
         }
-        lines.push(`  Use get_pt_details to confirm actual decimals and current prices.`);
+        lines.push(`  Use spectra_get_pt_details to confirm actual decimals and current prices.`);
 
         // Next steps
         lines.push(``);
         lines.push(`--- Next Steps ---`);
         if (pool_address) {
-          lines.push(`• Rich analysis (USD values, cycles): get_pool_activity(chain="${chain}", pool_address="${pool_address}")`);
+          lines.push(`• Rich analysis (USD values, cycles): spectra_get_pool_activity(chain="${chain}", pool_address="${pool_address}")`);
         }
         if (pt_address && !pool_address) {
-          lines.push(`• Pool swaps for this PT: get_onchain_activity(chain="${chain}", pool_address="CURVE_POOL_ADDRESS")`);
+          lines.push(`• Pool swaps for this PT: spectra_get_onchain_activity(chain="${chain}", pool_address="CURVE_POOL_ADDRESS")`);
         }
         if (pool_address && !pt_address) {
-          lines.push(`• Vault events (mint/redeem): get_onchain_activity(chain="${chain}", pt_address="PT_ADDRESS")`);
+          lines.push(`• Vault events (mint/redeem): spectra_get_onchain_activity(chain="${chain}", pt_address="PT_ADDRESS")`);
         }
-        lines.push(`• Current holdings: get_portfolio(address="ADDRESS")`);
-        lines.push(`• Pool rates & decimals: get_pt_details(chain="${chain}", pt_address="${pt_address || "PT_ADDRESS"}")`);
+        lines.push(`• Current holdings: spectra_get_portfolio(address="ADDRESS")`);
+        lines.push(`• Pool rates & decimals: spectra_get_pt_details(chain="${chain}", pt_address="${pt_address || "PT_ADDRESS"}")`);
 
         return { content: [{ type: "text" as const, text: lines.join("\n") }] };
       } catch (e: any) {

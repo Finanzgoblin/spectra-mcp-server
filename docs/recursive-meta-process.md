@@ -212,8 +212,8 @@ reveals which structures are load-bearing and which are habitual.
 Some contradictions in the system should be maintained deliberately. Not bugs, but
 productive tensions that prevent settling.
 
-The existing system has one: `get_best_fixed_yields` ranks by raw APY while
-`scan_opportunities` ranks by effective APY after capital impact. An agent that uses
+The existing system has one: `spectra_get_best_fixed_yields` ranks by raw APY while
+`spectra_scan_opportunities` ranks by effective APY after capital impact. An agent that uses
 both will encounter the contradiction: these tools disagree about what's "best."
 That disagreement is generative — it forces the agent to develop its own framework
 for what "best" means, rather than inheriting one.
@@ -245,7 +245,7 @@ More of these friction points should be cultivated, not resolved.
 
 ## Relationship to the Existing Architecture
 
-The Spectra MCP server already embodies much of this, probably more by instinct than
+The MetaVault MCP server already embodies much of this, probably more by instinct than
 by design:
 
 - **Teaching mechanics, not conclusions** = Movement 1 (structure) that doesn't

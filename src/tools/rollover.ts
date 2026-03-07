@@ -1,5 +1,5 @@
 /**
- * Tool: plan_rollover
+ * Tool: mv_plan_rollover
  *
  * Position Rollover Planner for MetaVault curators.
  * Identifies expiring positions, scans for rollover candidates (Spectra + Pendle),
@@ -101,7 +101,7 @@ function formatRolloverPlan(
 
 export function register(server: McpServer): void {
   server.tool(
-    "plan_rollover",
+    "mv_plan_rollover",
     `Plan position rollovers for expiring MetaVault positions.
 
 When a MetaVault position approaches maturity, the curator must:
@@ -116,14 +116,14 @@ Returns per expiring position: ranked list of rollover candidates with entry
 impact, yield gap (days of zero yield during transition), overlap window
 (if entering before old matures), and net effective APY after transition costs.
 
-Use get_curator_dashboard to see which positions are approaching maturity.
-Use scan_curator_opportunities for broader cross-protocol opportunity discovery.
-Use get_pool_capacity to assess depth at your capital size for specific candidates.`,
+Use spectra_get_curator_dashboard to see which positions are approaching maturity.
+Use mv_scan_curator_opportunities for broader cross-protocol opportunity discovery.
+Use spectra_get_pool_capacity to assess depth at your capital size for specific candidates.`,
     {
       chain: CHAIN_ENUM
         .describe("The blockchain network where the MetaVault lives."),
       metavault_address: EVM_ADDRESS
-        .describe("The MetaVault contract address. Use get_metavaults to discover addresses."),
+        .describe("The MetaVault contract address. Use spectra_list_metavaults to discover addresses."),
       pt_address: EVM_ADDRESS
         .optional()
         .describe("Specific position PT address to plan rollover for. If omitted, plans for all positions expiring within 30 days."),
@@ -166,7 +166,7 @@ Use get_pool_capacity to assess depth at your capital size for specific candidat
         );
 
         if (!mv) {
-          const text = `MetaVault ${metavault_address} not found on ${chain}.\nUse get_metavaults(chain="${chain}") to discover available MetaVaults.`;
+          const text = `MetaVault ${metavault_address} not found on ${chain}.\nUse spectra_list_metavaults(chain="${chain}") to discover available MetaVaults.`;
           return { content: [{ type: "text" as const, text }], isError: true };
         }
 
@@ -458,11 +458,11 @@ Use get_pool_capacity to assess depth at your capital size for specific candidat
         // ── Next Steps ────────────────────────────────────────────
         outputSections.push(``);
         outputSections.push(`--- Next Steps ---`);
-        outputSections.push(`  • Quote entry: quote_trade(chain, pt_address, amount, side="buy") for exact on-chain quote`);
-        outputSections.push(`  • Pool depth: get_pool_capacity(chain, pt_address) for impact curve at various sizes`);
-        outputSections.push(`  • IBT health: check_ibt_health(chain, pt_address) for underlying safety check`);
-        outputSections.push(`  • Looping detail: get_looping_strategy(chain, pt_address) for full leverage table`);
-        outputSections.push(`  • Dashboard: get_curator_dashboard(chain, metavault_address) for vault overview`);
+        outputSections.push(`  • Quote entry: spectra_quote_trade(chain, pt_address, amount, side="buy") for exact on-chain quote`);
+        outputSections.push(`  • Pool depth: spectra_get_pool_capacity(chain, pt_address) for impact curve at various sizes`);
+        outputSections.push(`  • IBT health: mv_check_ibt_health(chain, pt_address) for underlying safety check`);
+        outputSections.push(`  • Looping detail: spectra_get_looping_strategy(chain, pt_address) for full leverage table`);
+        outputSections.push(`  • Dashboard: spectra_get_curator_dashboard(chain, metavault_address) for vault overview`);
 
         const text = outputSections.join("\n");
         return { content: [{ type: "text" as const, text }] };

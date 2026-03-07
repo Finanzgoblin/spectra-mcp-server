@@ -1,4 +1,4 @@
-# Spectra MCP Server — Full Codebase Review
+# MetaVault MCP Server — Full Codebase Review
 
 **Date:** 2026-02-27
 **Scope:** All source files, tools, tests, and configuration
@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-This is a well-architected, well-documented MCP server with 37 tools across 10 blockchain networks. The codebase demonstrates strong domain knowledge and thoughtful agentic design (competing interpretations, observation coverage, cross-tool references). The test suite is multi-layered and meaningfully rigorous.
+This is a well-architected, well-documented MetaVault MCP server with 37 tools across 10 blockchain networks. The codebase demonstrates strong domain knowledge and thoughtful agentic design (competing interpretations, observation coverage, cross-tool references). The test suite is multi-layered and meaningfully rigorous.
 
 That said, the review surfaced **6 likely bugs**, **2 security concerns**, **8 code quality issues**, and **several test coverage gaps**. The most impactful are the hardcoded 18-decimal assumption in onchain.ts (wrong values for USDC), floating-point precision loss in BigInt conversions, and the response body double-consumption bug in api.ts.
 
@@ -19,7 +19,7 @@ That said, the review surfaced **6 likely bugs**, **2 security concerns**, **8 c
 ### ~~1. Hardcoded 18 decimals for all on-chain token amounts~~ (FIXED 2026-02-28)
 ~~**File:** `src/tools/onchain.ts:642`~~
 ~~All token amounts are formatted assuming 18 decimals.~~
-- Fixed: Added `token_decimals` parameter (default 18) so agents can pass correct decimals from `get_pt_details`. Dynamic note in output warns when using default 18 decimals.
+- Fixed: Added `token_decimals` parameter (default 18) so agents can pass correct decimals from `spectra_get_pt_details`. Dynamic note in output warns when using default 18 decimals.
 
 ### ~~2. Floating-point precision loss in BigInt conversion~~ (FIXED 2026-02-28)
 ~~**Files:** `src/tools/quote.ts:41`, `src/tools/simulate.ts:112`~~
@@ -40,8 +40,8 @@ That said, the review surfaced **6 likely bugs**, **2 security concerns**, **8 c
 **File:** `src/tools/pool.ts:168-169`
 
 ```ts
-quote_trade(chain="${chain}", pt_address="${pool_address}", ...)
-get_pt_details(chain="${chain}", pt_address="${pool_address}")
+spectra_quote_trade(chain="${chain}", pt_address="${pool_address}", ...)
+spectra_get_pt_details(chain="${chain}", pt_address="${pool_address}")
 ```
 
 If the user passed a pool address, these hints give the agent an incorrect `pt_address`.
@@ -99,7 +99,7 @@ The same BigInt → float pattern appears in 4+ places: `formatBalance`, `parseW
 ~~Some tools return `isError: true` on "not found" conditions, others return successful responses with error text.~~
 - Fixed: All resource-not-found returns now use `isError: true` consistently across `pt.ts`, `quote.ts`, `simulate.ts`, `morpho.ts`, and `looping.ts`. Empty scan results (valid responses) remain without `isError`.
 
-### 6. `list_pools` sort description says "descending" but maturity sorts ascending
+### 6. `spectra_list_pools` sort description says "descending" but maturity sorts ascending
 **File:** `src/tools/pt.ts:113,159` — Tool description says "Sort results by this metric (descending)" but maturity sort is ascending (nearest first).
 
 ### 7. Hardcoded server version
@@ -107,21 +107,21 @@ The same BigInt → float pattern appears in 4+ places: `formatBalance`, `parseW
 
 ### 8. ~~Stale CLAUDE.md documentation~~ (FIXED 2026-02-28)
 - ~~References `src/tools/trade.ts` which doesn't exist (split into `quote.ts` and `simulate.ts`)~~
-- ~~References `src/tools/yield.ts` which doesn't exist (`compare_yield` is in `pt.ts`, `scan_opportunities` in `strategy.ts`, `scan_yt_arbitrage` in `yt_arb.ts`)~~
+- ~~References `src/tools/yield.ts` which doesn't exist (`spectra_compare_yield` is in `pt.ts`, `spectra_scan_opportunities` in `strategy.ts`, `spectra_scan_yt_arbitrage` in `yt_arb.ts`)~~
 - Fixed in emergence audit: CLAUDE.md now maps all 15 tool files correctly, including `context.ts`, `ve.ts`, `strategy.ts`, `yt_arb.ts`, `looping.ts`, `quote.ts`, `simulate.ts`
 
 ---
 
 ## Performance Concerns
 
-### 1. N+1 API query pattern in `get_address_activity`
+### 1. N+1 API query pattern in `spectra_get_address_activity`
 **File:** `src/tools/pool.ts:798-844` — For each discovered pool, activity is fetched individually. A wallet active across 50 pools on 10 chains generates 500+ sequential API calls with no timeout budget.
 
 ### 2. Sequential chunk fetching in `fetchLogs`
 **File:** `src/api.ts:988-1026` — Large block ranges are fetched one chunk at a time. A small concurrency factor (2-3 parallel chunks) would improve throughput without hitting rate limits.
 
 ### 3. Fetches all metavaults to find one
-**Files:** `src/tools/metavault.ts:458` — Both `get_curator_dashboard` and `model_metavault_strategy` fetch ALL metavaults on the chain, then filter client-side. Mitigated by the 30s cache.
+**Files:** `src/tools/metavault.ts:458` — Both `spectra_get_curator_dashboard` and `spectra_model_metavault` fetch ALL metavaults on the chain, then filter client-side. Mitigated by the 30s cache.
 
 ### 4. No rate limiting for multi-chain scans
 **Files:** `portfolio.ts`, `pool.ts` — Parallel requests across all 10 chains with no rate limiting. Each chain request triggers multiple sub-requests (pools + portfolio + Merkl + Morpho).
@@ -140,8 +140,8 @@ The same BigInt → float pattern appears in 4+ places: `formatBalance`, `parseW
 
 | Gap | Severity |
 |-----|----------|
-| `list_pendle_markets` has zero functional testing anywhere | Medium |
-| `get_protocol_context` has no integration test in main suite | Low |
+| `pendle_list_markets` has zero functional testing anywhere | Medium |
+| `mv_get_protocol_context` has no integration test in main suite | Low |
 | ~30 formatting/rendering functions in `formatters.ts` have no unit tests | Low-Medium |
 | `resolveRpcUrl` in config.ts is untested | Low |
 | No mock layer — all integration tests require live network | Medium |
