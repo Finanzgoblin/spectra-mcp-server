@@ -24,6 +24,18 @@
 - `src/tools/quote.ts` — `spectra_quote_trade` (on-chain Curve get_dy() with math fallback), exports `tryOnChainQuote` shared by simulate.ts
 - `src/tools/simulate.ts` — `spectra_simulate_trade` (imports tryOnChainQuote from quote.ts)
 - `src/tools/pendle.ts` — `pendle_list_markets`, `mv_compare_yield` (maturity-aware matching)
+- `src/tools/pendle_details.ts` — `pendle_get_market_details` (single Pendle market deep-dive)
+- `src/tools/pendle_yields.ts` — `pendle_get_best_fixed_yields` (multi-chain best fixed rates)
+- `src/tools/pendle_portfolio.ts` — `pendle_get_portfolio` (wallet positions across Pendle chains)
+- `src/tools/pendle_scanner.ts` — `pendle_scan_opportunities` (capital-aware Pendle scanner with Morpho looping)
+- `src/tools/pendle_capacity.ts` — `pendle_get_market_capacity` (multi-size impact curve using logit AMM model)
+- `src/tools/pendle_yield_curve.ts` — `pendle_get_yield_curve` (term structure for a given underlying across Pendle chains)
+- `src/tools/pendle_expiry.ts` — `pendle_list_expiring_markets` (scan for markets approaching maturity, urgency grouping)
+- `src/tools/pendle_yt_arb.ts` — `pendle_scan_yt_arbitrage` (YT mispricing scanner, direct AMM execution)
+- `src/tools/pendle_stats.ts` — `pendle_get_protocol_stats` (aggregate TVL, market count, volume across all chains)
+- `src/tools/pendle_looping.ts` — `pendle_get_looping_strategy` (leveraged PT + Morpho looping, borrow rate risk analysis)
+- `src/tools/pendle_quote.ts` — `pendle_quote_trade` (PT trade quote with logit AMM impact estimation)
+- `src/tools/pendle_simulate.ts` — `pendle_simulate_trade` (portfolio impact simulation for PT trades)
 - `src/tools/curator_scan.ts` — `mv_scan_curator_opportunities` (cross-protocol Spectra + Pendle capital-aware scanner)
 - `src/tools/metavault.ts` — `spectra_list_metavaults`, `spectra_model_metavault`, `spectra_get_curator_dashboard`
 - `src/tools/protocol.ts` — `spectra_get_protocol_stats`, `spectra_list_chains`
