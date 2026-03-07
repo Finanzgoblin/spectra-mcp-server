@@ -1,13 +1,13 @@
 # MetaVault Curator-as-a-Service: Strategy & Tooling Review
 
 **Date:** 2026-03-06
-**Scope:** Evaluating the Spectra MCP toolset for running a professional MetaVault curation business
+**Scope:** Evaluating the MetaVault MCP toolset for running a professional MetaVault curation business
 
 ---
 
 ## Executive Summary
 
-The Spectra MCP server provides a strong **deal origination and modeling** pipeline for MetaVault curators. The three curator-specific tools (`get_metavaults`, `model_metavault_strategy`, `get_curator_dashboard`) form a coherent workflow from discovery → modeling → monitoring. Combined with `scan_curator_opportunities` for cross-protocol sourcing and `get_looping_strategy` for leverage analysis, the pre-deployment toolkit is excellent.
+The MetaVault MCP server provides a strong **deal origination and modeling** pipeline for MetaVault curators. The three curator-specific tools (`spectra_list_metavaults`, `spectra_model_metavault`, `spectra_get_curator_dashboard`) form a coherent workflow from discovery → modeling → monitoring. Combined with `mv_scan_curator_opportunities` for cross-protocol sourcing and `spectra_get_looping_strategy` for leverage analysis, the pre-deployment toolkit is excellent.
 
 **The critical gap is post-deployment risk management.** The tools help you decide *where* to deploy but don't adequately help you *stay safe* after deploying. For a curator-as-a-service business where you manage other people's capital, this is the difference between a good run and a catastrophic loss.
 
@@ -15,7 +15,7 @@ The Spectra MCP server provides a strong **deal origination and modeling** pipel
 
 ## What the Toolkit Gets Right for Curators
 
-### 1. The Dual Morpho Market Flywheel Model (`model_metavault_strategy`)
+### 1. The Dual Morpho Market Flywheel Model (`spectra_model_metavault`)
 The documentation and modeling of the dual-market flywheel (Market A for external PT loopers, Market B for curator MV share looping) is genuinely novel. The tool correctly models:
 - Blended Spectra + Pendle allocation with `pendle_allocation_pct`
 - Curator fee economics separated from depositor yield
@@ -24,7 +24,7 @@ The documentation and modeling of the dual-market flywheel (Market A for externa
 
 **Strength:** This is your sales tool. When pitching depositors, you can show exactly how the flywheel creates yield that raw PT looping can't match.
 
-### 2. Cross-Protocol Sourcing (`scan_curator_opportunities`)
+### 2. Cross-Protocol Sourcing (`mv_scan_curator_opportunities`)
 The unified Spectra + Pendle scanner with maturity matching is exactly what a curator needs. Key features:
 - Capital-aware impact using protocol-appropriate models (constant-product for Spectra, logit AMM for Pendle)
 - Hypothetical Morpho looping for PTs *without* existing markets (market creation signal)
@@ -34,7 +34,7 @@ The unified Spectra + Pendle scanner with maturity matching is exactly what a cu
 
 **Strength:** This replaces hours of manual spreadsheet work across two protocols.
 
-### 3. Operational Dashboard (`get_curator_dashboard`)
+### 3. Operational Dashboard (`spectra_get_curator_dashboard`)
 The dashboard auto-generates the right action items:
 - Position maturity countdown with urgency tiers (7d/14d/30d)
 - Idle capital detection (>20% threshold)
@@ -46,11 +46,11 @@ The dashboard auto-generates the right action items:
 **Strength:** This is your daily operations screen. The action items alone justify the tool.
 
 ### 4. Supporting Tools That Complete the Workflow
-- `check_ibt_health` — Pre-deployment due diligence on underlying vaults (conversion rate divergence, APR composition, pool balance)
-- `get_pool_capacity` — Quote ladder to find sweet spot before deploying capital
-- `get_morpho_rate` + `get_morpho_history` — Borrow rate monitoring and trend analysis
-- `get_morpho_market_suppliers` — Understand who supplies lending liquidity (concentration risk)
-- `get_ve_info` — Compute exact boost economics for veSPECTRA allocation decisions
+- `mv_check_ibt_health` — Pre-deployment due diligence on underlying vaults (conversion rate divergence, APR composition, pool balance)
+- `spectra_get_pool_capacity` — Quote ladder to find sweet spot before deploying capital
+- `morpho_get_rate` + `morpho_get_history` — Borrow rate monitoring and trend analysis
+- `morpho_get_market_suppliers` — Understand who supplies lending liquidity (concentration risk)
+- `spectra_get_ve_info` — Compute exact boost economics for veSPECTRA allocation decisions
 
 ---
 
@@ -58,7 +58,7 @@ The dashboard auto-generates the right action items:
 
 ### Gap 1: No Liquidation Distance Monitoring — ✅ SHIPPED
 
-> **Implemented as:** `curator_risk_monitor` in `src/tools/risk_monitor.ts`
+> **Implemented as:** `morpho_monitor_risk` in `src/tools/risk_monitor.ts`
 
 **Impact: Catastrophic** — This is the #1 risk for a leveraged curator.
 
@@ -67,17 +67,17 @@ The tools show `effectiveMargin` at entry time but never revisit it. A curator r
 - How far PT price can drop before liquidation triggers
 - Early warning when margin deteriorates (e.g., borrow rate spikes eating into buffer)
 
-`get_morpho_positions` exists and shows health factor, but there's no **alerting logic** or **distance-to-liquidation calculation**. The curator dashboard doesn't surface Morpho position health at all.
+`morpho_get_positions` exists and shows health factor, but there's no **alerting logic** or **distance-to-liquidation calculation**. The curator dashboard doesn't surface Morpho position health at all.
 
-**Recommendation:** Add a `curator_risk_monitor` tool or extend `get_curator_dashboard` to:
-1. Fetch the curator's Morpho positions via `get_morpho_positions`
+**Recommendation:** Add a `morpho_monitor_risk` tool or extend `spectra_get_curator_dashboard` to:
+1. Fetch the curator's Morpho positions via `morpho_get_positions`
 2. Compute liquidation price for each position (PT price at which health factor = 1.0)
 3. Show current distance-to-liquidation as a percentage
 4. Flag positions where borrow rate has moved significantly since entry
 
 ### Gap 2: No Withdrawal Liquidity Stress Testing — ✅ SHIPPED
 
-> **Implemented as:** `stress_test_vault` in `src/tools/stress_test.ts`
+> **Implemented as:** `spectra_stress_test_vault` in `src/tools/stress_test.ts`
 
 **Impact: High** — ERC-7540 vaults have epoch-based withdrawals.
 
@@ -88,26 +88,26 @@ The dashboard shows deposit/withdrawal flows but doesn't model:
 
 For a curator-as-a-service, a redemption queue failure is reputational death.
 
-**Recommendation:** Add a `stress_test_redemptions` parameter to `get_curator_dashboard` or a standalone tool that:
+**Recommendation:** Add a `stress_test_redemptions` parameter to `spectra_get_curator_dashboard` or a standalone tool that:
 1. Takes a redemption percentage (e.g., 30%)
-2. Models the vault's ability to meet it from: idle capital → naturally maturing positions → LP removal (with impact from `get_pool_capacity`)
+2. Models the vault's ability to meet it from: idle capital → naturally maturing positions → LP removal (with impact from `spectra_get_pool_capacity`)
 3. Outputs the expected loss to remaining depositors
 
 ### Gap 3: No Position Rollover Planning — ✅ SHIPPED
 
-> **Implemented as:** `plan_rollover` in `src/tools/rollover.ts`
+> **Implemented as:** `mv_plan_rollover` in `src/tools/rollover.ts`
 
 **Impact: High** — Rollover is the curator's primary recurring operational task.
 
 The dashboard warns when positions approach maturity but doesn't help plan the rollover:
-- Which new pool should this capital roll into? (needs `scan_curator_opportunities` integration)
+- Which new pool should this capital roll into? (needs `mv_scan_curator_opportunities` integration)
 - What's the expected gap period (maturity → new position entry)?
 - What's the entry cost for the new position at the current vault allocation size?
 - Is there a maturity overlap opportunity (enter new position before old one matures)?
 
-**Recommendation:** Add a `plan_rollover` tool that:
+**Recommendation:** Add a `mv_plan_rollover` tool that:
 1. Takes the expiring position's details and capital amount
-2. Runs `scan_curator_opportunities` filtered to the same underlying
+2. Runs `mv_scan_curator_opportunities` filtered to the same underlying
 3. Computes entry impact for the vault's allocation size
 4. Shows the expected yield gap during transition
 5. Flags maturity overlap windows
@@ -116,28 +116,28 @@ The dashboard warns when positions approach maturity but doesn't help plan the r
 
 **Impact: Medium-High** — Variable borrow rates are the silent killer of looping strategies.
 
-`get_looping_strategy` shows borrow rate sensitivity at +1/+2/+3%, and `get_morpho_history` shows historical trends. But neither answers: **"Given the historical volatility of this market's borrow rate, what's the probability my loop goes underwater before maturity?"**
+`spectra_get_looping_strategy` shows borrow rate sensitivity at +1/+2/+3%, and `morpho_get_history` shows historical trends. But neither answers: **"Given the historical volatility of this market's borrow rate, what's the probability my loop goes underwater before maturity?"**
 
 The curator's leverage amplifies this: at 4x leverage on MV shares, a 2% borrow rate increase wipes out ~6% of gross yield.
 
-**Recommendation:** Extend `get_morpho_history` or add analysis to `model_metavault_strategy` that:
-1. Computes historical borrow rate volatility (std dev from `get_morpho_history` data)
+**Recommendation:** Extend `morpho_get_history` or add analysis to `spectra_model_metavault` that:
+1. Computes historical borrow rate volatility (std dev from `morpho_get_history` data)
 2. Shows probability of break-even borrow rate being hit within the maturity period (assuming mean-reversion or random walk)
 3. Recommends a "safe" loop count that survives the 95th percentile rate scenario
 
 ### Gap 5: No Multi-Position Portfolio View for Curators — ✅ SHIPPED
 
-> **Implemented as:** `curator_portfolio` in `src/tools/curator_portfolio.ts`
+> **Implemented as:** `mv_get_curator_portfolio` in `src/tools/curator_portfolio.ts`
 
 **Impact: Medium** — A real curator manages multiple MetaVaults or a single vault with many positions.
 
-`get_curator_dashboard` shows one vault at a time. `get_morpho_positions` shows all Morpho positions but doesn't link them back to MetaVault context. There's no:
+`spectra_get_curator_dashboard` shows one vault at a time. `morpho_get_positions` shows all Morpho positions but doesn't link them back to MetaVault context. There's no:
 - Aggregate view across all managed vaults
 - Total AUM, total fee revenue, blended APY
 - Cross-vault concentration analysis (e.g., 80% in one underlying)
 - Cross-chain capital efficiency view
 
-**Recommendation:** Add a `curator_portfolio` tool that:
+**Recommendation:** Add a `mv_get_curator_portfolio` tool that:
 1. Takes a list of MetaVault addresses (or a curator address to discover them)
 2. Aggregates dashboard data across all vaults
 3. Shows concentration by underlying, chain, and protocol
@@ -149,7 +149,7 @@ The curator's leverage amplifies this: at 4x leverage on MV shares, a 2% borrow 
 
 None of the looping tools account for gas costs. On Ethereum mainnet at high gas prices, a 5-loop strategy requires ~10 transactions (5× deposit + 5× borrow), and gas can consume a meaningful portion of yield on smaller capital sizes.
 
-**Recommendation:** Add a `gas_cost_estimate` field to `get_looping_strategy` and `model_metavault_strategy` that:
+**Recommendation:** Add a `gas_cost_estimate` field to `spectra_get_looping_strategy` and `spectra_model_metavault` that:
 1. Estimates gas per loop iteration (deposit + borrow ≈ 300K-500K gas)
 2. Fetches current gas price via RPC
 3. Shows total gas cost as % of expected annual yield
@@ -159,9 +159,9 @@ None of the looping tools account for gas costs. On Ethereum mainnet at high gas
 
 **Impact: Medium** — A curator-as-a-service needs a track record.
 
-There's no way to show: "My vault has delivered X% APY over Y months with a max drawdown of Z%." The epoch data in `get_curator_dashboard` is the raw material but isn't processed into performance metrics.
+There's no way to show: "My vault has delivered X% APY over Y months with a max drawdown of Z%." The epoch data in `spectra_get_curator_dashboard` is the raw material but isn't processed into performance metrics.
 
-**Recommendation:** Add performance metrics to `get_curator_dashboard`:
+**Recommendation:** Add performance metrics to `spectra_get_curator_dashboard`:
 1. Time-weighted return (from share price history in epochs)
 2. Max drawdown (from share price series)
 3. Sharpe-like ratio (return / volatility of epoch returns)
@@ -175,31 +175,31 @@ There's no way to show: "My vault has delivered X% APY over Y months with a max 
 
 The tools exist but the *sequence* for a curator-as-a-service isn't documented. The ideal workflow:
 
-1. **Source** — `scan_curator_opportunities` → find best risk-adjusted pools
-2. **Diligence** — `check_ibt_health` → verify underlying vault safety
-3. **Size** — `get_pool_capacity` → determine max deployment per pool
-4. **Model** — `model_metavault_strategy` → project economics with leverage
-5. **Compare** — `get_looping_strategy` → benchmark vs raw PT looping
+1. **Source** — `mv_scan_curator_opportunities` → find best risk-adjusted pools
+2. **Diligence** — `mv_check_ibt_health` → verify underlying vault safety
+3. **Size** — `spectra_get_pool_capacity` → determine max deployment per pool
+4. **Model** — `spectra_model_metavault` → project economics with leverage
+5. **Compare** — `spectra_get_looping_strategy` → benchmark vs raw PT looping
 6. **Deploy** — (manual, not tooled)
-7. **Monitor** — `get_curator_dashboard` → daily ops + action items
-8. **Rebalance** — `get_morpho_rate` + `get_morpho_history` → track borrow costs
-9. **Rollover** — `plan_rollover` → find candidates, compare entry impact, yield gap analysis ✅
-10. **Risk** — `curator_risk_monitor` → liquidation distance, borrow rate drift, alert levels ✅
-11. **Stress** — `stress_test_vault` → withdrawal liquidity waterfall, market stress simulation ✅
-12. **Aggregate** — `curator_portfolio` → multi-vault AUM, blended APY, concentration ✅
+7. **Monitor** — `spectra_get_curator_dashboard` → daily ops + action items
+8. **Rebalance** — `morpho_get_rate` + `morpho_get_history` → track borrow costs
+9. **Rollover** — `mv_plan_rollover` → find candidates, compare entry impact, yield gap analysis ✅
+10. **Risk** — `morpho_monitor_risk` → liquidation distance, borrow rate drift, alert levels ✅
+11. **Stress** — `spectra_stress_test_vault` → withdrawal liquidity waterfall, market stress simulation ✅
+12. **Aggregate** — `mv_get_curator_portfolio` → multi-vault AUM, blended APY, concentration ✅
 13. **Report** — [GAP] — no historical performance reporting for depositors
 
 ### Pendle Integration Is Half-Complete
 
-`scan_curator_opportunities` sources Pendle markets beautifully, but:
+`mv_scan_curator_opportunities` sources Pendle markets beautifully, but:
 - Pendle looping is marked "future phase" — curators who allocate to Pendle can't model leverage
 - Pendle LP exit mechanics differ from Spectra (no StableSwap pool) — capacity analysis doesn't apply
-- `check_ibt_health` direct mode works for Pendle SY tokens, which is good
+- `mv_check_ibt_health` direct mode works for Pendle SY tokens, which is good
 
 ### MetaVault Share Looping (Market B) Isn't Directly Quotable
 
-`model_metavault_strategy` models the economics of MV share looping, but there's no way to:
-- Check if a Morpho market for MV shares actually exists (would need `get_morpho_markets` with MV share address)
+`spectra_model_metavault` models the economics of MV share looping, but there's no way to:
+- Check if a Morpho market for MV shares actually exists (would need `morpho_list_markets` with MV share address)
 - Get a live borrow rate for MV share collateral
 - Assess MV share liquidity for liquidation scenarios
 
@@ -237,9 +237,9 @@ The tool assumes the curator will create this market, but once live, monitoring 
 
 **For deal origination and pre-deployment modeling: 9/10.** The tools are comprehensive, capital-aware, and cross-protocol. A curator can go from "I have $X to deploy" to "here's my optimal allocation with projected economics" in under 5 minutes.
 
-**For post-deployment risk management: 8/10.** *(Updated from 4/10)* Liquidation monitoring (`curator_risk_monitor`), withdrawal stress testing (`stress_test_vault`), and rollover planning (`plan_rollover`) are now shipped. Remaining gaps: borrow rate path modeling (probabilistic risk), historical performance tracking.
+**For post-deployment risk management: 8/10.** *(Updated from 4/10)* Liquidation monitoring (`morpho_monitor_risk`), withdrawal stress testing (`spectra_stress_test_vault`), and rollover planning (`mv_plan_rollover`) are now shipped. Remaining gaps: borrow rate path modeling (probabilistic risk), historical performance tracking.
 
-**For running it as a business: 8/10.** *(Updated from 6/10)* Multi-vault portfolio aggregation (`curator_portfolio`) is shipped. Remaining gap: historical performance reporting for depositor acquisition.
+**For running it as a business: 8/10.** *(Updated from 6/10)* Multi-vault portfolio aggregation (`mv_get_curator_portfolio`) is shipped. Remaining gap: historical performance reporting for depositor acquisition.
 
 All P0 gaps are resolved. The curator-as-a-service tooling is now ready for scaling external deposits.
 

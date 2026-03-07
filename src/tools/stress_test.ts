@@ -1,5 +1,5 @@
 /**
- * Tool: stress_test_vault
+ * Tool: spectra_stress_test_vault
  *
  * Withdrawal stress test for MetaVaults. Simulates a large redemption
  * and builds a liquidity waterfall showing how the vault would generate
@@ -18,7 +18,7 @@ import { formatUsd, formatPct, daysToMaturity, estimatePriceImpact } from "../fo
 
 export function register(server: McpServer): void {
   server.tool(
-    "stress_test_vault",
+    "spectra_stress_test_vault",
     `Simulate a large redemption on a MetaVault to assess withdrawal liquidity.
 
 Builds a liquidity waterfall — sources of cash ordered by cost:
@@ -33,14 +33,14 @@ redemption size (< 1% loss to remaining holders).
 ERC-7540 constraint: once redemption is requested, the vault MUST fulfill it.
 There is no cancelRequest. This makes withdrawal liquidity critical.
 
-Use get_curator_dashboard for operational overview before stress testing.
-Use get_pool_capacity to assess individual pool depth.
-Use curator_risk_monitor for Morpho position risk.`,
+Use spectra_get_curator_dashboard for operational overview before stress testing.
+Use spectra_get_pool_capacity to assess individual pool depth.
+Use morpho_monitor_risk for Morpho position risk.`,
     {
       chain: CHAIN_ENUM
         .describe("The blockchain network where the MetaVault lives."),
       metavault_address: EVM_ADDRESS
-        .describe("The MetaVault contract address. Use get_metavaults to discover addresses."),
+        .describe("The MetaVault contract address. Use spectra_list_metavaults to discover addresses."),
       redemption_pct: z
         .number()
         .min(1)
@@ -61,7 +61,7 @@ Use curator_risk_monitor for Morpho position risk.`,
         );
 
         if (!mv) {
-          const text = `MetaVault ${metavault_address} not found on ${chain}.\nUse get_metavaults(chain="${chain}") to discover available MetaVaults.`;
+          const text = `MetaVault ${metavault_address} not found on ${chain}.\nUse spectra_list_metavaults(chain="${chain}") to discover available MetaVaults.`;
           return { content: [{ type: "text" as const, text }], isError: true };
         }
 
@@ -265,7 +265,7 @@ Use curator_risk_monitor for Morpho position risk.`,
         const text = formatStressTestResult(result);
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
-        const text = `stress_test_vault error: ${e.message || e}`;
+        const text = `spectra_stress_test_vault error: ${e.message || e}`;
         return { content: [{ type: "text" as const, text }], isError: true };
       }
     },
@@ -328,11 +328,11 @@ function formatStressTestResult(r: StressTestResult): string {
 
   lines.push(``);
   lines.push(`--- Next Steps ---`);
-  lines.push(`  • Pool depth: get_pool_capacity(chain, pt_address) — detailed impact curve per pool`);
-  lines.push(`  • Risk monitor: curator_risk_monitor(address) — check Morpho position health`);
-  lines.push(`  • Dashboard: get_curator_dashboard(chain, metavault_address) — operational overview`);
+  lines.push(`  • Pool depth: spectra_get_pool_capacity(chain, pt_address) — detailed impact curve per pool`);
+  lines.push(`  • Risk monitor: morpho_monitor_risk(address) — check Morpho position health`);
+  lines.push(`  • Dashboard: spectra_get_curator_dashboard(chain, metavault_address) — operational overview`);
   if (!r.marketStress) {
-    lines.push(`  • Stress mode: stress_test_vault(..., market_stress=true) — test with 2x impact`);
+    lines.push(`  • Stress mode: spectra_stress_test_vault(..., market_stress=true) — test with 2x impact`);
   }
 
   return lines.join("\n");

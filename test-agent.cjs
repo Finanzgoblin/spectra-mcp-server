@@ -210,7 +210,7 @@ async function testProtocolContextCompleteness(client) {
   console.log("\n--- Protocol Context: completeness & agent-guidance quality ---");
 
   // Full context (all topics)
-  const { text: full } = await client.callTool("get_protocol_context");
+  const { text: full } = await client.callTool("mv_get_protocol_context");
 
   const expectedTopics = [
     "PT/YT Mechanics",
@@ -237,14 +237,14 @@ async function testProtocolContextCompleteness(client) {
     "missing flash-redeem explanation"
   );
   assert(
-    full.includes("cross-reference") || full.includes("get_portfolio"),
+    full.includes("cross-reference") || full.includes("spectra_get_portfolio"),
     "context recommends cross-referencing with portfolio",
     "missing cross-reference guidance"
   );
 
   // Workflow routing must mention key tool pairings
   assert(
-    full.includes("scan_opportunities") && full.includes("get_best_fixed_yields"),
+    full.includes("spectra_scan_opportunities") && full.includes("spectra_get_best_fixed_yields"),
     "workflow routing mentions both ranking tools",
     "missing tool pairing"
   );
@@ -255,7 +255,7 @@ async function testProtocolContextCompleteness(client) {
   );
 
   // Single-topic query
-  const { text: routing } = await client.callTool("get_protocol_context", {
+  const { text: routing } = await client.callTool("mv_get_protocol_context", {
     topic: "router_batching",
   });
   assert(
@@ -279,7 +279,7 @@ async function testAnomalyDetectionRankingDivergence(client) {
   console.log("\n--- Anomaly Detection: raw vs capital-aware ranking divergence ---");
 
   // Step 1: Get raw APY rankings
-  const { text: raw } = await client.callTool("get_best_fixed_yields", {
+  const { text: raw } = await client.callTool("spectra_get_best_fixed_yields", {
     top_n: 10,
     min_tvl_usd: 1000,
     min_liquidity_usd: 1000,
@@ -288,11 +288,11 @@ async function testAnomalyDetectionRankingDivergence(client) {
   assert(
     raw.includes("Fixed Yield Opportunities") || raw.includes("#1"),
     "raw rankings returned results",
-    "no results from get_best_fixed_yields"
+    "no results from spectra_get_best_fixed_yields"
   );
 
   // Step 2: Get capital-aware rankings
-  const { text: aware } = await client.callTool("scan_opportunities", {
+  const { text: aware } = await client.callTool("spectra_scan_opportunities", {
     capital_usd: 50000,
     top_n: 10,
     min_tvl_usd: 1000,
@@ -303,7 +303,7 @@ async function testAnomalyDetectionRankingDivergence(client) {
   assert(
     aware.includes("Opportunity Scan") || aware.includes("#1") || aware.includes("No opportunities"),
     "capital-aware scan returned results",
-    "no results from scan_opportunities"
+    "no results from spectra_scan_opportunities"
   );
 
   if (aware.includes("No opportunities")) {
@@ -333,7 +333,7 @@ async function testAnomalyDetectionRankingDivergence(client) {
     });
     const hasExtreme = extremeApys.some((a) => a > 1000);
     if (hasExtreme) {
-      // The pool with >1000% APY should be absent or filtered from scan_opportunities
+      // The pool with >1000% APY should be absent or filtered from spectra_scan_opportunities
       // (it would have catastrophic price impact at $50K)
       pass("raw rankings contain extreme APY pools (>1000%) — good baseline for divergence test");
     }
@@ -343,7 +343,7 @@ async function testAnomalyDetectionRankingDivergence(client) {
   // Extract pool names/PTs from each
   const rawPts = extractAllAddresses(raw);
   const awarePts = extractAllAddresses(aware);
-  // At minimum, scan_opportunities should have fewer or different pools
+  // At minimum, spectra_scan_opportunities should have fewer or different pools
   // (some get filtered by price impact)
   if (rawPts.length > 0 && awarePts.length > 0) {
     const rawOnly = rawPts.filter((p) => !awarePts.includes(p));
@@ -367,7 +367,7 @@ async function testCrossToolDataConsistency(client) {
   console.log("\n--- Cross-Tool Data Consistency: list → details → compare ---");
 
   // Step 1: Discover a pool
-  const { text: pools } = await client.callTool("list_pools", {
+  const { text: pools } = await client.callTool("spectra_list_pools", {
     chain: "mainnet",
     sort_by: "tvl",
     min_tvl_usd: 10000,
@@ -387,7 +387,7 @@ async function testCrossToolDataConsistency(client) {
   if (poolMatch) KNOWN_POOL = poolMatch[1];
 
   // Step 2: Get PT details
-  const { text: details } = await client.callTool("get_pt_details", {
+  const { text: details } = await client.callTool("spectra_get_pt_details", {
     chain: "mainnet",
     pt_address: ptAddr,
   });
@@ -399,15 +399,15 @@ async function testCrossToolDataConsistency(client) {
   const detailsLpApy = extractPercent(details, "LP APY");
 
   // Step 3: Compare yield for same PT
-  const { text: compare } = await client.callTool("compare_yield", {
+  const { text: compare } = await client.callTool("spectra_compare_yield", {
     chain: "mainnet",
     pt_address: ptAddr,
   });
 
-  assert(compare.includes("Yield Comparison"), "compare_yield has header", "missing");
-  assert(compare.includes("Fixed (Spectra PT)"), "compare_yield has fixed rate", "missing");
-  assert(compare.includes("Variable"), "compare_yield has variable rate", "missing");
-  assert(compare.includes("Spread"), "compare_yield has spread", "missing");
+  assert(compare.includes("Yield Comparison"), "spectra_compare_yield has header", "missing");
+  assert(compare.includes("Fixed (Spectra PT)"), "spectra_compare_yield has fixed rate", "missing");
+  assert(compare.includes("Variable"), "spectra_compare_yield has variable rate", "missing");
+  assert(compare.includes("Spread"), "spectra_compare_yield has spread", "missing");
 
   const compareFixed = extractPercent(compare, "Fixed \\(Spectra PT\\)");
 
@@ -426,7 +426,7 @@ async function testCrossToolDataConsistency(client) {
   // Step 5: Verify LP APY breakdown is present and reasonable
   assert(
     compare.includes("LP Alternative:"),
-    "compare_yield includes LP alternative",
+    "spectra_compare_yield includes LP alternative",
     "missing LP alternative"
   );
   // LP breakdown should have component lines (fees + PT + IBT + optionally gauge)
@@ -449,7 +449,7 @@ async function testRouterMechanicsMintSellLoop(client) {
   const poolOrPt = KNOWN_POOL || KNOWN_PT;
 
   // Step 1: Get pool activity to find an active address
-  const { text: activity } = await client.callTool("get_pool_activity", {
+  const { text: activity } = await client.callTool("spectra_get_pool_activity", {
     chain: "mainnet",
     pool_address: poolOrPt,
     limit: 50,
@@ -493,7 +493,7 @@ async function testRouterMechanicsMintSellLoop(client) {
   pass(`found address with SELL_PT activity: ${suspectAddr.slice(0, 10)}...`);
 
   // Step 2: Check portfolio for that address
-  const { text: portfolio } = await client.callTool("get_portfolio", {
+  const { text: portfolio } = await client.callTool("spectra_get_portfolio", {
     address: suspectAddr,
     chain: "mainnet",
   }, 30_000);
@@ -538,7 +538,7 @@ async function testRouterMechanicsMintSellLoop(client) {
 async function testMetaVaultDataIntegrity(client) {
   console.log("\n--- MetaVault: data integrity & expired position flagging ---");
 
-  const { text } = await client.callTool("get_metavaults", {}, 30_000);
+  const { text } = await client.callTool("spectra_list_metavaults", {}, 30_000);
 
   if (text.includes("Found: 0") || text.includes("No MetaVault")) {
     skip("metavault integrity: no MetaVaults found");
@@ -603,7 +603,7 @@ async function testVeSpectraBoostMath(client) {
   console.log("\n--- veSPECTRA Boost: math consistency ---");
 
   // Scenario 1: Large veBalance, small capital → should get max boost
-  const { text: maxBoost } = await client.callTool("get_ve_info", {
+  const { text: maxBoost } = await client.callTool("spectra_get_ve_info", {
     ve_spectra_balance: 1000000,
     capital_usd: 1000,
   });
@@ -626,7 +626,7 @@ async function testVeSpectraBoostMath(client) {
   }
 
   // Scenario 2: Tiny veBalance, huge capital → should get minimal boost (~1.0x)
-  const { text: minBoost } = await client.callTool("get_ve_info", {
+  const { text: minBoost } = await client.callTool("spectra_get_ve_info", {
     ve_spectra_balance: 100,
     capital_usd: 1000000,
   });
@@ -666,7 +666,7 @@ async function testMorphoLoopingGracefulFallback(client) {
   }
 
   // Call looping strategy without specifying Morpho params — let it auto-detect
-  const { text } = await client.callTool("get_looping_strategy", {
+  const { text } = await client.callTool("spectra_get_looping_strategy", {
     chain: "mainnet",
     pt_address: KNOWN_PT,
     max_loops: 3,
@@ -688,8 +688,8 @@ async function testMorphoLoopingGracefulFallback(client) {
     pass("correctly reports no Morpho market — uses defaults");
     // Should suggest how to find markets
     assert(
-      text.includes("get_morpho_markets") || text.includes("Morpho market"),
-      "suggests get_morpho_markets when no market found",
+      text.includes("morpho_list_markets") || text.includes("Morpho market"),
+      "suggests morpho_list_markets when no market found",
       "missing suggestion"
     );
   }
@@ -702,7 +702,7 @@ async function testMorphoLoopingGracefulFallback(client) {
 async function testMorphoMarketClassification(client) {
   console.log("\n--- Morpho Markets: Spectra vs Pendle/Other classification ---");
 
-  const { text } = await client.callTool("get_morpho_markets", {
+  const { text } = await client.callTool("morpho_list_markets", {
     top_n: 5,
   });
 
@@ -728,7 +728,7 @@ async function testMorphoMarketClassification(client) {
   assert(text.includes("Utilization"), "morpho markets show utilization", "missing");
 
   // Test unsupported chain
-  const { text: noMorpho } = await client.callTool("get_morpho_markets", {
+  const { text: noMorpho } = await client.callTool("morpho_list_markets", {
     chain: "sonic",
   });
 
@@ -740,14 +740,14 @@ async function testMorphoMarketClassification(client) {
 }
 
 // ---------------------------------------------------------------------------
-// Test: Expired Pool Discovery — portfolio vs list_pools
+// Test: Expired Pool Discovery — portfolio vs spectra_list_pools
 // ---------------------------------------------------------------------------
 
 async function testExpiredPoolDiscoveryPath(client) {
-  console.log("\n--- Expired Pool Discovery: portfolio returns what list_pools cannot ---");
+  console.log("\n--- Expired Pool Discovery: portfolio returns what spectra_list_pools cannot ---");
 
-  // Step 1: list_pools only returns active pools
-  const { text: activePools } = await client.callTool("list_pools", {
+  // Step 1: spectra_list_pools only returns active pools
+  const { text: activePools } = await client.callTool("spectra_list_pools", {
     chain: "mainnet",
     include_expired: true,
     min_tvl_usd: 0,
@@ -757,25 +757,25 @@ async function testExpiredPoolDiscoveryPath(client) {
   const activeCount = countOccurrences(activePools, "Principal Token:");
 
   // All returned pools should have future maturity dates
-  // We can check by looking for "(EXPIRED)" — should NOT appear in list_pools
+  // We can check by looking for "(EXPIRED)" — should NOT appear in spectra_list_pools
   const hasExpiredInList = activePools.includes("EXPIRED");
   assert(
     !hasExpiredInList,
-    "list_pools does NOT return expired pools (even with include_expired flag)",
-    "list_pools returned expired pools — unexpected"
+    "spectra_list_pools does NOT return expired pools (even with include_expired flag)",
+    "spectra_list_pools returned expired pools — unexpected"
   );
 
   if (activeCount > 0) {
-    pass(`list_pools returned ${activeCount} active pools (confirmed active-only)`);
+    pass(`spectra_list_pools returned ${activeCount} active pools (confirmed active-only)`);
   }
 
   // Step 2: MetaVaults CAN show expired positions (their portfolio includes them)
-  const { text: vaults } = await client.callTool("get_metavaults", {}, 30_000);
+  const { text: vaults } = await client.callTool("spectra_list_metavaults", {}, 30_000);
 
   if (vaults.includes("EXPIRED")) {
-    pass("MetaVaults correctly surface expired positions that list_pools would hide");
+    pass("MetaVaults correctly surface expired positions that spectra_list_pools would hide");
   } else {
-    skip("no expired positions in current MetaVaults to contrast with list_pools");
+    skip("no expired positions in current MetaVaults to contrast with spectra_list_pools");
   }
 }
 
@@ -792,7 +792,7 @@ async function testRouterLimitationApiVsOnchain(client) {
   }
 
   // Step 1: API-based activity (resolves Router via tx.origin)
-  const { text: apiActivity } = await client.callTool("get_pool_activity", {
+  const { text: apiActivity } = await client.callTool("spectra_get_pool_activity", {
     chain: "mainnet",
     pool_address: KNOWN_POOL,
     address: KNOWN_ACTIVE_ADDRESS,
@@ -812,7 +812,7 @@ async function testRouterLimitationApiVsOnchain(client) {
   pass(`API-based activity found ${apiCount} txns for address`);
 
   // Step 2: On-chain activity (eth_getLogs with address filter)
-  const { text: onchainActivity } = await client.callTool("get_onchain_activity", {
+  const { text: onchainActivity } = await client.callTool("spectra_get_onchain_activity", {
     chain: "mainnet",
     pool_address: KNOWN_POOL,
     address: KNOWN_ACTIVE_ADDRESS,
@@ -849,13 +849,13 @@ async function testRouterLimitationApiVsOnchain(client) {
 async function testScanIncludesMetaVaults(client) {
   console.log("\n--- Scan Opportunities: MetaVaults shown separately from PT rankings ---");
 
-  const { text: withMv } = await client.callTool("scan_opportunities", {
+  const { text: withMv } = await client.callTool("spectra_scan_opportunities", {
     capital_usd: 10000,
     top_n: 5,
     include_metavaults: true,
   }, 60_000);
 
-  const { text: withoutMv } = await client.callTool("scan_opportunities", {
+  const { text: withoutMv } = await client.callTool("spectra_scan_opportunities", {
     capital_usd: 10000,
     top_n: 5,
     include_metavaults: false,
@@ -868,7 +868,7 @@ async function testScanIncludesMetaVaults(client) {
 
   // MetaVaults should appear in a separate section, not interleaved
   if (withMv.includes("MetaVault")) {
-    pass("MetaVaults appear in scan_opportunities output");
+    pass("MetaVaults appear in spectra_scan_opportunities output");
     // The MetaVault section should be separate from PT rankings
     assert(
       withMv.includes("MetaVault") &&
@@ -896,7 +896,7 @@ async function testScanIncludesMetaVaults(client) {
 async function testPendleComparison(client) {
   console.log("\n--- Pendle Comparison: head-to-head on overlapping chain ---");
 
-  const { text } = await client.callTool("compare_pendle_spectra", {
+  const { text } = await client.callTool("mv_compare_yield", {
     chain: "mainnet",
     min_tvl_usd: 1000,
     min_liquidity_usd: 1000,
@@ -945,14 +945,14 @@ async function testSurfacedApiFields(client) {
   console.log("\n--- Surfaced API Fields: maturityValue, multipliers, tags, reserves, IBT APR ---");
 
   // Use Katana pools — they have multipliers and IBT APR composition
-  const { text: katanaPools } = await client.callTool("list_pools", {
+  const { text: katanaPools } = await client.callTool("spectra_list_pools", {
     chain: "katana",
     sort_by: "tvl",
     min_tvl_usd: 1000,
   });
 
   // Maturity value should appear in detailed pool output
-  const { text: detailText } = await client.callTool("list_pools", {
+  const { text: detailText } = await client.callTool("spectra_list_pools", {
     chain: "katana",
     sort_by: "tvl",
     min_tvl_usd: 1000,
@@ -1005,7 +1005,7 @@ async function testSurfacedApiFields(client) {
   }
 
   // Scan opportunities should include IBT APR composition
-  const { text: scanText } = await client.callTool("scan_opportunities", {
+  const { text: scanText } = await client.callTool("spectra_scan_opportunities", {
     capital_usd: 10000,
     top_n: 5,
     include_looping: false,
@@ -1013,16 +1013,16 @@ async function testSurfacedApiFields(client) {
   });
 
   if (scanText.includes("IBT APR:") && (scanText.includes("base") || scanText.includes("KAT"))) {
-    pass("IBT APR composition surfaced in scan_opportunities");
+    pass("IBT APR composition surfaced in spectra_scan_opportunities");
   } else if (scanText.includes("IBT APR:")) {
-    pass("IBT APR total surfaced in scan_opportunities");
+    pass("IBT APR total surfaced in spectra_scan_opportunities");
   } else {
     skip("IBT APR composition not present in scan output (pools may lack breakdown data)");
   }
 
   // Points in scan output
   if (scanText.includes("Points:")) {
-    pass("multipliers/points surfaced in scan_opportunities");
+    pass("multipliers/points surfaced in spectra_scan_opportunities");
   } else {
     skip("no points programs in top scan results");
   }
@@ -1037,7 +1037,7 @@ async function testMerklRewardsInPortfolio(client) {
 
   // Test 1: Portfolio with known Merkl rewards includes "Merkl Rewards" section
   // Using an address known to have SPECTRA gauge rewards on mainnet
-  const { text } = await client.callTool("get_portfolio", {
+  const { text } = await client.callTool("spectra_get_portfolio", {
     address: "0x411f9D604766f55cBEa7ca57c2d84d27D8193682",
     chain: "mainnet",
   }, 30_000);
@@ -1072,7 +1072,7 @@ async function testMerklRewardsInPortfolio(client) {
   }
 
   // Test 2: Portfolio for empty address still works (Merkl failure doesn't break it)
-  const { text: emptyText } = await client.callTool("get_portfolio", {
+  const { text: emptyText } = await client.callTool("spectra_get_portfolio", {
     address: "0x0000000000000000000000000000000000000001",
     chain: "mainnet",
   }, 30_000);
@@ -1092,24 +1092,24 @@ async function testMerklRewardsInPortfolio(client) {
 async function testObservationCoverageReporting(client) {
   console.log("\n--- Observation Coverage Reporting ---");
 
-  // Test 1: get_pool_activity with address should include observation coverage
-  const { text } = await client.callTool("get_pool_activity", {
+  // Test 1: spectra_get_pool_activity with address should include observation coverage
+  const { text } = await client.callTool("spectra_get_pool_activity", {
     chain: "mainnet",
     pool_address: KNOWN_POOL || "0x0000000000000000000000000000000000000001",
     limit: 5,
   }, 30_000);
 
   // Even without address isolation, check the output format is parseable
-  assert(typeof text === "string", "pool activity returns string output", "Expected string from get_pool_activity");
+  assert(typeof text === "string", "pool activity returns string output", "Expected string from spectra_get_pool_activity");
   pass("pool activity returns valid text output");
 
-  // Test 2: get_address_activity should report observation coverage
-  const { text: addrText } = await client.callTool("get_address_activity", {
+  // Test 2: spectra_get_address_activity should report observation coverage
+  const { text: addrText } = await client.callTool("spectra_get_address_activity", {
     address: "0x0000000000000000000000000000000000000001",
     chain: "mainnet",
   }, 30_000);
 
-  assert(typeof addrText === "string", "address activity returns string", "Expected string from get_address_activity");
+  assert(typeof addrText === "string", "address activity returns string", "Expected string from spectra_get_address_activity");
 
   // Coverage section should be present even for empty addresses
   const hasObservationOrNoActivity =
@@ -1131,7 +1131,7 @@ async function testInsufficientEvidencePreservation(client) {
 
   // Test: Pool activity with address filter should preserve statistical
   // insufficiency warnings when cycle count is low
-  const { text } = await client.callTool("get_pool_activity", {
+  const { text } = await client.callTool("spectra_get_pool_activity", {
     chain: "mainnet",
     pool_address: KNOWN_POOL || "0x0000000000000000000000000000000000000001",
     address: "0x0000000000000000000000000000000000000001",

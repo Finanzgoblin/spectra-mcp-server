@@ -1,6 +1,6 @@
 /**
- * Tools: get_morpho_markets, get_morpho_rate, get_morpho_market_suppliers, get_morpho_vaults,
- *        get_morpho_positions, get_morpho_history
+ * Tools: morpho_list_markets, morpho_get_rate, morpho_get_market_suppliers, morpho_list_vaults,
+ *        morpho_get_positions, morpho_get_history
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -13,11 +13,11 @@ import { fetchSpectra } from "../api.js";
 
 export function register(server: McpServer): void {
   // ===========================================================================
-  // get_morpho_markets
+  // morpho_list_markets
   // ===========================================================================
 
   server.tool(
-    "get_morpho_markets",
+    "morpho_list_markets",
     `Find Morpho lending markets that accept Spectra PT tokens as collateral.
 Returns market details including LLTV, borrow/supply APY, utilization, and liquidity.
 Essential for looping strategies: borrow against PT to lever up fixed yield.
@@ -31,9 +31,9 @@ Protocol context:
 - Not all Spectra chains have Morpho markets. Current Morpho PT coverage: mainnet, base,
   arbitrum, katana.
 
-Use get_looping_strategy to calculate leveraged yield for a specific PT + Morpho market.
-Use get_morpho_rate to fetch live borrow APY for a specific market key.
-Use scan_opportunities for automated cross-chain looping discovery.`,
+Use spectra_get_looping_strategy to calculate leveraged yield for a specific PT + Morpho market.
+Use morpho_get_rate to fetch live borrow APY for a specific market key.
+Use spectra_scan_opportunities for automated cross-chain looping discovery.`,
     {
       chain: CHAIN_ENUM
         .optional()
@@ -115,11 +115,11 @@ Use scan_opportunities for automated cross-chain looping discovery.`,
             `--- What This Means ---`,
             `No Morpho lending markets currently accept${pt_symbol_filter ? ` "${pt_symbol_filter}"` : ""} Spectra PTs as collateral on ${scope}.`,
             ...(chain ? [`• Morpho PT markets are available on: mainnet, base, arbitrum, katana`] : []),
-            ...(chain ? [`• Try all chains: get_morpho_markets() without chain filter`] : []),
-            ...(pt_symbol_filter ? [`• Try without filter: get_morpho_markets(${chain ? `chain="${chain}"` : ""}) to see all available PT markets`] : []),
+            ...(chain ? [`• Try all chains: morpho_list_markets() without chain filter`] : []),
+            ...(pt_symbol_filter ? [`• Try without filter: morpho_list_markets(${chain ? `chain="${chain}"` : ""}) to see all available PT markets`] : []),
             `• Leveraged strategies require a Morpho market — without one, consider:`,
-            `    Unleveraged fixed yield: get_best_fixed_yields() or scan_opportunities()`,
-            `    YT arbitrage: scan_yt_arbitrage(capital_usd=YOUR_AMOUNT) for spread-based opportunities`,
+            `    Unleveraged fixed yield: spectra_get_best_fixed_yields() or spectra_scan_opportunities()`,
+            `    YT arbitrage: spectra_scan_yt_arbitrage(capital_usd=YOUR_AMOUNT) for spread-based opportunities`,
           ];
           const text = lines.join("\n");
           return { content: [{ type: "text" as const, text }] };
@@ -170,10 +170,10 @@ Use scan_opportunities for automated cross-chain looping discovery.`,
         const footer = [
           ``,
           `--- Next Steps ---`,
-          `• Live borrow rate: get_morpho_rate(chain=CHAIN, market_key=MARKET_KEY) for current rate + PT spread analysis`,
-          `• Looping projection: get_looping_strategy(chain=CHAIN, pt_address=PT_ADDRESS) to model leveraged yield`,
-          `• Rate history: get_morpho_history(chain=CHAIN, market_key=KEY) for historical rate trends`,
-          `• Capital-aware scan: scan_opportunities(capital_usd=YOUR_AMOUNT, include_looping=true) for cross-chain looping ranking`,
+          `• Live borrow rate: morpho_get_rate(chain=CHAIN, market_key=MARKET_KEY) for current rate + PT spread analysis`,
+          `• Looping projection: spectra_get_looping_strategy(chain=CHAIN, pt_address=PT_ADDRESS) to model leveraged yield`,
+          `• Rate history: morpho_get_history(chain=CHAIN, market_key=KEY) for historical rate trends`,
+          `• Capital-aware scan: spectra_scan_opportunities(capital_usd=YOUR_AMOUNT, include_looping=true) for cross-chain looping ranking`,
         ].join("\n");
 
         let text = header + "\n" + summaries.join("\n\n") + footer;
@@ -189,27 +189,27 @@ Use scan_opportunities for automated cross-chain looping discovery.`,
   );
 
   // ===========================================================================
-  // get_morpho_rate
+  // morpho_get_rate
   // ===========================================================================
 
   server.tool(
-    "get_morpho_rate",
+    "morpho_get_rate",
     `Get the current borrow rate and market state for a specific Morpho market.
 Provide the market's unique key (hex ID) and chain. Returns live borrow APY,
 supply APY, utilization, and liquidity — the data needed to calculate
-looping profitability. Use get_morpho_markets to discover market keys first.
+looping profitability. Use morpho_list_markets to discover market keys first.
 
 Important: Rates are live as-of-query and change continuously based on utilization.
 When planning a looping strategy, verify rates are still favorable before executing.
 A profitable spread (fixed yield > borrow rate) can turn negative if borrow rates spike.
 
-Use get_looping_strategy with these rates to calculate leveraged yield projections.`,
+Use spectra_get_looping_strategy with these rates to calculate leveraged yield projections.`,
     {
       chain: CHAIN_ENUM.describe("The blockchain network where the Morpho market lives"),
       market_key: z
         .string()
         .regex(/^0x[a-fA-F0-9]{64}$/, "Invalid Morpho market key — must be 0x followed by 64 hex characters")
-        .describe("The Morpho market unique key (0x + 64 hex chars). Use get_morpho_markets to find it."),
+        .describe("The Morpho market unique key (0x + 64 hex chars). Use morpho_list_markets to find it."),
     },
     async ({ chain, market_key }) => {
       try {
@@ -267,7 +267,7 @@ Use get_looping_strategy with these rates to calculate leveraged yield projectio
               lines.push(`    Borrow Rate: ${formatPct(borrowApy * 100)}`);
               lines.push(`    Spread: ${spread >= 0 ? "+" : ""}${formatPct(spread)}`);
               if (spread > 0) {
-                lines.push(`    Spread is positive -- looping could be profitable at this borrow rate. Use get_looping_strategy to model leverage.`);
+                lines.push(`    Spread is positive -- looping could be profitable at this borrow rate. Use spectra_get_looping_strategy to model leverage.`);
               } else {
                 lines.push(`    Spread is negative -- borrowing costs exceed PT yield at current rates. Looping would reduce returns.`);
               }
@@ -328,14 +328,14 @@ Use get_looping_strategy with these rates to calculate leveraged yield projectio
         lines.push(``);
         lines.push(`  For Looping:`);
         lines.push(`    Use morpho_ltv = ${lltv.toFixed(4)} and borrow_rate = ${formatPct(borrowApy * 100)}`);
-        lines.push(`    in get_looping_strategy to calculate leveraged yield.`);
+        lines.push(`    in spectra_get_looping_strategy to calculate leveraged yield.`);
 
         lines.push(``);
         lines.push(`--- Next Steps ---`);
-        lines.push(`• Supply details: get_morpho_market_suppliers(chain="${chain}", market_key="${market_key}") for full supplier breakdown`);
-        lines.push(`• Vault discovery: get_morpho_vaults(chain="${chain}") to see all vaults on this chain`);
-        lines.push(`• Rate history: get_morpho_history(chain="${chain}", market_key="${market_key}") for historical rate trends`);
-        lines.push(`• Looping: get_looping_strategy(chain="${chain}", pt_address=PT_ADDRESS) to model leveraged yield`);
+        lines.push(`• Supply details: morpho_get_market_suppliers(chain="${chain}", market_key="${market_key}") for full supplier breakdown`);
+        lines.push(`• Vault discovery: morpho_list_vaults(chain="${chain}") to see all vaults on this chain`);
+        lines.push(`• Rate history: morpho_get_history(chain="${chain}", market_key="${market_key}") for historical rate trends`);
+        lines.push(`• Looping: spectra_get_looping_strategy(chain="${chain}", pt_address=PT_ADDRESS) to model leveraged yield`);
 
         const text = lines.join("\n");
         return { content: [{ type: "text" as const, text }] };
@@ -347,11 +347,11 @@ Use get_looping_strategy with these rates to calculate leveraged yield projectio
   );
 
   // ===========================================================================
-  // get_morpho_market_suppliers
+  // morpho_get_market_suppliers
   // ===========================================================================
 
   server.tool(
-    "get_morpho_market_suppliers",
+    "morpho_get_market_suppliers",
     `Show who supplies lending liquidity to a specific Morpho market.
 Returns top suppliers ranked by supply size, identifies Morpho vaults vs EOAs vs loopers,
 and provides concentration analysis.
@@ -369,15 +369,15 @@ Protocol context:
   rates. High concentration is a signal, not necessarily a problem.
 - Reward incentives (supply APR) can make supply competitive — or mask thin organic yield.
 
-Use get_morpho_markets to find market keys first.
-Use get_morpho_vaults to discover all vaults on a chain and their allocations.
-Use get_morpho_rate for borrow-side rate and PT spread analysis.`,
+Use morpho_list_markets to find market keys first.
+Use morpho_list_vaults to discover all vaults on a chain and their allocations.
+Use morpho_get_rate for borrow-side rate and PT spread analysis.`,
     {
       chain: CHAIN_ENUM.describe("The blockchain network"),
       market_key: z
         .string()
         .regex(/^0x[a-fA-F0-9]{64}$/, "Invalid Morpho market key — must be 0x followed by 64 hex characters")
-        .describe("The Morpho market unique key (0x + 64 hex chars). Use get_morpho_markets to find it."),
+        .describe("The Morpho market unique key (0x + 64 hex chars). Use morpho_list_markets to find it."),
       top_n: z
         .number()
         .min(1)
@@ -418,9 +418,9 @@ Use get_morpho_rate for borrow-side rate and PT spread analysis.`,
         const footer = [
           ``,
           `--- Next Steps ---`,
-          `• Vault details: get_morpho_vaults(chain="${chain}") to see all vaults and their allocations`,
-          `• Borrow rate: get_morpho_rate(chain="${chain}", market_key="${market_key}") for rate + spread analysis`,
-          `• Looping: get_looping_strategy(chain="${chain}", pt_address=PT_ADDRESS) to model leveraged yield`,
+          `• Vault details: morpho_list_vaults(chain="${chain}") to see all vaults and their allocations`,
+          `• Borrow rate: morpho_get_rate(chain="${chain}", market_key="${market_key}") for rate + spread analysis`,
+          `• Looping: spectra_get_looping_strategy(chain="${chain}", pt_address=PT_ADDRESS) to model leveraged yield`,
         ].join("\n");
 
         const text = analysis + footer;
@@ -433,11 +433,11 @@ Use get_morpho_rate for borrow-side rate and PT spread analysis.`,
   );
 
   // ===========================================================================
-  // get_morpho_vaults
+  // morpho_list_vaults
   // ===========================================================================
 
   server.tool(
-    "get_morpho_vaults",
+    "morpho_list_vaults",
     `List Morpho vaults on a chain — discover where supply-side liquidity lives.
 Returns vault details including AUM, APY, fees, curator info, and market allocations.
 
@@ -453,11 +453,11 @@ Protocol context:
 - Supply cap (when present) limits how much a vault will deploy to a given market.
   Uncapped allocations track demand; capped allocations create a ceiling.
 - Not all vaults on a chain allocate to PT markets — many serve non-PT markets. Use
-  get_morpho_market_suppliers with a specific market key to find who actually supplies it.
+  morpho_get_market_suppliers with a specific market key to find who actually supplies it.
 
-Use get_morpho_market_suppliers to see who supplies a specific market.
-Use get_morpho_markets to find available PT lending markets.
-Use get_looping_strategy to model leveraged yield after identifying supply liquidity.`,
+Use morpho_get_market_suppliers to see who supplies a specific market.
+Use morpho_list_markets to find available PT lending markets.
+Use spectra_get_looping_strategy to model leveraged yield after identifying supply liquidity.`,
     {
       chain: CHAIN_ENUM.describe("The blockchain network to query"),
       asset_filter: z
@@ -497,9 +497,9 @@ Use get_looping_strategy to model leveraged yield after identifying supply liqui
             ``,
             `--- What This Means ---`,
             `No curated lending vaults are currently deployed on ${chain}${asset_filter ? ` for "${asset_filter}"` : ""}.`,
-            ...(asset_filter ? [`• Try without filter: get_morpho_vaults(chain="${chain}") to see all vaults`] : []),
+            ...(asset_filter ? [`• Try without filter: morpho_list_vaults(chain="${chain}") to see all vaults`] : []),
             `• Supply-side liquidity may come from EOAs rather than vaults`,
-            `• Check specific markets: get_morpho_market_suppliers(chain="${chain}", market_key=KEY)`,
+            `• Check specific markets: morpho_get_market_suppliers(chain="${chain}", market_key=KEY)`,
           ];
           const text = lines.join("\n");
           return { content: [{ type: "text" as const, text }] };
@@ -535,11 +535,11 @@ Use get_looping_strategy to model leveraged yield after identifying supply liqui
         const footer = [
           ``,
           `--- Next Steps ---`,
-          `• Market suppliers: get_morpho_market_suppliers(chain="${chain}", market_key=KEY) for per-market supplier breakdown`,
-          `• PT markets: get_morpho_markets(chain="${chain}") to see which PTs have lending markets`,
-          `• Looping: get_looping_strategy(chain="${chain}", pt_address=PT_ADDRESS) to model leveraged yield`,
-          `• Rate history: get_morpho_history(chain="${chain}", market_key=KEY) for historical rate trends`,
-          `• Positions: get_morpho_positions(address=ADDR, chain="${chain}") to check wallet holdings`,
+          `• Market suppliers: morpho_get_market_suppliers(chain="${chain}", market_key=KEY) for per-market supplier breakdown`,
+          `• PT markets: morpho_list_markets(chain="${chain}") to see which PTs have lending markets`,
+          `• Looping: spectra_get_looping_strategy(chain="${chain}", pt_address=PT_ADDRESS) to model leveraged yield`,
+          `• Rate history: morpho_get_history(chain="${chain}", market_key=KEY) for historical rate trends`,
+          `• Positions: morpho_get_positions(address=ADDR, chain="${chain}") to check wallet holdings`,
         ].join("\n");
 
         let text = header + "\n" + summaries.join("\n\n") + "\n" + footer;
@@ -558,11 +558,11 @@ Use get_looping_strategy to model leveraged yield after identifying supply liqui
   );
 
   // ===========================================================================
-  // get_morpho_positions
+  // morpho_get_positions
   // ===========================================================================
 
   server.tool(
-    "get_morpho_positions",
+    "morpho_get_positions",
     `Query a user's Morpho positions across all markets and vaults on a chain.
 Returns collateral, borrows, supply (with USD values), vault deposits, health factors,
 and position signals (looper detection, low health warnings).
@@ -580,9 +580,9 @@ Protocol context:
 
 Scans all Morpho chains by default (mainnet, base, arbitrum). Specify chain to narrow.
 
-Use get_morpho_markets to find available PT markets.
-Use get_morpho_rate for live borrow rate on a specific market.
-Use get_portfolio for Spectra protocol positions (PT, YT, LP).`,
+Use morpho_list_markets to find available PT markets.
+Use morpho_get_rate for live borrow rate on a specific market.
+Use spectra_get_portfolio for Spectra protocol positions (PT, YT, LP).`,
     {
       address: z
         .string()
@@ -699,7 +699,7 @@ Use get_portfolio for Spectra protocol positions (PT, YT, LP).`,
             ``,
             `--- What This Means ---`,
             `This address has no supply, borrow, collateral, or vault positions on Morpho.`,
-            `• Check Spectra positions: get_portfolio(address="${address}")`,
+            `• Check Spectra positions: spectra_get_portfolio(address="${address}")`,
             `• Morpho chains scanned: ${chainsToScan.map((c) => c.network).join(", ")}`,
           ].join("\n");
           return { content: [{ type: "text" as const, text }] };
@@ -725,9 +725,9 @@ Use get_portfolio for Spectra protocol positions (PT, YT, LP).`,
 
         lines.push(``);
         lines.push(`--- Next Steps ---`);
-        lines.push(`• Spectra positions: get_portfolio(address="${address}") for PT/YT/LP holdings`);
-        lines.push(`• Market details: get_morpho_rate(chain=CHAIN, market_key=KEY) for rate + spread analysis`);
-        lines.push(`• Vault details: get_morpho_vaults(chain=CHAIN) to see vault allocations and APY`);
+        lines.push(`• Spectra positions: spectra_get_portfolio(address="${address}") for PT/YT/LP holdings`);
+        lines.push(`• Market details: morpho_get_rate(chain=CHAIN, market_key=KEY) for rate + spread analysis`);
+        lines.push(`• Vault details: morpho_list_vaults(chain=CHAIN) to see vault allocations and APY`);
 
         if (!ptTaggingAvailable) {
           lines.push(``);
@@ -744,11 +744,11 @@ Use get_portfolio for Spectra protocol positions (PT, YT, LP).`,
   );
 
   // ===========================================================================
-  // get_morpho_history
+  // morpho_get_history
   // ===========================================================================
 
   server.tool(
-    "get_morpho_history",
+    "morpho_get_history",
     `Historical rates and growth for a specific Morpho market.
 Shows borrow APY, supply APY, utilization, and TVL trends over time with
 min/avg/max/current stats and directional signals.
@@ -764,15 +764,15 @@ Parameters:
 - period: 7d (hourly), 30d (daily), 90d (daily), 1y (weekly)
 - interval: auto-selected based on period, or override manually
 
-Use get_morpho_rate for current live rates.
-Use get_morpho_markets to discover market keys.
-Use get_looping_strategy to model leveraged yield after confirming rate stability.`,
+Use morpho_get_rate for current live rates.
+Use morpho_list_markets to discover market keys.
+Use spectra_get_looping_strategy to model leveraged yield after confirming rate stability.`,
     {
       chain: CHAIN_ENUM.describe("The blockchain network"),
       market_key: z
         .string()
         .regex(/^0x[a-fA-F0-9]{64}$/, "Invalid Morpho market key")
-        .describe("The Morpho market unique key (0x + 64 hex chars). Use get_morpho_markets to find it."),
+        .describe("The Morpho market unique key (0x + 64 hex chars). Use morpho_list_markets to find it."),
       period: z
         .enum(["7d", "30d", "90d", "1y"])
         .default("30d")
@@ -822,8 +822,8 @@ Use get_looping_strategy to model leveraged yield after confirming rate stabilit
             `The market may be too new or the API may not have data for this period.`,
             ``,
             `--- Try ---`,
-            `• Shorter period: get_morpho_history(chain="${chain}", market_key="${market_key}", period="7d")`,
-            `• Current state: get_morpho_rate(chain="${chain}", market_key="${market_key}")`,
+            `• Shorter period: morpho_get_history(chain="${chain}", market_key="${market_key}", period="7d")`,
+            `• Current state: morpho_get_rate(chain="${chain}", market_key="${market_key}")`,
           ].join("\n");
           return { content: [{ type: "text" as const, text }] };
         }
@@ -868,9 +868,9 @@ Use get_looping_strategy to model leveraged yield after confirming rate stabilit
         const lines = [output];
         lines.push(``);
         lines.push(`--- Next Steps ---`);
-        lines.push(`• Live rate: get_morpho_rate(chain="${chain}", market_key="${market_key}") for current state`);
-        lines.push(`• Looping: get_looping_strategy(chain="${chain}", pt_address=PT_ADDRESS) to model leveraged yield`);
-        lines.push(`• Suppliers: get_morpho_market_suppliers(chain="${chain}", market_key="${market_key}") for supply-side analysis`);
+        lines.push(`• Live rate: morpho_get_rate(chain="${chain}", market_key="${market_key}") for current state`);
+        lines.push(`• Looping: spectra_get_looping_strategy(chain="${chain}", pt_address=PT_ADDRESS) to model leveraged yield`);
+        lines.push(`• Suppliers: morpho_get_market_suppliers(chain="${chain}", market_key="${market_key}") for supply-side analysis`);
 
         const text = lines.join("\n");
         return { content: [{ type: "text" as const, text }] };

@@ -266,7 +266,7 @@ export const CHAIN_GAS_ESTIMATES: Record<string, number> = {
 // =============================================================================
 
 // Approximate average block times used to convert time-based lookback windows
-// into block counts. Used by get_onchain_activity to estimate fromBlock when
+// into block counts. Used by spectra_get_onchain_activity to estimate fromBlock when
 // the agent specifies a time window instead of explicit block numbers.
 export const CHAIN_BLOCK_TIMES: Record<string, number> = {
   mainnet:   12,

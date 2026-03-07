@@ -1,5 +1,5 @@
 /**
- * Tool: quote_trade
+ * Tool: spectra_quote_trade
  *
  * Quotes PT trades using on-chain Curve get_dy() when available,
  * falling back to a conservative constant-product math estimate.
@@ -71,7 +71,7 @@ export async function tryOnChainQuote(
 
 export function register(server: McpServer): void {
   server.tool(
-    "quote_trade",
+    "spectra_quote_trade",
     `Estimate expected output, price impact, and minimum output for a PT trade.
 Automatically uses on-chain Curve get_dy() for exact quotes when a public RPC
 is available for the chain. Falls back to a conservative constant-product math
@@ -94,8 +94,8 @@ On-chain quotes reflect the actual Curve StableSwap-NG amplification parameter
 and current pool state — significantly more accurate than the math estimate,
 especially for large trades.
 
-Use simulate_portfolio_after_trade to preview your full portfolio state after this trade
-(BEFORE / TRADE / AFTER with deltas). Use compare_yield to evaluate whether the trade
+Use spectra_simulate_trade to preview your full portfolio state after this trade
+(BEFORE / TRADE / AFTER with deltas). Use spectra_compare_yield to evaluate whether the trade
 makes sense relative to variable rates.`,
     {
       chain: CHAIN_ENUM.describe("The blockchain network"),
@@ -184,13 +184,13 @@ makes sense relative to variable rates.`,
 
         // Next-step hints + negative signal for high impact
         const nextLines: string[] = [``, `--- Next Steps ---`];
-        nextLines.push(`• Preview portfolio: simulate_portfolio_after_trade(chain="${chain}", pt_address="${pt_address}", address=YOUR_WALLET, amount=${amount}, side="${side}")`);
-        nextLines.push(`• Compare yield: compare_yield(chain="${chain}", pt_address="${pt_address}") for fixed vs variable analysis`);
-        nextLines.push(`• Check leverage: get_looping_strategy(chain="${chain}", pt_address="${pt_address}") for Morpho looping`);
+        nextLines.push(`• Preview portfolio: spectra_simulate_trade(chain="${chain}", pt_address="${pt_address}", address=YOUR_WALLET, amount=${amount}, side="${side}")`);
+        nextLines.push(`• Compare yield: spectra_compare_yield(chain="${chain}", pt_address="${pt_address}") for fixed vs variable analysis`);
+        nextLines.push(`• Check leverage: spectra_get_looping_strategy(chain="${chain}", pt_address="${pt_address}") for Morpho looping`);
 
         if (quote.priceImpactPct > 5) {
           nextLines.push(``);
-          nextLines.push(`⚠ High impact (${formatPct(quote.priceImpactPct)}): consider reducing trade size, or check pool depth via get_pool_volume(chain="${chain}", pool_address="${pool.address || pt_address}")`);
+          nextLines.push(`⚠ High impact (${formatPct(quote.priceImpactPct)}): consider reducing trade size, or check pool depth via spectra_get_pool_volume(chain="${chain}", pool_address="${pool.address || pt_address}")`);
         }
 
         const contextStr = contextLines.length > 0 ? "\n\n--- Pool Context ---\n" + contextLines.join("\n") : "";

@@ -206,7 +206,7 @@ export function register(server: McpServer): void {
   // ─── get_metavaults ────────────────────────────────────────────────────
 
   server.tool(
-    "get_metavaults",
+    "spectra_list_metavaults",
     `List live MetaVaults from the Spectra API.
 
 MetaVaults are ERC-7540 curated vaults that automate LP rollover and compound
@@ -223,9 +223,9 @@ Returns all MetaVaults with:
   - Epoch history (rate snapshots)
 
 Use this tool to discover which MetaVaults are live, then pass the address to
-model_metavault_strategy for detailed strategy modeling with live data.
+spectra_model_metavault for detailed strategy modeling with live data.
 
-To investigate curator activity (LP adds/removes, rebalancing), use get_address_activity
+To investigate curator activity (LP adds/removes, rebalancing), use spectra_get_address_activity
 on the curator's EOA address — MetaVault operations go through the Spectra Router, so
 the vault contract address won't appear in pool activity data.`,
     {
@@ -257,7 +257,7 @@ the vault contract address won't appear in pool activity data.`,
   // ─── model_metavault_strategy ──────────────────────────────────────────
 
   server.tool(
-    "model_metavault_strategy",
+    "spectra_model_metavault",
     `Model a MetaVault "double loop" strategy for curators.
 
 MetaVaults are ERC-7540 curated vaults that automate LP rollover and compound
@@ -295,7 +295,7 @@ blended base APY and warns about manual Pendle rollover requirements.`,
         .describe("Chain where the MetaVault lives. Required with metavault_address for live data."),
       metavault_address: EVM_ADDRESS
         .optional()
-        .describe("MetaVault contract address. When provided with chain, auto-fetches live APY and TVL as base_apy. Use get_metavaults to discover addresses."),
+        .describe("MetaVault contract address. When provided with chain, auto-fetches live APY and TVL as base_apy. Use spectra_list_metavaults to discover addresses."),
       base_apy: z
         .number()
         .optional()
@@ -439,7 +439,7 @@ blended base APY and warns about manual Pendle rollover requirements.`,
             liveDataNote = [
               `--- Live MetaVault Data ---`,
               `  MetaVault ${metavault_address} not found on ${chain}.`,
-              `  Use get_metavaults to discover available MetaVaults.`,
+              `  Use spectra_list_metavaults to discover available MetaVaults.`,
               `  Falling back to manual base_apy.`,
               ``,
             ].join("\n");
@@ -448,7 +448,7 @@ blended base APY and warns about manual Pendle rollover requirements.`,
           liveDataNote = [
             `--- Live MetaVault Data ---`,
             `  chain is required when metavault_address is provided.`,
-            `  Use get_metavaults to find chain + address pairs.`,
+            `  Use spectra_list_metavaults to find chain + address pairs.`,
             `  Falling back to manual base_apy.`,
             ``,
           ].join("\n");
@@ -456,13 +456,13 @@ blended base APY and warns about manual Pendle rollover requirements.`,
 
         // Require base_apy one way or another
         if (resolvedBaseApy === undefined) {
-          const text = `Error: base_apy is required. Either provide it directly or supply chain + metavault_address to auto-fetch from the live API. Use get_metavaults to discover MetaVault addresses.`;
+          const text = `Error: base_apy is required. Either provide it directly or supply chain + metavault_address to auto-fetch from the live API. Use spectra_list_metavaults to discover MetaVault addresses.`;
           return { content: [{ type: "text" as const, text }], isError: true };
         }
 
         // Validate Pendle allocation
         if (pendle_allocation_pct > 0 && pendle_lp_apy === undefined) {
-          const text = `Error: pendle_lp_apy is required when pendle_allocation_pct > 0. Provide the Pendle LP APY (%) for the blended allocation model. Use list_pendle_markets to find Pendle LP APYs.`;
+          const text = `Error: pendle_lp_apy is required when pendle_allocation_pct > 0. Provide the Pendle LP APY (%) for the blended allocation model. Use pendle_list_markets to find Pendle LP APYs.`;
           return { content: [{ type: "text" as const, text }], isError: true };
         }
 
@@ -538,11 +538,11 @@ blended base APY and warns about manual Pendle rollover requirements.`,
         const nextLines = [
           ``,
           `--- Next Steps ---`,
-          `• List live MetaVaults: get_metavaults() for current vault data`,
-          `• Find pools matching your target APY: scan_opportunities(capital_usd=${capital_usd || "YOUR_AMOUNT"}) for live pool data`,
-          `• Check raw PT looping baseline: get_looping_strategy(chain=CHAIN, pt_address=PT_ADDRESS) for comparison`,
-          `• Find Morpho markets: get_morpho_markets() to see which PTs have lending markets for Market A`,
-          `• Cross-protocol scan: scan_curator_opportunities(capital_usd=${capital_usd || "YOUR_AMOUNT"}) for unified Spectra + Pendle ranking`,
+          `• List live MetaVaults: spectra_list_metavaults() for current vault data`,
+          `• Find pools matching your target APY: spectra_scan_opportunities(capital_usd=${capital_usd || "YOUR_AMOUNT"}) for live pool data`,
+          `• Check raw PT looping baseline: spectra_get_looping_strategy(chain=CHAIN, pt_address=PT_ADDRESS) for comparison`,
+          `• Find Morpho markets: morpho_list_markets() to see which PTs have lending markets for Market A`,
+          `• Cross-protocol scan: mv_scan_curator_opportunities(capital_usd=${capital_usd || "YOUR_AMOUNT"}) for unified Spectra + Pendle ranking`,
         ].join("\n");
 
         return { content: [{ type: "text" as const, text: liveDataNote + text + nextLines }] };
@@ -556,7 +556,7 @@ blended base APY and warns about manual Pendle rollover requirements.`,
   // ─── get_curator_dashboard ──────────────────────────────────────────────
 
   server.tool(
-    "get_curator_dashboard",
+    "spectra_get_curator_dashboard",
     `Operational dashboard for MetaVault curators.
 
 Aggregates vault health, position status, depositor flows, fee revenue estimates,
@@ -586,15 +586,15 @@ addresses in positions are on the position's chain, not the MetaVault's home cha
 Epoch flows: Derived from asset snapshots and rate changes. Yield accrual is estimated
 from share rate deltas — actual yield may differ. Use share price trend to corroborate.
 
-Requires chain + metavault_address. Use get_metavaults to discover addresses.
-Use model_metavault_strategy for leverage modeling after reviewing the dashboard.
-Use get_pool_activity on specific pool addresses for trading pattern analysis.
-Use get_address_activity on the curator's EOA for cross-pool curator activity.`,
+Requires chain + metavault_address. Use spectra_list_metavaults to discover addresses.
+Use spectra_model_metavault for leverage modeling after reviewing the dashboard.
+Use spectra_get_pool_activity on specific pool addresses for trading pattern analysis.
+Use spectra_get_address_activity on the curator's EOA for cross-pool curator activity.`,
     {
       chain: CHAIN_ENUM
         .describe("The blockchain network where the MetaVault lives."),
       metavault_address: EVM_ADDRESS
-        .describe("The MetaVault contract address. Use get_metavaults to discover addresses."),
+        .describe("The MetaVault contract address. Use spectra_list_metavaults to discover addresses."),
       curator_fee_pct: z
         .number()
         .min(0)
@@ -610,7 +610,7 @@ Use get_address_activity on the curator's EOA for cross-pool curator activity.`,
         );
 
         if (!mv) {
-          const text = `MetaVault ${metavault_address} not found on ${chain}.\nUse get_metavaults(chain="${chain}") to discover available MetaVaults.`;
+          const text = `MetaVault ${metavault_address} not found on ${chain}.\nUse spectra_list_metavaults(chain="${chain}") to discover available MetaVaults.`;
           return { content: [{ type: "text" as const, text }], isError: true };
         }
 

@@ -1,5 +1,5 @@
 /**
- * Tool: get_portfolio
+ * Tool: spectra_get_portfolio
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -11,7 +11,7 @@ import type { SpectraPool } from "../types.js";
 
 export function register(server: McpServer): void {
   server.tool(
-    "get_portfolio",
+    "spectra_get_portfolio",
     `Get wallet positions on Spectra for a specific address.
 Returns PT, YT, and LP balances with USD values, claimable yield,
 and current rates. Queries a single chain or all chains.
@@ -28,14 +28,14 @@ Protocol context:
 - Balance ratios are the key signal. Output shows Position Shape (e.g., "YT/PT 4:1")
   so you can reason about what the holder's position implies given the mechanics above.
 - When investigating a strategy, ALWAYS cross-reference portfolio with
-  get_pool_activity. Activity shows the HOW (transaction patterns), portfolio
+  spectra_get_pool_activity. Activity shows the HOW (transaction patterns), portfolio
   shows the WHAT (resulting position). Neither alone tells the full story.
-- Strategies often span multiple wallets. If get_pool_activity shows concentrated
+- Strategies often span multiple wallets. If spectra_get_pool_activity shows concentrated
   activity from several addresses, check each one to build the full picture.
-- For activity analysis, use get_pool_activity with the address parameter — it will
+- For activity analysis, use spectra_get_pool_activity with the address parameter — it will
   automatically cross-reference portfolio data and provide flow accounting, contract
   detection, gas estimates, and pool impact analysis.
-- Use get_address_activity to scan all pools for an address's activity in one call.`,
+- Use spectra_get_address_activity to scan all pools for an address's activity in one call.`,
     {
       address: EVM_ADDRESS.describe("The wallet address (0x...)"),
       chain: CHAIN_ENUM
@@ -221,9 +221,9 @@ Protocol context:
             ``,
             `--- What This Means ---`,
             `This wallet has no PT, YT, or LP positions on Spectra${chain ? ` on ${chain}` : ""}.`,
-            ...(chain ? [`• Try scanning all chains: get_portfolio(address="${address}") without chain filter`] : []),
-            `• Check activity history: get_address_activity(address="${address}") — the wallet may have had past positions`,
-            `• Find opportunities: scan_opportunities(capital_usd=YOUR_AMOUNT) to discover yield opportunities`,
+            ...(chain ? [`• Try scanning all chains: spectra_get_portfolio(address="${address}") without chain filter`] : []),
+            `• Check activity history: spectra_get_address_activity(address="${address}") — the wallet may have had past positions`,
+            `• Find opportunities: spectra_scan_opportunities(capital_usd=YOUR_AMOUNT) to discover yield opportunities`,
           ];
           const text = lines.join("\n");
           return { content: [{ type: "text" as const, text }] };
@@ -258,17 +258,17 @@ Protocol context:
         if (loopable.length > 0) {
           nextSteps.push(`• Looping opportunities (Morpho market available):`);
           for (const h of loopable) {
-            nextSteps.push(`    ${h.name}: get_looping_strategy(chain="${h.chain}", pt_address="${h.ptAddress}")`);
+            nextSteps.push(`    ${h.name}: spectra_get_looping_strategy(chain="${h.chain}", pt_address="${h.ptAddress}")`);
           }
         }
         if (notLoopable.length > 0) {
           nextSteps.push(`• No Morpho market for: ${notLoopable.map((h) => h.name).join(", ")} — can't loop these positions`);
-          nextSteps.push(`    Alternative: compare_yield on these PTs for unleveraged spread analysis`);
+          nextSteps.push(`    Alternative: spectra_compare_yield on these PTs for unleveraged spread analysis`);
         }
 
         // General follow-ups
-        nextSteps.push(`• Activity analysis: get_pool_activity(chain=CHAIN, pool_address=POOL, address="${address}") for strategy inference`);
-        nextSteps.push(`• Cross-pool scan: get_address_activity(address="${address}") for multi-pool overview`);
+        nextSteps.push(`• Activity analysis: spectra_get_pool_activity(chain=CHAIN, pool_address=POOL, address="${address}") for strategy inference`);
+        nextSteps.push(`• Cross-pool scan: spectra_get_address_activity(address="${address}") for multi-pool overview`);
 
         text += nextSteps.join("\n");
 

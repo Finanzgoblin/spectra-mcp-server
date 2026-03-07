@@ -246,107 +246,107 @@ function buildToolMap(discovery) {
   const TEST_ADDR = KNOWN_TEST_ADDRESS;
 
   return {
-    1: [{ tool: "get_supported_chains", args: {} }],
-    2: [{ tool: "get_best_fixed_yields", args: { top_n: 10, min_tvl_usd: 1000, min_liquidity_usd: 1000 } }],
-    3: [{ tool: "list_pools", args: { chain: "mainnet" } }],
-    4: [{ tool: "get_metavaults", args: {} }],
-    5: [{ tool: "scan_opportunities", args: { capital_usd: 50000, top_n: 10, include_metavaults: false } }],
+    1: [{ tool: "spectra_list_chains", args: {} }],
+    2: [{ tool: "spectra_get_best_fixed_yields", args: { top_n: 10, min_tvl_usd: 1000, min_liquidity_usd: 1000 } }],
+    3: [{ tool: "spectra_list_pools", args: { chain: "mainnet" } }],
+    4: [{ tool: "spectra_list_metavaults", args: {} }],
+    5: [{ tool: "spectra_scan_opportunities", args: { capital_usd: 50000, top_n: 10, include_metavaults: false } }],
     6: [
-      { tool: "compare_pendle_spectra", args: { chain: "mainnet", min_tvl_usd: 1000, min_liquidity_usd: 1000 } },
-      { tool: "list_pools", args: { chain: "mainnet", min_tvl_usd: 1000 } },
+      { tool: "mv_compare_yield", args: { chain: "mainnet", min_tvl_usd: 1000, min_liquidity_usd: 1000 } },
+      { tool: "spectra_list_pools", args: { chain: "mainnet", min_tvl_usd: 1000 } },
     ],
     7: [
-      { tool: "get_morpho_markets", args: { chain: "mainnet" } },
-      ...(STAK ? [{ tool: "get_looping_strategy", args: { chain: "mainnet", pt_address: STAK } }] : []),
+      { tool: "morpho_list_markets", args: { chain: "mainnet" } },
+      ...(STAK ? [{ tool: "spectra_get_looping_strategy", args: { chain: "mainnet", pt_address: STAK } }] : []),
     ],
     8: [
-      ...(PT ? [{ tool: "simulate_portfolio_after_trade", args: {
+      ...(PT ? [{ tool: "spectra_simulate_trade", args: {
         chain: "mainnet", pt_address: PT,
         address: "0x0000000000000000000000000000000000000000",
         amount: 500, side: "buy",
       }}] : []),
     ],
     9: [
-      { tool: "get_protocol_context", args: { topic: "router_batching" } },
-      ...(POOL ? [{ tool: "get_pool_activity", args: { chain: "mainnet", pool_address: POOL, limit: 30 } }] : []),
+      { tool: "mv_get_protocol_context", args: { topic: "router_batching" } },
+      ...(POOL ? [{ tool: "spectra_get_pool_activity", args: { chain: "mainnet", pool_address: POOL, limit: 30 } }] : []),
     ],
-    10: [{ tool: "get_protocol_context", args: { topic: "pt_yt_mechanics" } }],
-    11: [{ tool: "get_protocol_context", args: { topic: "pt_yt_mechanics" } }],
-    12: [{ tool: "get_protocol_context", args: { topic: "router_batching" } }],
-    13: [{ tool: "get_metavaults", args: {} }],
+    10: [{ tool: "mv_get_protocol_context", args: { topic: "pt_yt_mechanics" } }],
+    11: [{ tool: "mv_get_protocol_context", args: { topic: "pt_yt_mechanics" } }],
+    12: [{ tool: "mv_get_protocol_context", args: { topic: "router_batching" } }],
+    13: [{ tool: "spectra_list_metavaults", args: {} }],
     14: [
-      { tool: "get_best_fixed_yields", args: { top_n: 5, min_tvl_usd: 0, min_liquidity_usd: 0 } },
-      { tool: "list_pools", args: { chain: "avalanche", min_tvl_usd: 0 } },
+      { tool: "spectra_get_best_fixed_yields", args: { top_n: 5, min_tvl_usd: 0, min_liquidity_usd: 0 } },
+      { tool: "spectra_list_pools", args: { chain: "avalanche", min_tvl_usd: 0 } },
     ],
     15: [
-      ...(PT ? [{ tool: "get_looping_strategy", args: { chain: "mainnet", pt_address: PT } }] : []),
+      ...(PT ? [{ tool: "spectra_get_looping_strategy", args: { chain: "mainnet", pt_address: PT } }] : []),
     ],
-    16: [{ tool: "get_metavaults", args: {} }],
+    16: [{ tool: "spectra_list_metavaults", args: {} }],
     17: [
-      ...(POOL && ADDR ? [{ tool: "get_pool_activity", args: { chain: "mainnet", pool_address: POOL, address: ADDR, limit: 50 } }] : []),
-      ...(ADDR ? [{ tool: "get_portfolio", args: { address: ADDR, chain: "mainnet" } }] : []),
+      ...(POOL && ADDR ? [{ tool: "spectra_get_pool_activity", args: { chain: "mainnet", pool_address: POOL, address: ADDR, limit: 50 } }] : []),
+      ...(ADDR ? [{ tool: "spectra_get_portfolio", args: { address: ADDR, chain: "mainnet" } }] : []),
     ],
-    18: [{ tool: "get_ve_info", args: { ve_spectra_balance: 1000000, capital_usd: 1000 } }],
+    18: [{ tool: "spectra_get_ve_info", args: { ve_spectra_balance: 1000000, capital_usd: 1000 } }],
     19: [
-      ...(STAK ? [{ tool: "compare_yield", args: { chain: "mainnet", pt_address: STAK } }] : []),
-      { tool: "scan_yt_arbitrage", args: { capital_usd: 10000, top_n: 5 } },
+      ...(STAK ? [{ tool: "spectra_compare_yield", args: { chain: "mainnet", pt_address: STAK } }] : []),
+      { tool: "spectra_scan_yt_arbitrage", args: { capital_usd: 10000, top_n: 5 } },
     ],
-    20: [{ tool: "list_pools", args: { chain: "mainnet", min_tvl_usd: 0 } }],
-    21: [{ tool: "get_supported_chains", args: {} }],
+    20: [{ tool: "spectra_list_pools", args: { chain: "mainnet", min_tvl_usd: 0 } }],
+    21: [{ tool: "spectra_list_chains", args: {} }],
     22: [
       ...(ADDR ? [
-        { tool: "get_portfolio", args: { address: ADDR } },
-        { tool: "get_address_activity", args: { address: ADDR } },
+        { tool: "spectra_get_portfolio", args: { address: ADDR } },
+        { tool: "spectra_get_address_activity", args: { address: ADDR } },
       ] : []),
     ],
     23: [
-      { tool: "get_protocol_context", args: { topic: "router_batching" } },
-      ...(POOL && ADDR ? [{ tool: "get_onchain_activity", args: { chain: "mainnet", pool_address: POOL, address: ADDR, lookback_hours: 720, limit: 20 } }] : []),
+      { tool: "mv_get_protocol_context", args: { topic: "router_batching" } },
+      ...(POOL && ADDR ? [{ tool: "spectra_get_onchain_activity", args: { chain: "mainnet", pool_address: POOL, address: ADDR, lookback_hours: 720, limit: 20 } }] : []),
     ],
-    24: [{ tool: "get_metavaults", args: {} }],
+    24: [{ tool: "spectra_list_metavaults", args: {} }],
     25: [
-      { tool: "get_best_fixed_yields", args: { top_n: 10, min_tvl_usd: 1000, min_liquidity_usd: 1000 } },
-      { tool: "scan_opportunities", args: { capital_usd: 10000, top_n: 10, include_metavaults: false } },
+      { tool: "spectra_get_best_fixed_yields", args: { top_n: 10, min_tvl_usd: 1000, min_liquidity_usd: 1000 } },
+      { tool: "spectra_scan_opportunities", args: { capital_usd: 10000, top_n: 10, include_metavaults: false } },
     ],
-    26: [{ tool: "get_metavaults", args: {} }],
+    26: [{ tool: "spectra_list_metavaults", args: {} }],
     27: [
-      { tool: "list_pools", args: { chain: "katana", min_tvl_usd: 0 } },
-      ...(KATANA_PT ? [{ tool: "get_pt_details", args: { chain: "katana", pt_address: KATANA_PT } }] : []),
+      { tool: "spectra_list_pools", args: { chain: "katana", min_tvl_usd: 0 } },
+      ...(KATANA_PT ? [{ tool: "spectra_get_pt_details", args: { chain: "katana", pt_address: KATANA_PT } }] : []),
     ],
     28: [
-      { tool: "list_pools", args: { chain: "katana", min_tvl_usd: 0 } },
-      { tool: "list_pools", args: { chain: "flare", min_tvl_usd: 0 } },
+      { tool: "spectra_list_pools", args: { chain: "katana", min_tvl_usd: 0 } },
+      { tool: "spectra_list_pools", args: { chain: "flare", min_tvl_usd: 0 } },
     ],
     29: [
-      ...(POOL ? [{ tool: "get_pool_activity", args: { chain: "mainnet", pool_address: POOL, address: TEST_ADDR, limit: 50 } }] : []),
-      { tool: "get_portfolio", args: { address: TEST_ADDR, chain: "mainnet" } },
+      ...(POOL ? [{ tool: "spectra_get_pool_activity", args: { chain: "mainnet", pool_address: POOL, address: TEST_ADDR, limit: 50 } }] : []),
+      { tool: "spectra_get_portfolio", args: { address: TEST_ADDR, chain: "mainnet" } },
     ],
-    30: [{ tool: "get_protocol_context", args: { topic: "router_batching" } }],
+    30: [{ tool: "mv_get_protocol_context", args: { topic: "router_batching" } }],
     31: [
-      { tool: "get_address_activity", args: { address: TEST_ADDR } },
-      { tool: "get_portfolio", args: { address: TEST_ADDR } },
+      { tool: "spectra_get_address_activity", args: { address: TEST_ADDR } },
+      { tool: "spectra_get_portfolio", args: { address: TEST_ADDR } },
     ],
     32: [
-      ...(POOL ? [{ tool: "get_pool_activity", args: { chain: "mainnet", pool_address: POOL, address: TEST_ADDR, limit: 50 } }] : []),
-      { tool: "get_portfolio", args: { address: TEST_ADDR, chain: "mainnet" } },
+      ...(POOL ? [{ tool: "spectra_get_pool_activity", args: { chain: "mainnet", pool_address: POOL, address: TEST_ADDR, limit: 50 } }] : []),
+      { tool: "spectra_get_portfolio", args: { address: TEST_ADDR, chain: "mainnet" } },
     ],
-    33: [{ tool: "get_protocol_context", args: { topic: "router_batching" } }],
+    33: [{ tool: "mv_get_protocol_context", args: { topic: "router_batching" } }],
     34: [
-      ...(POOL ? [{ tool: "get_pool_activity", args: { chain: "mainnet", pool_address: POOL, address: TEST_ADDR, limit: 50 } }] : []),
+      ...(POOL ? [{ tool: "spectra_get_pool_activity", args: { chain: "mainnet", pool_address: POOL, address: TEST_ADDR, limit: 50 } }] : []),
     ],
     35: [
-      ...(ADDR ? [{ tool: "get_portfolio", args: { address: ADDR, chain: "mainnet" } }] : []),
+      ...(ADDR ? [{ tool: "spectra_get_portfolio", args: { address: ADDR, chain: "mainnet" } }] : []),
     ],
     36: [
-      { tool: "get_protocol_context", args: { topic: "deposit_path" } },
-      { tool: "scan_opportunities", args: { capital_usd: 50000, top_n: 5 } },
-      { tool: "scan_curator_opportunities", args: { capital_usd: 50000, top_n: 5 } },
+      { tool: "mv_get_protocol_context", args: { topic: "deposit_path" } },
+      { tool: "spectra_scan_opportunities", args: { capital_usd: 50000, top_n: 5 } },
+      { tool: "mv_scan_curator_opportunities", args: { capital_usd: 50000, top_n: 5 } },
     ],
     37: [
-      { tool: "scan_opportunities", args: { capital_usd: 10000, top_n: 5, include_metavaults: false } },
-      { tool: "get_protocol_context", args: { topic: "workflow_routing" } },
+      { tool: "spectra_scan_opportunities", args: { capital_usd: 10000, top_n: 5, include_metavaults: false } },
+      { tool: "mv_get_protocol_context", args: { topic: "workflow_routing" } },
     ],
-    38: [{ tool: "get_protocol_context", args: { topic: "workflow_routing" } }],
+    38: [{ tool: "mv_get_protocol_context", args: { topic: "workflow_routing" } }],
   };
 }
 
@@ -522,7 +522,7 @@ async function runDiscovery(client) {
 
   // Discover mainnet pools
   try {
-    const { text: pools } = await client.callTool("list_pools", {
+    const { text: pools } = await client.callTool("spectra_list_pools", {
       chain: "mainnet", sort_by: "tvl", min_tvl_usd: 10000,
     }, TOOL_TIMEOUT_MS);
 
@@ -556,7 +556,7 @@ async function runDiscovery(client) {
   // Discover active address from pool activity
   if (result.knownPool) {
     try {
-      const { text: activity } = await client.callTool("get_pool_activity", {
+      const { text: activity } = await client.callTool("spectra_get_pool_activity", {
         chain: "mainnet", pool_address: result.knownPool, limit: 50,
       }, TOOL_TIMEOUT_MS);
 
@@ -573,7 +573,7 @@ async function runDiscovery(client) {
 
   // Discover Katana pools
   try {
-    const { text: katana } = await client.callTool("list_pools", {
+    const { text: katana } = await client.callTool("spectra_list_pools", {
       chain: "katana", min_tvl_usd: 0,
     }, TOOL_TIMEOUT_MS);
 

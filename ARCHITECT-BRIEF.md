@@ -11,33 +11,33 @@
 
 ## Current Architecture (What Exists)
 
-The Spectra MCP server is a TypeScript MCP (Model Context Protocol) server exposing 37 tools to an LLM agent. Tools are registered in `src/tools/*.ts`, share helpers via `src/api.ts` (API calls), `src/formatters.ts` (output formatting), `src/config.ts` (chain config), and `src/types.ts` (type definitions).
+The MetaVault MCP server is a TypeScript MCP (Model Context Protocol) server exposing 37 tools to an LLM agent. Tools are registered in `src/tools/*.ts`, share helpers via `src/api.ts` (API calls), `src/formatters.ts` (output formatting), `src/config.ts` (chain config), and `src/types.ts` (type definitions).
 
 ### Existing Curator-Specific Tools
 
 | Tool | File | Purpose |
 |------|------|---------|
-| `get_metavaults` | `src/tools/metavault.ts` | Discovery: list live MetaVaults across chains with APY, TVL, positions |
-| `model_metavault_strategy` | `src/tools/metavault.ts` | Modeling: double-loop economics (MV share looping + dual Morpho markets) |
-| `get_curator_dashboard` | `src/tools/metavault.ts` | Monitoring: vault health, position maturity, epoch flows, action items |
-| `scan_curator_opportunities` | `src/tools/curator_scan.ts` | Sourcing: cross-protocol Spectra + Pendle scanner with Morpho looping |
-| `curator_risk_monitor` | `src/tools/risk_monitor.ts` | Risk: liquidation distance, health factor, borrow rate drift, alert levels |
-| `stress_test_vault` | `src/tools/stress_test.ts` | Risk: withdrawal liquidity waterfall, market stress simulation |
-| `plan_rollover` | `src/tools/rollover.ts` | Ops: expiring position rollover planner with cross-protocol candidates |
-| `curator_portfolio` | `src/tools/curator_portfolio.ts` | Business: multi-vault aggregation, AUM, blended APY, concentration |
+| `spectra_list_metavaults` | `src/tools/metavault.ts` | Discovery: list live MetaVaults across chains with APY, TVL, positions |
+| `spectra_model_metavault` | `src/tools/metavault.ts` | Modeling: double-loop economics (MV share looping + dual Morpho markets) |
+| `spectra_get_curator_dashboard` | `src/tools/metavault.ts` | Monitoring: vault health, position maturity, epoch flows, action items |
+| `mv_scan_curator_opportunities` | `src/tools/curator_scan.ts` | Sourcing: cross-protocol Spectra + Pendle scanner with Morpho looping |
+| `morpho_monitor_risk` | `src/tools/risk_monitor.ts` | Risk: liquidation distance, health factor, borrow rate drift, alert levels |
+| `spectra_stress_test_vault` | `src/tools/stress_test.ts` | Risk: withdrawal liquidity waterfall, market stress simulation |
+| `mv_plan_rollover` | `src/tools/rollover.ts` | Ops: expiring position rollover planner with cross-protocol candidates |
+| `mv_get_curator_portfolio` | `src/tools/curator_portfolio.ts` | Business: multi-vault aggregation, AUM, blended APY, concentration |
 
 ### Supporting Tools (Curator-Relevant)
 
 | Tool | File | Purpose |
 |------|------|---------|
-| `check_ibt_health` | `src/tools/ibt_health.ts` | Pre-deployment IBT due diligence (conversion rate, APR composition) |
-| `get_pool_capacity` | `src/tools/capacity.ts` | Quote ladder: impact at increasing capital sizes |
-| `get_looping_strategy` | `src/tools/looping.ts` | PT + Morpho leverage table with sensitivity analysis |
-| `get_morpho_positions` | `src/tools/morpho.ts` | User's Morpho positions with health factor |
-| `get_morpho_rate` | `src/tools/morpho.ts` | Live borrow rate + supplier analysis for a specific market |
-| `get_morpho_history` | `src/tools/morpho.ts` | Historical rate/utilization time series |
-| `get_morpho_market_suppliers` | `src/tools/morpho.ts` | Lending side concentration analysis |
-| `get_ve_info` | `src/tools/ve.ts` | veSPECTRA boost computation |
+| `mv_check_ibt_health` | `src/tools/ibt_health.ts` | Pre-deployment IBT due diligence (conversion rate, APR composition) |
+| `spectra_get_pool_capacity` | `src/tools/capacity.ts` | Quote ladder: impact at increasing capital sizes |
+| `spectra_get_looping_strategy` | `src/tools/looping.ts` | PT + Morpho leverage table with sensitivity analysis |
+| `morpho_get_positions` | `src/tools/morpho.ts` | User's Morpho positions with health factor |
+| `morpho_get_rate` | `src/tools/morpho.ts` | Live borrow rate + supplier analysis for a specific market |
+| `morpho_get_history` | `src/tools/morpho.ts` | Historical rate/utilization time series |
+| `morpho_get_market_suppliers` | `src/tools/morpho.ts` | Lending side concentration analysis |
+| `spectra_get_ve_info` | `src/tools/ve.ts` | veSPECTRA boost computation |
 
 ### Data Flow Architecture
 
@@ -85,13 +85,13 @@ Seven new capabilities, ordered by priority. P0 items should block scaling exter
 
 ### P0-A: Liquidation Distance Monitor — ✅ SHIPPED
 
-> **Implemented as:** `curator_risk_monitor` in `src/tools/risk_monitor.ts`
+> **Implemented as:** `morpho_monitor_risk` in `src/tools/risk_monitor.ts`
 
 **Problem:** The curator runs leveraged Morpho positions (PT collateral + MV share collateral). Current tools show health factor as a snapshot but don't compute liquidation price, distance-to-liquidation, or rate-driven margin erosion.
 
 **Why it matters:** In November 2025, multiple curated vaults hit 100% utilization with no withdrawal liquidity due to cascading liquidations from collateral de-pegs and oracle failures ([source](https://www.cryptopolitan.com/risk-curators-took-off-in-2025-but-led-to-recent-defi-lending-vault-troubles/)). Morpho Blue has no close factor — when health factor reaches 1.0, the **entire position can be liquidated in one transaction** ([Morpho Docs: Liquidation](https://docs.morpho.org/learn/concepts/liquidation/)). The liquidator receives a ~5% bonus at 86% LLTV.
 
-**Approach:** New tool `curator_risk_monitor` in `src/tools/risk_monitor.ts`.
+**Approach:** New tool `morpho_monitor_risk` in `src/tools/risk_monitor.ts`.
 
 **Inputs:**
 - `address` (required) — curator wallet address
@@ -100,7 +100,7 @@ Seven new capabilities, ordered by priority. P0 items should block scaling exter
 
 **Logic:**
 
-1. Fetch all Morpho positions for the address via the existing Morpho GraphQL API (same endpoint as `get_morpho_positions`)
+1. Fetch all Morpho positions for the address via the existing Morpho GraphQL API (same endpoint as `morpho_get_positions`)
 2. For each borrowing position:
    - Extract: collateral amount, collateral price (from oracle), debt amount, LLTV
    - Compute `health_factor = (collateral_value * LLTV) / debt_value`
@@ -108,7 +108,7 @@ Seven new capabilities, ordered by priority. P0 items should block scaling exter
    - Compute `distance_to_liquidation_pct = (1 - (current_price / liquidation_price)) * 100` (for PT collateral, this is PT price drop tolerance)
    - If position has variable borrow rate: compute `margin_erosion_rate` = how fast the borrow cost is eating into the yield buffer
 3. Cross-reference with MetaVault data: tag positions that belong to MetaVault operations (match collateral asset to known PT addresses or MV share addresses)
-4. Fetch current borrow rates via `get_morpho_rate` logic and compare to the rate at optimal loop entry (from `model_metavault_strategy` assumptions)
+4. Fetch current borrow rates via `morpho_get_rate` logic and compare to the rate at optimal loop entry (from `spectra_model_metavault` assumptions)
 5. Generate alerts for positions where:
    - Health factor < 1.3 (standard Morpho warning threshold)
    - Distance-to-liquidation < `alert_threshold_pct`
@@ -149,13 +149,13 @@ Seven new capabilities, ordered by priority. P0 items should block scaling exter
 
 ### P0-B: Withdrawal Stress Test — ✅ SHIPPED
 
-> **Implemented as:** `stress_test_vault` in `src/tools/stress_test.ts`
+> **Implemented as:** `spectra_stress_test_vault` in `src/tools/stress_test.ts`
 
 **Problem:** MetaVaults use [ERC-7540](https://eips.ethereum.org/EIPS/eip-7540) async redemptions. Depositors request redemption in one epoch; the curator must fulfill it by the next. If the vault can't generate liquidity fast enough, redemptions fail and depositors are trapped. This is the exact scenario that [killed Stream Finance in 2025](https://www.cryptopolitan.com/risk-curators-took-off-in-2025-but-led-to-recent-defi-lending-vault-troubles/) and caused [Gauntlet to pause withdrawals on a Compound vault](https://chorus.one/reports-research/defi-curators-in-2025-navigating-chaos-building-resilience).
 
 **ERC-7540 key constraint:** The standard explicitly does not include a `cancelRequest` mechanism — once a depositor requests redemption, the vault must fulfill it. There is no "sorry, try again later." See [ERC-7540 spec](https://eips.ethereum.org/EIPS/eip-7540) and [audit considerations](https://www.quillaudits.com/research/rwa-development/relevant-standards/erc-7540-async-erc-4626-tokenized).
 
-**Approach:** New tool `stress_test_vault` in `src/tools/stress_test.ts`.
+**Approach:** New tool `spectra_stress_test_vault` in `src/tools/stress_test.ts`.
 
 **Inputs:**
 - `chain` (required)
@@ -165,11 +165,11 @@ Seven new capabilities, ordered by priority. P0 items should block scaling exter
 
 **Logic:**
 
-1. Fetch MetaVault data (same as `get_curator_dashboard`)
+1. Fetch MetaVault data (same as `spectra_get_curator_dashboard`)
 2. Build the **liquidity waterfall** — sources of cash to meet redemptions, ordered by cost:
    - **Tier 1: Idle capital** — undeployed cash in the vault (no cost)
    - **Tier 2: Naturally maturing positions** — positions expiring within the current epoch window (no cost, but time-dependent)
-   - **Tier 3: LP removal** — remove liquidity from Spectra Curve pools. Cost = price impact from `get_pool_capacity` logic at the redemption amount. Use `buildQuoteFromPt` or on-chain `get_dy()` to estimate exit impact.
+   - **Tier 3: LP removal** — remove liquidity from Spectra Curve pools. Cost = price impact from `spectra_get_pool_capacity` logic at the redemption amount. Use `buildQuoteFromPt` or on-chain `get_dy()` to estimate exit impact.
    - **Tier 4: PT sale** — sell PT tokens on the Curve pool. Higher impact than LP removal. Quote using existing `tryOnChainQuote` from `src/tools/quote.ts`.
    - **Tier 5: Morpho deleverage** — unwind Morpho loops. Cost = borrow repayment + any slippage on collateral liquidation.
 3. For each tier, compute:
@@ -204,7 +204,7 @@ Seven new capabilities, ordered by priority. P0 items should block scaling exter
 ```
 
 **Key design decisions:**
-- LP removal impact should use the **same constant-product model** as `scan_opportunities` for consistency, with optional on-chain quotes for precision
+- LP removal impact should use the **same constant-product model** as `spectra_scan_opportunities` for consistency, with optional on-chain quotes for precision
 - Pendle position exits need a different model (no Curve pool) — use Pendle AMM impact estimate from `estimatePendlePriceImpact` in `src/formatters.ts`
 - Cross-chain positions (e.g., Base vault → Avalanche pool) add bridge latency — flag these as unavailable within a single epoch
 
@@ -216,11 +216,11 @@ Seven new capabilities, ordered by priority. P0 items should block scaling exter
 
 ### P1-A: Position Rollover Planner — ✅ SHIPPED
 
-> **Implemented as:** `plan_rollover` in `src/tools/rollover.ts`
+> **Implemented as:** `mv_plan_rollover` in `src/tools/rollover.ts`
 
 **Problem:** When a MetaVault position approaches maturity, the curator must: (1) identify the next pool, (2) estimate transition costs, (3) time the entry, (4) execute the rollover. The dashboard warns about expiry but doesn't help with steps 1-3.
 
-**Approach:** New tool `plan_rollover` in `src/tools/rollover.ts`.
+**Approach:** New tool `mv_plan_rollover` in `src/tools/rollover.ts`.
 
 **Inputs:**
 - `chain` (required)
@@ -234,7 +234,7 @@ Seven new capabilities, ordered by priority. P0 items should block scaling exter
 1. Fetch MetaVault data, identify expiring positions
 2. For each expiring position:
    - Determine current allocation size (from dashboard logic)
-   - Run `scan_curator_opportunities` filtered to the same underlying asset
+   - Run `mv_scan_curator_opportunities` filtered to the same underlying asset
    - For each candidate:
      - Compute entry impact at the position's capital size
      - Check maturity overlap: can the new position be entered *before* the old one matures?
@@ -245,7 +245,7 @@ Seven new capabilities, ordered by priority. P0 items should block scaling exter
 
 **Output:** Per expiring position: ranked list of rollover candidates with entry impact, yield gap, overlap window, and net effective APY after transition costs.
 
-**Dependencies:** Reuses `scan_curator_opportunities` logic internally. The main new code is the overlap/gap calculation and the integration with dashboard position data.
+**Dependencies:** Reuses `mv_scan_curator_opportunities` logic internally. The main new code is the overlap/gap calculation and the integration with dashboard position data.
 
 **Estimation:** ~2-3 days.
 
@@ -253,13 +253,13 @@ Seven new capabilities, ordered by priority. P0 items should block scaling exter
 
 ### P1-B: Borrow Rate Risk Analyzer
 
-**Problem:** `get_looping_strategy` shows sensitivity at fixed rate deltas (+1/+2/+3%). `get_morpho_history` shows historical trends. Neither combines them into a probabilistic risk assessment.
+**Problem:** `spectra_get_looping_strategy` shows sensitivity at fixed rate deltas (+1/+2/+3%). `morpho_get_history` shows historical trends. Neither combines them into a probabilistic risk assessment.
 
-**Approach:** Extend `get_morpho_history` output OR add a section to `model_metavault_strategy`.
+**Approach:** Extend `morpho_get_history` output OR add a section to `spectra_model_metavault`.
 
 **Logic:**
 
-1. Fetch historical borrow rate data (existing `get_morpho_history` logic)
+1. Fetch historical borrow rate data (existing `morpho_get_history` logic)
 2. Compute:
    - Mean and standard deviation of borrow rate over the period
    - Maximum observed rate
@@ -279,7 +279,7 @@ Seven new capabilities, ordered by priority. P0 items should block scaling exter
    5     4.25x      6.4%       7.8%           ❌
    ```
 
-**Dependencies:** `get_morpho_history` data. Normal CDF can be approximated with a simple formula (no external lib needed).
+**Dependencies:** `morpho_get_history` data. Normal CDF can be approximated with a simple formula (no external lib needed).
 
 **Estimation:** ~1-2 days. Mostly math on top of existing data.
 
@@ -287,11 +287,11 @@ Seven new capabilities, ordered by priority. P0 items should block scaling exter
 
 ### P2-A: Multi-Vault Curator Portfolio — ✅ SHIPPED
 
-> **Implemented as:** `curator_portfolio` in `src/tools/curator_portfolio.ts`
+> **Implemented as:** `mv_get_curator_portfolio` in `src/tools/curator_portfolio.ts`
 
 **Problem:** A curator-as-a-service manages multiple MetaVaults. No aggregate view exists.
 
-**Approach:** New tool `curator_portfolio` in `src/tools/curator_portfolio.ts`.
+**Approach:** New tool `mv_get_curator_portfolio` in `src/tools/curator_portfolio.ts`.
 
 **Inputs:**
 - `curator_address` (optional) — discover all MetaVaults by curator
@@ -319,7 +319,7 @@ Seven new capabilities, ordered by priority. P0 items should block scaling exter
 
 **Problem:** Need a track record to attract depositors.
 
-**Approach:** Add `include_performance=true` parameter to `get_curator_dashboard`.
+**Approach:** Add `include_performance=true` parameter to `spectra_get_curator_dashboard`.
 
 **Logic:**
 
@@ -329,7 +329,7 @@ Seven new capabilities, ordered by priority. P0 items should block scaling exter
    - Max drawdown: largest peak-to-trough decline in the series
    - Volatility: annualized std dev of epoch-over-epoch returns
    - Sharpe-like ratio: `(annualizedReturn - riskFreeRate) / volatility` (use Morpho USDC supply APY as risk-free proxy)
-2. Benchmark comparison: fetch Morpho USDC supply APY from `get_morpho_history` for the same period
+2. Benchmark comparison: fetch Morpho USDC supply APY from `morpho_get_history` for the same period
 
 **Output:**
 ```
@@ -349,7 +349,7 @@ Seven new capabilities, ordered by priority. P0 items should block scaling exter
 
 **Problem:** Looping strategies have meaningful gas costs on mainnet.
 
-**Approach:** Add `gas_estimate` section to `get_looping_strategy` and `model_metavault_strategy` output.
+**Approach:** Add `gas_estimate` section to `spectra_get_looping_strategy` and `spectra_model_metavault` output.
 
 **Logic:**
 
@@ -386,10 +386,10 @@ All new tools should:
 ### 3. New Files Created ✅
 
 ```
-src/tools/risk_monitor.ts    — P0-A: curator_risk_monitor ✅
-src/tools/stress_test.ts     — P0-B: stress_test_vault ✅
-src/tools/rollover.ts        — P1-A: plan_rollover ✅
-src/tools/curator_portfolio.ts — P2-A: curator_portfolio ✅
+src/tools/risk_monitor.ts    — P0-A: morpho_monitor_risk ✅
+src/tools/stress_test.ts     — P0-B: spectra_stress_test_vault ✅
+src/tools/rollover.ts        — P1-A: mv_plan_rollover ✅
+src/tools/curator_portfolio.ts — P2-A: mv_get_curator_portfolio ✅
 ```
 
 P1-B (borrow rate risk) and P2-B (performance metrics) extend existing tools rather than creating new files.
@@ -481,7 +481,7 @@ interface CuratorPortfolioSummary {
 Follow existing patterns:
 - **Unit tests** (`npm run test:unit`): Test liquidation math, waterfall logic, rate risk calculations in isolation
 - **Integration tests** (`npm test`): Test full tool execution with mocked API responses
-- **Agent tests** (`npm run test:agent`): Add cross-tool workflow assertions (e.g., "risk monitor detects position that model_metavault_strategy flagged as safe at entry")
+- **Agent tests** (`npm run test:agent`): Add cross-tool workflow assertions (e.g., "risk monitor detects position that spectra_model_metavault flagged as safe at entry")
 - **Subjective tests** (`npm run test:subjective`): Add rubric questions to `AGENT-TESTS.md` (e.g., "A curator has a 4-loop position and borrow rate has increased 2%. What should they do?")
 
 ---
@@ -503,7 +503,7 @@ The November 2025 crisis ([detailed analysis](https://chorus.one/reports-researc
 2. **100% utilization** → withdrawal queues frozen, depositors trapped
 3. **Oracle failure** (Binance USDe flash crash) → incorrect liquidation triggers
 
-Our P0-A (liquidation monitoring) addresses failure mode 1. Our P0-B (withdrawal stress test) addresses failure mode 2. Oracle risk is partially covered by `check_ibt_health` (conversion rate divergence check) but could be extended.
+Our P0-A (liquidation monitoring) addresses failure mode 1. Our P0-B (withdrawal stress test) addresses failure mode 2. Oracle risk is partially covered by `mv_check_ibt_health` (conversion rate divergence check) but could be extended.
 
 ### Morpho-Specific Mechanics
 

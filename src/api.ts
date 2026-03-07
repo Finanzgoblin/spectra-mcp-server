@@ -388,7 +388,7 @@ export async function fetchMorphoMarketSuppliers(
 
 /**
  * Fetch all Morpho-related addresses a user interacts with on a chain.
- * Used by get_portfolio to match Merkl rewards against Morpho positions.
+ * Used by spectra_get_portfolio to match Merkl rewards against Morpho positions.
  * Returns a Set of lowercased addresses: vault addresses, loan asset addresses,
  * collateral asset addresses, Morpho Blue contract address.
  * Best-effort — returns empty set on error.
@@ -959,7 +959,7 @@ export interface ChainScanOptions {
 /**
  * Scan all Spectra chains in parallel, returning non-expired PT×pool pairs
  * that pass TVL, liquidity, and optional asset filters.
- * Shared by get_best_fixed_yields, scan_opportunities, and scan_yt_arbitrage.
+ * Shared by spectra_get_best_fixed_yields, spectra_scan_opportunities, and spectra_scan_yt_arbitrage.
  * Uses a 30s TTL cache per chain to avoid redundant API calls.
  */
 export async function scanAllChainPools(

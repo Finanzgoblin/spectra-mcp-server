@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Spectra MCP Server -- Persistent Test Suite
+ * MetaVault MCP Server -- Persistent Test Suite
  *
  * Zero dependencies. Spawns the MCP server as a child process and exercises
  * every tool via JSON-RPC over stdio.
@@ -25,7 +25,7 @@ const API_TIMEOUT_MS = 20_000; // per-tool call
 const TOTAL_TIMEOUT_MS = 120_000; // whole suite
 const OFFLINE = process.argv.includes("--offline");
 
-// Dynamically discovered from list_pools during testListPools
+// Dynamically discovered from spectra_list_pools during testListPools
 let KNOWN_POOL = "";
 let KNOWN_PT = "";
 // Full-length zero address for portfolio edge-case tests
@@ -90,7 +90,7 @@ class McpTestClient {
     const initRes = await this.request("initialize", {
       protocolVersion: "2024-11-05",
       capabilities: {},
-      clientInfo: { name: "spectra-test", version: "1.0" },
+      clientInfo: { name: "metavault-test", version: "1.0" },
     }, 10_000);
 
     // Send initialized notification
@@ -188,44 +188,44 @@ async function testToolRegistration(client) {
   assert(tools.length === 38, "exactly 38 tools registered", `got ${tools.length}: ${names.join(", ")}`);
 
   const expected = [
-    "get_pt_details",
-    "list_pools",
-    "get_best_fixed_yields",
-    "get_looping_strategy",
-    "compare_yield",
-    "get_protocol_stats",
-    "get_supported_chains",
-    "get_portfolio",
-    "get_pool_volume",
-    "get_pool_activity",
-    "get_address_activity",
-    "get_morpho_markets",
-    "get_morpho_rate",
-    "get_morpho_market_suppliers",
-    "get_morpho_vaults",
-    "get_morpho_positions",
-    "get_morpho_history",
-    "quote_trade",
-    "simulate_portfolio_after_trade",
-    "scan_opportunities",
-    "scan_yt_arbitrage",
-    "get_ve_info",
-    "get_metavaults",
-    "model_metavault_strategy",
-    "get_curator_dashboard",
-    "get_protocol_context",
-    "list_pendle_markets",
-    "compare_pendle_spectra",
-    "scan_curator_opportunities",
-    "get_onchain_activity",
-    "get_pool_capacity",
-    "check_ibt_health",
-    "get_yield_curve",
-    "curator_risk_monitor",
-    "stress_test_vault",
-    "plan_rollover",
-    "curator_portfolio",
-    "get_expiring_pools",
+    "spectra_get_pt_details",
+    "spectra_list_pools",
+    "spectra_get_best_fixed_yields",
+    "spectra_get_looping_strategy",
+    "spectra_compare_yield",
+    "spectra_get_protocol_stats",
+    "spectra_list_chains",
+    "spectra_get_portfolio",
+    "spectra_get_pool_volume",
+    "spectra_get_pool_activity",
+    "spectra_get_address_activity",
+    "morpho_list_markets",
+    "morpho_get_rate",
+    "morpho_get_market_suppliers",
+    "morpho_list_vaults",
+    "morpho_get_positions",
+    "morpho_get_history",
+    "spectra_quote_trade",
+    "spectra_simulate_trade",
+    "spectra_scan_opportunities",
+    "spectra_scan_yt_arbitrage",
+    "spectra_get_ve_info",
+    "spectra_list_metavaults",
+    "spectra_model_metavault",
+    "spectra_get_curator_dashboard",
+    "mv_get_protocol_context",
+    "pendle_list_markets",
+    "mv_compare_yield",
+    "mv_scan_curator_opportunities",
+    "spectra_get_onchain_activity",
+    "spectra_get_pool_capacity",
+    "mv_check_ibt_health",
+    "spectra_get_yield_curve",
+    "morpho_monitor_risk",
+    "spectra_stress_test_vault",
+    "mv_plan_rollover",
+    "mv_get_curator_portfolio",
+    "spectra_list_expiring_pools",
   ];
 
   for (const name of expected) {
@@ -242,19 +242,19 @@ async function testToolRegistration(client) {
     );
   }
 
-  // Spot-check: get_pool_activity schema has type_filter enum
-  const activityTool = tools.find((t) => t.name === "get_pool_activity");
+  // Spot-check: spectra_get_pool_activity schema has type_filter enum
+  const activityTool = tools.find((t) => t.name === "spectra_get_pool_activity");
   if (activityTool) {
     const typeFilter = activityTool.inputSchema.properties.type_filter;
     assert(
       typeFilter && typeFilter.enum && typeFilter.enum.includes("BUY_PT") && typeFilter.enum.includes("all"),
-      "get_pool_activity type_filter enum correct",
+      "spectra_get_pool_activity type_filter enum correct",
       `got: ${JSON.stringify(typeFilter && typeFilter.enum)}`
     );
   }
 
   // Spot-check: chain enum includes ethereum alias
-  const ptTool = tools.find((t) => t.name === "get_pt_details");
+  const ptTool = tools.find((t) => t.name === "spectra_get_pt_details");
   if (ptTool) {
     const chainEnum = ptTool.inputSchema.properties.chain.enum;
     assert(
@@ -275,7 +275,7 @@ async function testToolRegistration(client) {
     );
   }
 
-  const portfolioTool = tools.find((t) => t.name === "get_portfolio");
+  const portfolioTool = tools.find((t) => t.name === "spectra_get_portfolio");
   if (portfolioTool) {
     const addrSchema = portfolioTool.inputSchema.properties.address;
     assert(
@@ -286,28 +286,28 @@ async function testToolRegistration(client) {
   }
 
   // Morpho tools schema checks
-  const morphoMarketsTool = tools.find((t) => t.name === "get_morpho_markets");
-  assert(morphoMarketsTool, "get_morpho_markets registered", "missing");
+  const morphoMarketsTool = tools.find((t) => t.name === "morpho_list_markets");
+  assert(morphoMarketsTool, "morpho_list_markets registered", "missing");
   if (morphoMarketsTool) {
     const props = morphoMarketsTool.inputSchema.properties;
-    assert(props.sort_by && props.sort_by.enum, "get_morpho_markets has sort_by enum", "missing");
-    assert(props.chain, "get_morpho_markets has optional chain param", "missing");
+    assert(props.sort_by && props.sort_by.enum, "morpho_list_markets has sort_by enum", "missing");
+    assert(props.chain, "morpho_list_markets has optional chain param", "missing");
   }
 
-  const morphoRateTool = tools.find((t) => t.name === "get_morpho_rate");
-  assert(morphoRateTool, "get_morpho_rate registered", "missing");
+  const morphoRateTool = tools.find((t) => t.name === "morpho_get_rate");
+  assert(morphoRateTool, "morpho_get_rate registered", "missing");
   if (morphoRateTool) {
     const props = morphoRateTool.inputSchema.properties;
     assert(
       props.market_key && props.market_key.pattern,
-      "get_morpho_rate market_key has regex pattern",
+      "morpho_get_rate market_key has regex pattern",
       `no pattern: ${JSON.stringify(props.market_key)}`
     );
-    assert(props.chain, "get_morpho_rate has chain param", "missing");
+    assert(props.chain, "morpho_get_rate has chain param", "missing");
   }
 
   // Verify looping strategy morpho_ltv and borrow_rate are now optional (no default in required)
-  const loopTool = tools.find((t) => t.name === "get_looping_strategy");
+  const loopTool = tools.find((t) => t.name === "spectra_get_looping_strategy");
   if (loopTool) {
     const required = loopTool.inputSchema.required || [];
     assert(
@@ -317,28 +317,28 @@ async function testToolRegistration(client) {
     );
   }
 
-  // quote_trade schema checks
-  const quoteTool = tools.find((t) => t.name === "quote_trade");
-  assert(quoteTool, "quote_trade registered", "missing");
+  // spectra_quote_trade schema checks
+  const quoteTool = tools.find((t) => t.name === "spectra_quote_trade");
+  assert(quoteTool, "spectra_quote_trade registered", "missing");
   if (quoteTool) {
     const props = quoteTool.inputSchema.properties;
     assert(props.side && props.side.enum && props.side.enum.includes("buy") && props.side.enum.includes("sell"),
-      "quote_trade has buy/sell side enum", `got: ${JSON.stringify(props.side)}`);
-    assert(props.amount, "quote_trade has amount param", "missing");
-    assert(props.slippage_tolerance, "quote_trade has slippage_tolerance param", "missing");
-    assert(props.pt_address && props.pt_address.pattern, "quote_trade pt_address has regex", "missing");
+      "spectra_quote_trade has buy/sell side enum", `got: ${JSON.stringify(props.side)}`);
+    assert(props.amount, "spectra_quote_trade has amount param", "missing");
+    assert(props.slippage_tolerance, "spectra_quote_trade has slippage_tolerance param", "missing");
+    assert(props.pt_address && props.pt_address.pattern, "spectra_quote_trade pt_address has regex", "missing");
     const required = quoteTool.inputSchema.required || [];
     assert(required.includes("chain") && required.includes("pt_address") && required.includes("amount") && required.includes("side"),
-      "quote_trade requires chain, pt_address, amount, side",
+      "spectra_quote_trade requires chain, pt_address, amount, side",
       `required: ${JSON.stringify(required)}`);
     assert(!required.includes("slippage_tolerance"),
-      "quote_trade: slippage_tolerance is optional",
+      "spectra_quote_trade: slippage_tolerance is optional",
       `required: ${JSON.stringify(required)}`);
   }
 
-  // simulate_portfolio_after_trade schema checks
-  const simTool = tools.find((t) => t.name === "simulate_portfolio_after_trade");
-  assert(simTool, "simulate_portfolio_after_trade registered", "missing");
+  // spectra_simulate_trade schema checks
+  const simTool = tools.find((t) => t.name === "spectra_simulate_trade");
+  assert(simTool, "spectra_simulate_trade registered", "missing");
   if (simTool) {
     const props = simTool.inputSchema.properties;
     assert(props.address && props.address.pattern, "simulate has wallet address with regex", "missing");
@@ -357,101 +357,101 @@ async function testToolRegistration(client) {
       `required: ${JSON.stringify(required)}`);
   }
 
-  // scan_opportunities schema checks
-  const scanTool = tools.find((t) => t.name === "scan_opportunities");
-  assert(scanTool, "scan_opportunities registered", "missing");
+  // spectra_scan_opportunities schema checks
+  const scanTool = tools.find((t) => t.name === "spectra_scan_opportunities");
+  assert(scanTool, "spectra_scan_opportunities registered", "missing");
   if (scanTool) {
     const props = scanTool.inputSchema.properties;
-    assert(props.capital_usd, "scan_opportunities has capital_usd param", "missing");
-    assert(props.include_looping, "scan_opportunities has include_looping param", "missing");
-    assert(props.max_price_impact_pct, "scan_opportunities has max_price_impact_pct param", "missing");
-    assert(props.top_n, "scan_opportunities has top_n param", "missing");
-    assert(props.asset_filter, "scan_opportunities has asset_filter param", "missing");
+    assert(props.capital_usd, "spectra_scan_opportunities has capital_usd param", "missing");
+    assert(props.include_looping, "spectra_scan_opportunities has include_looping param", "missing");
+    assert(props.max_price_impact_pct, "spectra_scan_opportunities has max_price_impact_pct param", "missing");
+    assert(props.top_n, "spectra_scan_opportunities has top_n param", "missing");
+    assert(props.asset_filter, "spectra_scan_opportunities has asset_filter param", "missing");
     const required = scanTool.inputSchema.required || [];
     assert(required.includes("capital_usd"),
-      "scan_opportunities requires capital_usd",
+      "spectra_scan_opportunities requires capital_usd",
       `required: ${JSON.stringify(required)}`);
     assert(!required.includes("asset_filter"),
-      "scan_opportunities: asset_filter is optional",
+      "spectra_scan_opportunities: asset_filter is optional",
       `required: ${JSON.stringify(required)}`);
     assert(!required.includes("include_looping"),
-      "scan_opportunities: include_looping is optional",
+      "spectra_scan_opportunities: include_looping is optional",
       `required: ${JSON.stringify(required)}`);
     assert(!required.includes("max_price_impact_pct"),
-      "scan_opportunities: max_price_impact_pct is optional",
+      "spectra_scan_opportunities: max_price_impact_pct is optional",
       `required: ${JSON.stringify(required)}`);
   }
 
-  // scan_yt_arbitrage schema checks
-  const ytArbTool = tools.find((t) => t.name === "scan_yt_arbitrage");
-  assert(ytArbTool, "scan_yt_arbitrage registered", "missing");
+  // spectra_scan_yt_arbitrage schema checks
+  const ytArbTool = tools.find((t) => t.name === "spectra_scan_yt_arbitrage");
+  assert(ytArbTool, "spectra_scan_yt_arbitrage registered", "missing");
   if (ytArbTool) {
     const props = ytArbTool.inputSchema.properties;
-    assert(props.capital_usd, "scan_yt_arbitrage has capital_usd param", "missing");
-    assert(props.min_spread_pct, "scan_yt_arbitrage has min_spread_pct param", "missing");
-    assert(props.asset_filter, "scan_yt_arbitrage has asset_filter param", "missing");
-    assert(props.top_n, "scan_yt_arbitrage has top_n param", "missing");
-    assert(props.max_price_impact_pct, "scan_yt_arbitrage has max_price_impact_pct param", "missing");
+    assert(props.capital_usd, "spectra_scan_yt_arbitrage has capital_usd param", "missing");
+    assert(props.min_spread_pct, "spectra_scan_yt_arbitrage has min_spread_pct param", "missing");
+    assert(props.asset_filter, "spectra_scan_yt_arbitrage has asset_filter param", "missing");
+    assert(props.top_n, "spectra_scan_yt_arbitrage has top_n param", "missing");
+    assert(props.max_price_impact_pct, "spectra_scan_yt_arbitrage has max_price_impact_pct param", "missing");
     const required = ytArbTool.inputSchema.required || [];
     assert(required.includes("capital_usd"),
-      "scan_yt_arbitrage requires capital_usd",
+      "spectra_scan_yt_arbitrage requires capital_usd",
       `required: ${JSON.stringify(required)}`);
     assert(!required.includes("min_spread_pct"),
-      "scan_yt_arbitrage: min_spread_pct is optional",
+      "spectra_scan_yt_arbitrage: min_spread_pct is optional",
       `required: ${JSON.stringify(required)}`);
     assert(!required.includes("asset_filter"),
-      "scan_yt_arbitrage: asset_filter is optional",
+      "spectra_scan_yt_arbitrage: asset_filter is optional",
       `required: ${JSON.stringify(required)}`);
     assert(!required.includes("ve_spectra_balance"),
-      "scan_yt_arbitrage: ve_spectra_balance is optional",
+      "spectra_scan_yt_arbitrage: ve_spectra_balance is optional",
       `required: ${JSON.stringify(required)}`);
-    assert(props.ve_spectra_balance, "scan_yt_arbitrage has ve_spectra_balance param", "missing");
+    assert(props.ve_spectra_balance, "spectra_scan_yt_arbitrage has ve_spectra_balance param", "missing");
   }
 
-  // Check ve_spectra_balance on scan_opportunities and compare_yield
+  // Check ve_spectra_balance on spectra_scan_opportunities and spectra_compare_yield
   {
-    const scanOpp = tools.find((t) => t.name === "scan_opportunities");
+    const scanOpp = tools.find((t) => t.name === "spectra_scan_opportunities");
     const scanProps = scanOpp.inputSchema.properties;
-    assert(scanProps.ve_spectra_balance, "scan_opportunities has ve_spectra_balance param", "missing");
+    assert(scanProps.ve_spectra_balance, "spectra_scan_opportunities has ve_spectra_balance param", "missing");
     assert(!scanOpp.inputSchema.required.includes("ve_spectra_balance"),
-      "scan_opportunities: ve_spectra_balance is optional",
+      "spectra_scan_opportunities: ve_spectra_balance is optional",
       "ve_spectra_balance should be optional");
   }
   {
-    const cmpYield = tools.find((t) => t.name === "compare_yield");
+    const cmpYield = tools.find((t) => t.name === "spectra_compare_yield");
     const cmpProps = cmpYield.inputSchema.properties;
-    assert(cmpProps.ve_spectra_balance, "compare_yield has ve_spectra_balance param", "missing");
+    assert(cmpProps.ve_spectra_balance, "spectra_compare_yield has ve_spectra_balance param", "missing");
     assert(!cmpYield.inputSchema.required.includes("ve_spectra_balance"),
-      "compare_yield: ve_spectra_balance is optional",
+      "spectra_compare_yield: ve_spectra_balance is optional",
       "ve_spectra_balance should be optional");
-    // compare_yield now also has capital_usd
-    assert(cmpProps.capital_usd, "compare_yield has capital_usd param", "missing");
+    // spectra_compare_yield now also has capital_usd
+    assert(cmpProps.capital_usd, "spectra_compare_yield has capital_usd param", "missing");
     assert(!cmpYield.inputSchema.required.includes("capital_usd"),
-      "compare_yield: capital_usd is optional",
+      "spectra_compare_yield: capital_usd is optional",
       "capital_usd should be optional");
   }
 
-  // get_ve_info schema checks
-  const veTool = tools.find((t) => t.name === "get_ve_info");
-  assert(veTool, "get_ve_info registered", "missing");
+  // spectra_get_ve_info schema checks
+  const veTool = tools.find((t) => t.name === "spectra_get_ve_info");
+  assert(veTool, "spectra_get_ve_info registered", "missing");
   if (veTool) {
     const props = veTool.inputSchema.properties;
-    assert(props.ve_spectra_balance, "get_ve_info has ve_spectra_balance param", "missing");
-    assert(props.capital_usd, "get_ve_info has capital_usd param", "missing");
-    assert(props.chain, "get_ve_info has chain param", "missing");
-    assert(props.pt_address, "get_ve_info has pt_address param", "missing");
+    assert(props.ve_spectra_balance, "spectra_get_ve_info has ve_spectra_balance param", "missing");
+    assert(props.capital_usd, "spectra_get_ve_info has capital_usd param", "missing");
+    assert(props.chain, "spectra_get_ve_info has chain param", "missing");
+    assert(props.pt_address, "spectra_get_ve_info has pt_address param", "missing");
     // All params should be optional
     const required = veTool.inputSchema.required || [];
     assert(required.length === 0,
-      "get_ve_info: all params are optional",
+      "spectra_get_ve_info: all params are optional",
       `required: ${JSON.stringify(required)}`);
   }
 }
 
 async function testGetSupportedChains(client) {
-  console.log("\n--- get_supported_chains ---");
+  console.log("\n--- spectra_list_chains ---");
 
-  const { text } = await client.callTool("get_supported_chains");
+  const { text } = await client.callTool("spectra_list_chains");
   assert(text.includes("Supported Chains"), "header present", "missing header");
   assert(text.includes("mainnet"), "lists mainnet", "missing mainnet");
   assert(text.includes("base"), "lists base", "missing base");
@@ -465,9 +465,9 @@ async function testGetSupportedChains(client) {
 }
 
 async function testGetProtocolStats(client) {
-  console.log("\n--- get_protocol_stats ---");
+  console.log("\n--- spectra_get_protocol_stats ---");
 
-  const { text } = await client.callTool("get_protocol_stats");
+  const { text } = await client.callTool("spectra_get_protocol_stats");
   assert(text.includes("Protocol Stats"), "header present", "missing header");
   assert(text.includes("Circulating Supply"), "has circulating supply", "missing");
   assert(text.includes("Total Supply"), "has total supply", "missing");
@@ -484,9 +484,9 @@ async function testGetProtocolStats(client) {
 }
 
 async function testListPools(client) {
-  console.log("\n--- list_pools ---");
+  console.log("\n--- spectra_list_pools ---");
 
-  const { text } = await client.callTool("list_pools", {
+  const { text } = await client.callTool("spectra_list_pools", {
     chain: "mainnet",
     sort_by: "tvl",
     min_tvl_usd: 0,
@@ -503,7 +503,7 @@ async function testListPools(client) {
     KNOWN_POOL = poolMatch[1];
     pass("dynamically discovered pool address for later tests");
   } else {
-    skip("could not discover pool address from list_pools");
+    skip("could not discover pool address from spectra_list_pools");
   }
 
   const ptMatch = text.match(/PT Address:\s+(0x[a-fA-F0-9]{40})/);
@@ -511,11 +511,11 @@ async function testListPools(client) {
     KNOWN_PT = ptMatch[1];
     pass("dynamically discovered PT address for later tests");
   } else {
-    skip("could not discover PT address from list_pools");
+    skip("could not discover PT address from spectra_list_pools");
   }
 
   // Test with high TVL filter -- should return fewer or zero
-  const { text: filtered } = await client.callTool("list_pools", {
+  const { text: filtered } = await client.callTool("spectra_list_pools", {
     chain: "mainnet",
     sort_by: "tvl",
     min_tvl_usd: 999999999999,
@@ -528,15 +528,15 @@ async function testListPools(client) {
 }
 
 async function testGetPtDetails(client) {
-  console.log("\n--- get_pt_details ---");
+  console.log("\n--- spectra_get_pt_details ---");
 
   if (!KNOWN_PT) {
-    skip("get_pt_details (no PT address discovered)");
+    skip("spectra_get_pt_details (no PT address discovered)");
     return;
   }
 
   const ptAddr = KNOWN_PT;
-  const { text } = await client.callTool("get_pt_details", {
+  const { text } = await client.callTool("spectra_get_pt_details", {
     chain: "mainnet",
     pt_address: ptAddr,
   });
@@ -547,22 +547,22 @@ async function testGetPtDetails(client) {
   assert(text.includes("IBT"), "has IBT info", "missing");
 
   // Test ethereum alias resolves correctly
-  const { text: aliased } = await client.callTool("get_pt_details", {
+  const { text: aliased } = await client.callTool("spectra_get_pt_details", {
     chain: "ethereum",
     pt_address: ptAddr,
   });
-  assert(aliased.includes("Maturity"), "ethereum alias works for get_pt_details", "failed");
+  assert(aliased.includes("Maturity"), "ethereum alias works for spectra_get_pt_details", "failed");
 }
 
 async function testCompareYield(client) {
-  console.log("\n--- compare_yield ---");
+  console.log("\n--- spectra_compare_yield ---");
 
   if (!KNOWN_PT) {
-    skip("compare_yield (no PT address discovered)");
+    skip("spectra_compare_yield (no PT address discovered)");
     return;
   }
 
-  const { text } = await client.callTool("compare_yield", {
+  const { text } = await client.callTool("spectra_compare_yield", {
     chain: "mainnet",
     pt_address: KNOWN_PT,
   });
@@ -581,9 +581,9 @@ async function testCompareYield(client) {
 }
 
 async function testGetBestFixedYields(client) {
-  console.log("\n--- get_best_fixed_yields ---");
+  console.log("\n--- spectra_get_best_fixed_yields ---");
 
-  const { text } = await client.callTool("get_best_fixed_yields", {
+  const { text } = await client.callTool("spectra_get_best_fixed_yields", {
     min_tvl_usd: 10000,
     min_liquidity_usd: 5000,
     top_n: 3,
@@ -603,7 +603,7 @@ async function testGetBestFixedYields(client) {
   }
 
   // Test with asset filter
-  const { text: usdcOnly } = await client.callTool("get_best_fixed_yields", {
+  const { text: usdcOnly } = await client.callTool("spectra_get_best_fixed_yields", {
     asset_filter: "USDC",
     min_tvl_usd: 1000,
     min_liquidity_usd: 1000,
@@ -618,14 +618,14 @@ async function testGetBestFixedYields(client) {
 }
 
 async function testGetLoopingStrategy(client) {
-  console.log("\n--- get_looping_strategy ---");
+  console.log("\n--- spectra_get_looping_strategy ---");
 
   if (!KNOWN_PT) {
-    skip("get_looping_strategy (no PT address discovered)");
+    skip("spectra_get_looping_strategy (no PT address discovered)");
     return;
   }
 
-  const { text } = await client.callTool("get_looping_strategy", {
+  const { text } = await client.callTool("spectra_get_looping_strategy", {
     chain: "mainnet",
     pt_address: KNOWN_PT,
     morpho_ltv: 0.86,
@@ -646,10 +646,10 @@ async function testGetLoopingStrategy(client) {
 }
 
 async function testGetPortfolio(client) {
-  console.log("\n--- get_portfolio ---");
+  console.log("\n--- spectra_get_portfolio ---");
 
   // Use full-length zero address
-  const { text } = await client.callTool("get_portfolio", {
+  const { text } = await client.callTool("spectra_get_portfolio", {
     address: ZERO_ADDRESS,
     chain: "mainnet",
   });
@@ -662,7 +662,7 @@ async function testGetPortfolio(client) {
 
   // Test with no chain (all-chain scan) -- should not crash
   const { text: allChain } = await client.callTool(
-    "get_portfolio",
+    "spectra_get_portfolio",
     { address: ZERO_ADDRESS },
     30_000
   );
@@ -675,14 +675,14 @@ async function testGetPortfolio(client) {
 }
 
 async function testGetPoolVolume(client) {
-  console.log("\n--- get_pool_volume ---");
+  console.log("\n--- spectra_get_pool_volume ---");
 
   if (!KNOWN_POOL) {
-    skip("get_pool_volume (no pool address discovered)");
+    skip("spectra_get_pool_volume (no pool address discovered)");
     return;
   }
 
-  const { text } = await client.callTool("get_pool_volume", {
+  const { text } = await client.callTool("spectra_get_pool_volume", {
     chain: "mainnet",
     pool_address: KNOWN_POOL,
   });
@@ -693,7 +693,7 @@ async function testGetPoolVolume(client) {
   assert(text.includes("Buy:") && text.includes("Sell:"), "has buy/sell breakdown", "missing");
 
   // Test with invalid pool (full-length address)
-  const { text: bad } = await client.callTool("get_pool_volume", {
+  const { text: bad } = await client.callTool("spectra_get_pool_volume", {
     chain: "mainnet",
     pool_address: "0x0000000000000000000000000000000000000000",
   });
@@ -706,15 +706,15 @@ async function testGetPoolVolume(client) {
 }
 
 async function testGetPoolActivity(client) {
-  console.log("\n--- get_pool_activity ---");
+  console.log("\n--- spectra_get_pool_activity ---");
 
   if (!KNOWN_POOL) {
-    skip("get_pool_activity (no pool address discovered)");
+    skip("spectra_get_pool_activity (no pool address discovered)");
     return;
   }
 
   // Default (all types)
-  const { text } = await client.callTool("get_pool_activity", {
+  const { text } = await client.callTool("spectra_get_pool_activity", {
     chain: "mainnet",
     pool_address: KNOWN_POOL,
   });
@@ -725,7 +725,7 @@ async function testGetPoolActivity(client) {
   assert(text.includes("Recent Activity"), "has activity table", "missing");
 
   // Filter: BUY_PT only
-  const { text: buyOnly } = await client.callTool("get_pool_activity", {
+  const { text: buyOnly } = await client.callTool("spectra_get_pool_activity", {
     chain: "mainnet",
     pool_address: KNOWN_POOL,
     type_filter: "BUY_PT",
@@ -752,7 +752,7 @@ async function testGetPoolActivity(client) {
   // Filter: each type
   for (const typeFilter of ["SELL_PT", "AMM_ADD_LIQUIDITY", "AMM_REMOVE_LIQUIDITY"]) {
     const label = { SELL_PT: "Sell PT", AMM_ADD_LIQUIDITY: "Add Liquidity", AMM_REMOVE_LIQUIDITY: "Remove Liquidity" }[typeFilter];
-    const { text: t } = await client.callTool("get_pool_activity", {
+    const { text: t } = await client.callTool("spectra_get_pool_activity", {
       chain: "mainnet",
       pool_address: KNOWN_POOL,
       type_filter: typeFilter,
@@ -766,7 +766,7 @@ async function testGetPoolActivity(client) {
   }
 
   // Limit=1 -> exactly 1 data row (if there's data)
-  const { text: one } = await client.callTool("get_pool_activity", {
+  const { text: one } = await client.callTool("spectra_get_pool_activity", {
     chain: "mainnet",
     pool_address: KNOWN_POOL,
     limit: 1,
@@ -775,7 +775,7 @@ async function testGetPoolActivity(client) {
   assert(dataRows.length <= 1, "limit=1 returns at most 1 row", `got ${dataRows.length}`);
 
   // Ethereum alias
-  const { text: aliased } = await client.callTool("get_pool_activity", {
+  const { text: aliased } = await client.callTool("spectra_get_pool_activity", {
     chain: "ethereum",
     pool_address: KNOWN_POOL,
     limit: 2,
@@ -783,7 +783,7 @@ async function testGetPoolActivity(client) {
   assert(aliased.includes("Pool Activity"), "ethereum alias resolves", "failed");
 
   // Invalid pool (full-length address)
-  const { text: bad } = await client.callTool("get_pool_activity", {
+  const { text: bad } = await client.callTool("spectra_get_pool_activity", {
     chain: "mainnet",
     pool_address: "0x0000000000000000000000000000000000000000",
     limit: 5,
@@ -797,7 +797,7 @@ async function testGetPoolActivity(client) {
 
 // Test the empty-filtered-results path (regression test)
 async function testActivityEmptyFilter(client) {
-  console.log("\n--- get_pool_activity: empty filter regression ---");
+  console.log("\n--- spectra_get_pool_activity: empty filter regression ---");
 
   if (!KNOWN_POOL) {
     skip("activity empty filter test (no pool address discovered)");
@@ -808,7 +808,7 @@ async function testActivityEmptyFilter(client) {
   // But even if the pool has all types, this tests the code path is safe.
   // The key assertion is: the call does NOT crash (no TypeError).
   for (const typeFilter of ["AMM_REMOVE_LIQUIDITY", "AMM_ADD_LIQUIDITY"]) {
-    const { text } = await client.callTool("get_pool_activity", {
+    const { text } = await client.callTool("spectra_get_pool_activity", {
       chain: "mainnet",
       pool_address: KNOWN_POOL,
       type_filter: typeFilter,
@@ -828,7 +828,7 @@ async function testLpApyGaugeEmissions(client) {
   console.log("\n--- LP APY gauge emissions ---");
 
   // Katana is known to have gauge emissions + external rewards (KAT)
-  const { text } = await client.callTool("list_pools", {
+  const { text } = await client.callTool("spectra_list_pools", {
     chain: "katana",
     sort_by: "lp_apy",
     min_tvl_usd: 0,
@@ -849,7 +849,7 @@ async function testLpApyGaugeEmissions(client) {
   }
 
   // Mainnet is known to have SPECTRA gauge emissions
-  const { text: mainText } = await client.callTool("list_pools", {
+  const { text: mainText } = await client.callTool("spectra_list_pools", {
     chain: "mainnet",
     sort_by: "lp_apy",
     min_tvl_usd: 0,
@@ -875,43 +875,43 @@ async function testLpApyGaugeEmissions(client) {
 }
 
 async function testListPendleMarkets(client) {
-  console.log("\n--- list_pendle_markets ---");
+  console.log("\n--- pendle_list_markets ---");
 
   // Single chain
-  const { text } = await client.callTool("list_pendle_markets", {
+  const { text } = await client.callTool("pendle_list_markets", {
     chain: "mainnet",
     top_n: 5,
     compact: true,
   });
   const hasResults = text.includes("Pendle Markets") || text.includes("No active");
-  assert(hasResults, "list_pendle_markets: returns valid output", `unexpected: ${text.slice(0, 120)}`);
+  assert(hasResults, "pendle_list_markets: returns valid output", `unexpected: ${text.slice(0, 120)}`);
 
   // Should show chain coverage info
   if (text.includes("Pendle Markets")) {
-    assert(text.includes("Chain Coverage"), "list_pendle_markets: shows chain coverage", "missing");
-    assert(text.includes("Next Steps"), "list_pendle_markets: has next steps", "missing");
+    assert(text.includes("Chain Coverage"), "pendle_list_markets: shows chain coverage", "missing");
+    assert(text.includes("Next Steps"), "pendle_list_markets: has next steps", "missing");
   }
 
   // All chains scan
-  const { text: allChains } = await client.callTool("list_pendle_markets", {
+  const { text: allChains } = await client.callTool("pendle_list_markets", {
     top_n: 3,
     compact: true,
   });
   const allOk = allChains.includes("Pendle Markets") || allChains.includes("No active");
-  assert(allOk, "list_pendle_markets: all-chain scan works", `unexpected: ${allChains.slice(0, 120)}`);
+  assert(allOk, "pendle_list_markets: all-chain scan works", `unexpected: ${allChains.slice(0, 120)}`);
 
   // Asset filter
-  const { text: filtered } = await client.callTool("list_pendle_markets", {
+  const { text: filtered } = await client.callTool("pendle_list_markets", {
     chain: "mainnet",
     asset_filter: "USD",
     top_n: 3,
     compact: true,
   });
   const filterOk = filtered.includes("Pendle Markets") || filtered.includes("No active");
-  assert(filterOk, "list_pendle_markets: asset filter works", `unexpected: ${filtered.slice(0, 120)}`);
+  assert(filterOk, "pendle_list_markets: asset filter works", `unexpected: ${filtered.slice(0, 120)}`);
 
   // Pendle-only chain (mantle has Pendle but not Spectra)
-  const { text: mantleText } = await client.callTool("list_pendle_markets", {
+  const { text: mantleText } = await client.callTool("pendle_list_markets", {
     chain: "mantle",
     top_n: 3,
     compact: true,
@@ -919,64 +919,64 @@ async function testListPendleMarkets(client) {
     min_liquidity_usd: 0,
   });
   const mantleOk = mantleText.includes("Pendle Markets") || mantleText.includes("No active");
-  assert(mantleOk, "list_pendle_markets: pendle-only chain (mantle) works", `unexpected: ${mantleText.slice(0, 120)}`);
+  assert(mantleOk, "pendle_list_markets: pendle-only chain (mantle) works", `unexpected: ${mantleText.slice(0, 120)}`);
 }
 
 async function testComparePendleSpectra(client) {
-  console.log("\n--- compare_pendle_spectra ---");
+  console.log("\n--- mv_compare_yield ---");
 
   // Mainnet comparison
-  const { text } = await client.callTool("compare_pendle_spectra", {
+  const { text } = await client.callTool("mv_compare_yield", {
     chain: "mainnet",
     min_tvl_usd: 0,
     min_liquidity_usd: 0,
   });
   const hasOutput = text.includes("Spectra vs Pendle") || text.includes("Error");
-  assert(hasOutput, "compare_pendle_spectra: returns valid output", `unexpected: ${text.slice(0, 120)}`);
+  assert(hasOutput, "mv_compare_yield: returns valid output", `unexpected: ${text.slice(0, 120)}`);
 
   if (text.includes("Spectra vs Pendle")) {
     // Should show pool counts
-    assert(text.includes("Spectra pools:"), "compare_pendle_spectra: shows Spectra pool count", "missing");
-    assert(text.includes("Pendle markets:"), "compare_pendle_spectra: shows Pendle market count", "missing");
+    assert(text.includes("Spectra pools:"), "mv_compare_yield: shows Spectra pool count", "missing");
+    assert(text.includes("Pendle markets:"), "mv_compare_yield: shows Pendle market count", "missing");
 
     // Should have at least one section (matched, spectra-only, or pendle-only)
     const hasSection = text.includes("Matched Comparisons") ||
       text.includes("Spectra-Only") ||
       text.includes("Pendle-Only");
-    assert(hasSection, "compare_pendle_spectra: has at least one comparison section", "missing all sections");
+    assert(hasSection, "mv_compare_yield: has at least one comparison section", "missing all sections");
 
     // Next steps
-    assert(text.includes("Next Steps"), "compare_pendle_spectra: has next steps", "missing");
+    assert(text.includes("Next Steps"), "mv_compare_yield: has next steps", "missing");
   }
 
   // With asset filter
-  const { text: filtered } = await client.callTool("compare_pendle_spectra", {
+  const { text: filtered } = await client.callTool("mv_compare_yield", {
     chain: "base",
     asset_filter: "ETH",
     min_tvl_usd: 0,
     min_liquidity_usd: 0,
   });
   const filterOk = filtered.includes("Spectra vs Pendle");
-  assert(filterOk, "compare_pendle_spectra: asset filter on base works", `unexpected: ${filtered.slice(0, 120)}`);
+  assert(filterOk, "mv_compare_yield: asset filter on base works", `unexpected: ${filtered.slice(0, 120)}`);
   if (filtered.includes("Asset filter")) {
-    assert(filtered.includes("ETH"), "compare_pendle_spectra: shows asset filter value", "missing");
+    assert(filtered.includes("ETH"), "mv_compare_yield: shows asset filter value", "missing");
   }
 
   // Compact mode
-  const { text: compact } = await client.callTool("compare_pendle_spectra", {
+  const { text: compact } = await client.callTool("mv_compare_yield", {
     chain: "mainnet",
     compact: true,
     min_tvl_usd: 0,
     min_liquidity_usd: 0,
   });
-  assert(compact.includes("Spectra vs Pendle"), "compare_pendle_spectra: compact mode works", `unexpected: ${compact.slice(0, 120)}`);
+  assert(compact.includes("Spectra vs Pendle"), "mv_compare_yield: compact mode works", `unexpected: ${compact.slice(0, 120)}`);
 }
 
 async function testCuratorScan(client) {
-  console.log("\n--- scan_curator_opportunities ---");
+  console.log("\n--- mv_scan_curator_opportunities ---");
 
   // Basic scan with small capital
-  const { text } = await client.callTool("scan_curator_opportunities", {
+  const { text } = await client.callTool("mv_scan_curator_opportunities", {
     capital_usd: 50000,
     top_n: 5,
     compact: true,
@@ -984,48 +984,48 @@ async function testCuratorScan(client) {
 
   // Should return results from both protocols
   const hasResults = text.includes("Curator Opportunity Scan") || text.includes("No opportunities");
-  assert(hasResults, "scan_curator_opportunities: returns valid output", `unexpected: ${text.slice(0, 120)}`);
+  assert(hasResults, "mv_scan_curator_opportunities: returns valid output", `unexpected: ${text.slice(0, 120)}`);
 
   // If we got results, check protocol tags are present
   if (text.includes("Curator Opportunity Scan")) {
     const hasSpectraOrPendle = text.includes("[S]") || text.includes("[P]");
-    assert(hasSpectraOrPendle, "scan_curator_opportunities: has protocol tags", "missing [S] or [P] tags");
+    assert(hasSpectraOrPendle, "mv_scan_curator_opportunities: has protocol tags", "missing [S] or [P] tags");
 
     const hasLegend = text.includes("Protocol Legend");
-    assert(hasLegend, "scan_curator_opportunities: has protocol legend", "missing legend");
+    assert(hasLegend, "mv_scan_curator_opportunities: has protocol legend", "missing legend");
 
     const hasNextSteps = text.includes("Next Steps");
-    assert(hasNextSteps, "scan_curator_opportunities: has next steps", "missing");
+    assert(hasNextSteps, "mv_scan_curator_opportunities: has next steps", "missing");
   }
 
   // With asset filter
-  const { text: filtered } = await client.callTool("scan_curator_opportunities", {
+  const { text: filtered } = await client.callTool("mv_scan_curator_opportunities", {
     capital_usd: 50000,
     asset_filter: "USDC",
     top_n: 3,
     compact: true,
   });
   const filterOk = filtered.includes("Curator Opportunity Scan") || filtered.includes("No opportunities");
-  assert(filterOk, "scan_curator_opportunities: asset filter works", `unexpected: ${filtered.slice(0, 120)}`);
+  assert(filterOk, "mv_scan_curator_opportunities: asset filter works", `unexpected: ${filtered.slice(0, 120)}`);
 
-  // compare_pendle_spectra now shows maturity match quality
-  const { text: compared } = await client.callTool("compare_pendle_spectra", {
+  // mv_compare_yield now shows maturity match quality
+  const { text: compared } = await client.callTool("mv_compare_yield", {
     chain: "mainnet",
     min_tvl_usd: 0,
     min_liquidity_usd: 0,
   });
   const comparedOk = compared.includes("Spectra vs Pendle") || compared.includes("No active");
-  assert(comparedOk, "compare_pendle_spectra: responds with maturity matching", `unexpected: ${compared.slice(0, 120)}`);
+  assert(comparedOk, "mv_compare_yield: responds with maturity matching", `unexpected: ${compared.slice(0, 120)}`);
   if (compared.includes("Matched Comparisons")) {
     const hasMatchQuality = compared.includes("exact") || compared.includes("close") || compared.includes("loose");
-    assert(hasMatchQuality, "compare_pendle_spectra: shows match quality", "missing match quality labels");
+    assert(hasMatchQuality, "mv_compare_yield: shows match quality", "missing match quality labels");
   }
 
   // Protocol context has cross-protocol curator workflow
-  const { text: ctx } = await client.callTool("get_protocol_context", {
+  const { text: ctx } = await client.callTool("mv_get_protocol_context", {
     topic: "workflow_routing",
   });
-  assert(ctx.includes("scan_curator_opportunities"), "protocol context references scan_curator_opportunities", "missing in workflow_routing");
+  assert(ctx.includes("mv_scan_curator_opportunities"), "protocol context references mv_scan_curator_opportunities", "missing in workflow_routing");
 }
 
 async function testCrossChainSmoke(client) {
@@ -1033,14 +1033,14 @@ async function testCrossChainSmoke(client) {
 
   // Quick check that a couple non-mainnet chains respond
   for (const chain of ["base", "arbitrum"]) {
-    const { text } = await client.callTool("list_pools", {
+    const { text } = await client.callTool("spectra_list_pools", {
       chain,
       sort_by: "tvl",
       min_tvl_usd: 0,
     });
     assert(
       text.includes("active pool") || text.includes("No pools") || text.includes("No active"),
-      `${chain}: list_pools responds`,
+      `${chain}: spectra_list_pools responds`,
       `unexpected: ${text.slice(0, 80)}`
     );
   }
@@ -1048,10 +1048,10 @@ async function testCrossChainSmoke(client) {
 
 
 async function testGetMorphoMarkets(client) {
-  console.log("\n--- get_morpho_markets ---");
+  console.log("\n--- morpho_list_markets ---");
 
   // Default: search all chains for PT markets
-  const { text } = await client.callTool("get_morpho_markets", {
+  const { text } = await client.callTool("morpho_list_markets", {
     top_n: 5,
   });
 
@@ -1073,7 +1073,7 @@ async function testGetMorphoMarkets(client) {
   }
 
   // Filter by chain: mainnet (known to have many PT markets)
-  const { text: ethMarkets } = await client.callTool("get_morpho_markets", {
+  const { text: ethMarkets } = await client.callTool("morpho_list_markets", {
     chain: "mainnet",
     top_n: 3,
     sort_by: "supply",
@@ -1086,7 +1086,7 @@ async function testGetMorphoMarkets(client) {
   );
 
   // Filter by symbol
-  const { text: usdcMarkets } = await client.callTool("get_morpho_markets", {
+  const { text: usdcMarkets } = await client.callTool("morpho_list_markets", {
     pt_symbol_filter: "USDC",
     top_n: 3,
   });
@@ -1098,7 +1098,7 @@ async function testGetMorphoMarkets(client) {
   );
 
   // Filter by chain that Morpho doesn't track
-  const { text: noMorpho } = await client.callTool("get_morpho_markets", {
+  const { text: noMorpho } = await client.callTool("morpho_list_markets", {
     chain: "sonic",
   });
 
@@ -1109,7 +1109,7 @@ async function testGetMorphoMarkets(client) {
   );
 
   // Sort by borrow_apy
-  const { text: byApy } = await client.callTool("get_morpho_markets", {
+  const { text: byApy } = await client.callTool("morpho_list_markets", {
     chain: "mainnet",
     sort_by: "borrow_apy",
     top_n: 2,
@@ -1123,12 +1123,12 @@ async function testGetMorphoMarkets(client) {
 }
 
 async function testGetMorphoRate(client) {
-  console.log("\n--- get_morpho_rate ---");
+  console.log("\n--- morpho_get_rate ---");
 
   // Use the known Katana market key from the user's reference
   const katanaKey = "0xf02d47a80fbe6dbf9df4e32e1443e362a1343acb83fbb2c24a814be3557384b1";
 
-  const { text } = await client.callTool("get_morpho_rate", {
+  const { text } = await client.callTool("morpho_get_rate", {
     chain: "katana",
     market_key: katanaKey,
   });
@@ -1148,7 +1148,7 @@ async function testGetMorphoRate(client) {
   }
 
   // Test with wrong chain (key exists on Katana but not mainnet)
-  const { text: wrongChain } = await client.callTool("get_morpho_rate", {
+  const { text: wrongChain } = await client.callTool("morpho_get_rate", {
     chain: "mainnet",
     market_key: katanaKey,
   });
@@ -1160,20 +1160,20 @@ async function testGetMorphoRate(client) {
   );
 
   // Test with chain that has no Morpho
-  const { text: noMorpho } = await client.callTool("get_morpho_rate", {
+  const { text: noMorpho } = await client.callTool("morpho_get_rate", {
     chain: "sonic",
     market_key: katanaKey,
   });
 
   assert(
     noMorpho.includes("not tracked"),
-    "unsupported chain for get_morpho_rate handled",
+    "unsupported chain for morpho_get_rate handled",
     `unexpected: ${noMorpho.slice(0, 100)}`
   );
 }
 
 async function testLoopingAutoMorpho(client) {
-  console.log("\n--- get_looping_strategy: Morpho auto-detection ---");
+  console.log("\n--- spectra_get_looping_strategy: Morpho auto-detection ---");
 
   if (!KNOWN_PT) {
     skip("looping auto-morpho (no PT address discovered)");
@@ -1181,7 +1181,7 @@ async function testLoopingAutoMorpho(client) {
   }
 
   // Call without specifying morpho_ltv or borrow_rate — should try auto-detect
-  const { text } = await client.callTool("get_looping_strategy", {
+  const { text } = await client.callTool("spectra_get_looping_strategy", {
     chain: "mainnet",
     pt_address: KNOWN_PT,
     max_loops: 3,
@@ -1206,11 +1206,11 @@ async function testLoopingAutoMorpho(client) {
     assert(text.includes("Available Liquidity"), "auto-detect shows liquidity", "missing");
   } else {
     pass("no Morpho market for this PT -- used defaults");
-    assert(text.includes("get_morpho_markets"), "shows tip to find Morpho markets", "missing");
+    assert(text.includes("morpho_list_markets"), "shows tip to find Morpho markets", "missing");
   }
 
   // Call WITH explicit overrides — should use those instead
-  const { text: overridden } = await client.callTool("get_looping_strategy", {
+  const { text: overridden } = await client.callTool("spectra_get_looping_strategy", {
     chain: "mainnet",
     pt_address: KNOWN_PT,
     morpho_ltv: 0.77,
@@ -1226,14 +1226,14 @@ async function testLoopingAutoMorpho(client) {
 }
 
 async function testGetMorphoMarketSuppliers(client) {
-  console.log("\n--- get_morpho_market_suppliers ---");
+  console.log("\n--- morpho_get_market_suppliers ---");
 
   // Use mainnet with a discovered market key when possible, fall back to a known katana key
   let testChain = "mainnet";
   let testKey = "0x09c2ecea058050d726f4c7df77d7a0af0e6a4cbc1949c3a7cd44cf245e2ef312";
 
-  // Try to discover a real market key from get_morpho_markets
-  const { text: marketsText } = await client.callTool("get_morpho_markets", {
+  // Try to discover a real market key from morpho_list_markets
+  const { text: marketsText } = await client.callTool("morpho_list_markets", {
     top_n: 1,
   });
   const keyMatch = marketsText.match(/Morpho Market:\s+(0x[a-fA-F0-9]+\.\.\.[a-fA-F0-9]+)/);
@@ -1250,7 +1250,7 @@ async function testGetMorphoMarketSuppliers(client) {
     }
   }
 
-  const { text } = await client.callTool("get_morpho_market_suppliers", {
+  const { text } = await client.callTool("morpho_get_market_suppliers", {
     chain: testChain,
     market_key: testKey,
   });
@@ -1275,22 +1275,22 @@ async function testGetMorphoMarketSuppliers(client) {
   }
 
   // Test with chain that has no Morpho
-  const { text: noMorpho } = await client.callTool("get_morpho_market_suppliers", {
+  const { text: noMorpho } = await client.callTool("morpho_get_market_suppliers", {
     chain: "sonic",
     market_key: testKey,
   });
   assert(
     noMorpho.includes("not tracked"),
-    "unsupported chain for get_morpho_market_suppliers handled",
+    "unsupported chain for morpho_get_market_suppliers handled",
     `unexpected: ${noMorpho.slice(0, 100)}`
   );
 }
 
 async function testGetMorphoVaults(client) {
-  console.log("\n--- get_morpho_vaults ---");
+  console.log("\n--- morpho_list_vaults ---");
 
   // Query mainnet vaults (most likely to have vaults)
-  const { text } = await client.callTool("get_morpho_vaults", {
+  const { text } = await client.callTool("morpho_list_vaults", {
     chain: "mainnet",
   });
 
@@ -1306,7 +1306,7 @@ async function testGetMorphoVaults(client) {
   }
 
   // Test with asset filter
-  const { text: filtered } = await client.callTool("get_morpho_vaults", {
+  const { text: filtered } = await client.callTool("morpho_list_vaults", {
     chain: "mainnet",
     asset_filter: "USDC",
   });
@@ -1317,26 +1317,26 @@ async function testGetMorphoVaults(client) {
   );
 
   // Test unsupported chain
-  const { text: noMorpho } = await client.callTool("get_morpho_vaults", {
+  const { text: noMorpho } = await client.callTool("morpho_list_vaults", {
     chain: "sonic",
   });
   assert(
     noMorpho.includes("not tracked"),
-    "unsupported chain for get_morpho_vaults handled",
+    "unsupported chain for morpho_list_vaults handled",
     `unexpected: ${noMorpho.slice(0, 100)}`
   );
 }
 
 async function testQuoteTrade(client) {
-  console.log("\n--- quote_trade ---");
+  console.log("\n--- spectra_quote_trade ---");
 
   if (!KNOWN_PT) {
-    skip("quote_trade (no PT address discovered)");
+    skip("spectra_quote_trade (no PT address discovered)");
     return;
   }
 
   // Buy PT with default slippage
-  const { text: buy } = await client.callTool("quote_trade", {
+  const { text: buy } = await client.callTool("spectra_quote_trade", {
     chain: "mainnet",
     pt_address: KNOWN_PT,
     amount: 1000,
@@ -1353,7 +1353,7 @@ async function testQuoteTrade(client) {
   assert(buy.includes("Pool Liquidity"), "buy: has pool liquidity", "missing");
 
   // Sell PT
-  const { text: sell } = await client.callTool("quote_trade", {
+  const { text: sell } = await client.callTool("spectra_quote_trade", {
     chain: "mainnet",
     pt_address: KNOWN_PT,
     amount: 500,
@@ -1364,7 +1364,7 @@ async function testQuoteTrade(client) {
   assert(sell.includes("Min Output"), "sell: has minOut", "missing");
 
   // Custom slippage
-  const { text: custom } = await client.callTool("quote_trade", {
+  const { text: custom } = await client.callTool("spectra_quote_trade", {
     chain: "mainnet",
     pt_address: KNOWN_PT,
     amount: 100,
@@ -1375,7 +1375,7 @@ async function testQuoteTrade(client) {
   assert(custom.includes("1.00%"), "custom slippage shows 1.00%", "missing");
 
   // Very large trade should show higher price impact
-  const { text: large } = await client.callTool("quote_trade", {
+  const { text: large } = await client.callTool("spectra_quote_trade", {
     chain: "mainnet",
     pt_address: KNOWN_PT,
     amount: 10000000,
@@ -1388,17 +1388,17 @@ async function testQuoteTrade(client) {
   assert(large.includes("Price Impact"), "large trade: has impact", "missing");
 
   // Ethereum alias
-  const { text: aliased } = await client.callTool("quote_trade", {
+  const { text: aliased } = await client.callTool("spectra_quote_trade", {
     chain: "ethereum",
     pt_address: KNOWN_PT,
     amount: 100,
     side: "sell",
   });
 
-  assert(aliased.includes("Trade Quote") || aliased.includes("Sell PT"), "ethereum alias works for quote_trade", "failed");
+  assert(aliased.includes("Trade Quote") || aliased.includes("Sell PT"), "ethereum alias works for spectra_quote_trade", "failed");
 
   // Non-existent PT
-  const { text: notFound } = await client.callTool("quote_trade", {
+  const { text: notFound } = await client.callTool("spectra_quote_trade", {
     chain: "mainnet",
     pt_address: "0x0000000000000000000000000000000000000001",
     amount: 100,
@@ -1413,15 +1413,15 @@ async function testQuoteTrade(client) {
 }
 
 async function testSimulatePortfolioAfterTrade(client) {
-  console.log("\n--- simulate_portfolio_after_trade ---");
+  console.log("\n--- spectra_simulate_trade ---");
 
   if (!KNOWN_PT) {
-    skip("simulate_portfolio_after_trade (no PT address discovered)");
+    skip("spectra_simulate_trade (no PT address discovered)");
     return;
   }
 
   // Buy PT with zero-address wallet (new position)
-  const { text: buy } = await client.callTool("simulate_portfolio_after_trade", {
+  const { text: buy } = await client.callTool("spectra_simulate_trade", {
     chain: "mainnet",
     pt_address: KNOWN_PT,
     address: ZERO_ADDRESS,
@@ -1442,7 +1442,7 @@ async function testSimulatePortfolioAfterTrade(client) {
   assert(buy.includes("Total Value:"), "buy-new: shows total value", "missing");
 
   // Sell PT with zero-address wallet (exceeds balance)
-  const { text: sellWarn } = await client.callTool("simulate_portfolio_after_trade", {
+  const { text: sellWarn } = await client.callTool("spectra_simulate_trade", {
     chain: "mainnet",
     pt_address: KNOWN_PT,
     address: ZERO_ADDRESS,
@@ -1457,7 +1457,7 @@ async function testSimulatePortfolioAfterTrade(client) {
   );
 
   // Custom slippage
-  const { text: custom } = await client.callTool("simulate_portfolio_after_trade", {
+  const { text: custom } = await client.callTool("spectra_simulate_trade", {
     chain: "mainnet",
     pt_address: KNOWN_PT,
     address: ZERO_ADDRESS,
@@ -1469,7 +1469,7 @@ async function testSimulatePortfolioAfterTrade(client) {
   assert(custom.includes("2.00%"), "custom slippage shows 2.00%", "missing");
 
   // Non-existent PT
-  const { text: notFound } = await client.callTool("simulate_portfolio_after_trade", {
+  const { text: notFound } = await client.callTool("spectra_simulate_trade", {
     chain: "mainnet",
     pt_address: "0x0000000000000000000000000000000000000001",
     address: ZERO_ADDRESS,
@@ -1484,7 +1484,7 @@ async function testSimulatePortfolioAfterTrade(client) {
   );
 
   // Ethereum alias
-  const { text: aliased } = await client.callTool("simulate_portfolio_after_trade", {
+  const { text: aliased } = await client.callTool("spectra_simulate_trade", {
     chain: "ethereum",
     pt_address: KNOWN_PT,
     address: ZERO_ADDRESS,
@@ -1496,10 +1496,10 @@ async function testSimulatePortfolioAfterTrade(client) {
 }
 
 async function testScanOpportunities(client) {
-  console.log("\n--- scan_opportunities ---");
+  console.log("\n--- spectra_scan_opportunities ---");
 
   // Basic scan with moderate capital
-  const { text } = await client.callTool("scan_opportunities", {
+  const { text } = await client.callTool("spectra_scan_opportunities", {
     capital_usd: 10000,
     min_tvl_usd: 10000,
     min_liquidity_usd: 5000,
@@ -1526,7 +1526,7 @@ async function testScanOpportunities(client) {
   }
 
   // Large capital should filter out low-liquidity pools
-  const { text: large } = await client.callTool("scan_opportunities", {
+  const { text: large } = await client.callTool("spectra_scan_opportunities", {
     capital_usd: 5000000,
     max_price_impact_pct: 1,
     top_n: 3,
@@ -1539,7 +1539,7 @@ async function testScanOpportunities(client) {
   );
 
   // With asset filter
-  const { text: usdc } = await client.callTool("scan_opportunities", {
+  const { text: usdc } = await client.callTool("spectra_scan_opportunities", {
     capital_usd: 10000,
     asset_filter: "USDC",
     top_n: 3,
@@ -1552,7 +1552,7 @@ async function testScanOpportunities(client) {
   );
 
   // With looping disabled
-  const { text: noLoop } = await client.callTool("scan_opportunities", {
+  const { text: noLoop } = await client.callTool("spectra_scan_opportunities", {
     capital_usd: 10000,
     include_looping: false,
     top_n: 3,
@@ -1565,7 +1565,7 @@ async function testScanOpportunities(client) {
   );
 
   // With ve_spectra_balance parameter (real boost formula)
-  const { text: boosted } = await client.callTool("scan_opportunities", {
+  const { text: boosted } = await client.callTool("spectra_scan_opportunities", {
     capital_usd: 10000,
     ve_spectra_balance: 100000,
     top_n: 3,
@@ -1585,15 +1585,15 @@ async function testScanOpportunities(client) {
 
   // Phase 2: cross-protocol pointer in Next Steps
   if (text.includes("Next Steps")) {
-    assert(text.includes("scan_curator_opportunities"), "scan_opportunities next steps mention cross-protocol scanner", "missing");
+    assert(text.includes("mv_scan_curator_opportunities"), "spectra_scan_opportunities next steps mention cross-protocol scanner", "missing");
   }
 }
 
 async function testScanYtArbitrage(client) {
-  console.log("\n--- scan_yt_arbitrage ---");
+  console.log("\n--- spectra_scan_yt_arbitrage ---");
 
   // Basic scan with moderate capital
-  const { text } = await client.callTool("scan_yt_arbitrage", {
+  const { text } = await client.callTool("spectra_scan_yt_arbitrage", {
     capital_usd: 10000,
     min_tvl_usd: 10000,
     min_liquidity_usd: 5000,
@@ -1624,7 +1624,7 @@ async function testScanYtArbitrage(client) {
   }
 
   // With asset filter
-  const { text: usdc } = await client.callTool("scan_yt_arbitrage", {
+  const { text: usdc } = await client.callTool("spectra_scan_yt_arbitrage", {
     capital_usd: 10000,
     asset_filter: "USDC",
     min_spread_pct: 0.5,
@@ -1638,7 +1638,7 @@ async function testScanYtArbitrage(client) {
   );
 
   // High spread threshold should return fewer or no results
-  const { text: highThresh } = await client.callTool("scan_yt_arbitrage", {
+  const { text: highThresh } = await client.callTool("spectra_scan_yt_arbitrage", {
     capital_usd: 10000,
     min_spread_pct: 99,
     top_n: 3,
@@ -1651,7 +1651,7 @@ async function testScanYtArbitrage(client) {
   );
 
   // With ve_spectra_balance parameter (real boost formula)
-  const { text: ytBoosted } = await client.callTool("scan_yt_arbitrage", {
+  const { text: ytBoosted } = await client.callTool("spectra_scan_yt_arbitrage", {
     capital_usd: 10000,
     ve_spectra_balance: 100000,
     min_spread_pct: 0.5,
@@ -1666,10 +1666,10 @@ async function testScanYtArbitrage(client) {
 }
 
 async function testGetVeInfo(client) {
-  console.log("\n--- get_ve_info ---");
+  console.log("\n--- spectra_get_ve_info ---");
 
   // Basic call: no params, just totalSupply
-  const { text } = await client.callTool("get_ve_info", {});
+  const { text } = await client.callTool("spectra_get_ve_info", {});
 
   assert(text.includes("veSPECTRA Info"), "has veSPECTRA header", "missing");
   assert(text.includes("Total Supply"), "has total supply", "missing");
@@ -1689,7 +1689,7 @@ async function testGetVeInfo(client) {
   }
 
   // With balance + capital (no pool): boost table at reference TVLs
-  const { text: boostTable } = await client.callTool("get_ve_info", {
+  const { text: boostTable } = await client.callTool("spectra_get_ve_info", {
     ve_spectra_balance: 100000,
     capital_usd: 10000,
   });
@@ -1702,7 +1702,7 @@ async function testGetVeInfo(client) {
 
   // With specific pool
   if (KNOWN_PT) {
-    const { text: poolBoost } = await client.callTool("get_ve_info", {
+    const { text: poolBoost } = await client.callTool("spectra_get_ve_info", {
       ve_spectra_balance: 100000,
       capital_usd: 10000,
       chain: "mainnet",
@@ -1714,11 +1714,11 @@ async function testGetVeInfo(client) {
     assert(poolBoost.includes("Your Boost:"), "shows computed boost", "missing");
     assert(poolBoost.includes("x"), "shows multiplier", "missing");
   } else {
-    skip("get_ve_info with pool (no PT address discovered)");
+    skip("spectra_get_ve_info with pool (no PT address discovered)");
   }
 
   // Balance without capital_usd should prompt for capital
-  const { text: noCapital } = await client.callTool("get_ve_info", {
+  const { text: noCapital } = await client.callTool("spectra_get_ve_info", {
     ve_spectra_balance: 100000,
   });
 
@@ -1726,10 +1726,10 @@ async function testGetVeInfo(client) {
 }
 
 async function testGetMetavaults(client) {
-  console.log("\n--- get_metavaults ---");
+  console.log("\n--- spectra_list_metavaults ---");
 
   // Single chain: base (known to have MetaVaults from OpenAPI example)
-  const { text } = await client.callTool("get_metavaults", {
+  const { text } = await client.callTool("spectra_list_metavaults", {
     chain: "base",
   }, 30_000);
 
@@ -1752,7 +1752,7 @@ async function testGetMetavaults(client) {
   }
 
   // All chains scan
-  const { text: allChains } = await client.callTool("get_metavaults", {}, 60_000);
+  const { text: allChains } = await client.callTool("spectra_list_metavaults", {}, 60_000);
 
   assert(
     allChains.includes("MetaVaults (all chains)"),
@@ -1762,21 +1762,21 @@ async function testGetMetavaults(client) {
 
   // Schema checks
   const tools = await client.listTools();
-  const mvTool = tools.find((t) => t.name === "get_metavaults");
-  assert(mvTool, "get_metavaults registered", "missing");
+  const mvTool = tools.find((t) => t.name === "spectra_list_metavaults");
+  assert(mvTool, "spectra_list_metavaults registered", "missing");
   if (mvTool) {
     const props = mvTool.inputSchema.properties;
-    assert(props.chain, "get_metavaults has chain param", "missing");
+    assert(props.chain, "spectra_list_metavaults has chain param", "missing");
     const required = mvTool.inputSchema.required || [];
-    assert(!required.includes("chain"), "get_metavaults: chain is optional", `required: ${JSON.stringify(required)}`);
+    assert(!required.includes("chain"), "spectra_list_metavaults: chain is optional", `required: ${JSON.stringify(required)}`);
   }
 }
 
 async function testModelMetavaultStrategy(client) {
-  console.log("\n--- model_metavault_strategy ---");
+  console.log("\n--- spectra_model_metavault ---");
 
   // Basic: vault economics + looping table
-  const { text: basic } = await client.callTool("model_metavault_strategy", {
+  const { text: basic } = await client.callTool("spectra_model_metavault", {
     base_apy: 12,
     yt_compounding_apy: 3,
     curator_fee_pct: 10,
@@ -1799,7 +1799,7 @@ async function testModelMetavaultStrategy(client) {
   assert(basic.includes("13.50%"), "net vault APY is 13.5%", "missing");
 
   // With PT comparison
-  const { text: compare } = await client.callTool("model_metavault_strategy", {
+  const { text: compare } = await client.callTool("spectra_model_metavault", {
     base_apy: 12,
     yt_compounding_apy: 3,
     compare_pt_apy: 12,
@@ -1812,7 +1812,7 @@ async function testModelMetavaultStrategy(client) {
   assert(compare.includes("Double-Loop Premium"), "has double-loop premium summary", "missing");
 
   // With curator economics
-  const { text: curator } = await client.callTool("model_metavault_strategy", {
+  const { text: curator } = await client.callTool("spectra_model_metavault", {
     base_apy: 12,
     yt_compounding_apy: 3,
     curator_fee_pct: 10,
@@ -1828,7 +1828,7 @@ async function testModelMetavaultStrategy(client) {
   assert(curator.includes("Additional TVL"), "has additional TVL from looping", "missing");
 
   // Edge case: borrow rate higher than base (looping unprofitable)
-  const { text: unprofitable } = await client.callTool("model_metavault_strategy", {
+  const { text: unprofitable } = await client.callTool("spectra_model_metavault", {
     base_apy: 5,
     borrow_rate: 8,
   });
@@ -1837,45 +1837,45 @@ async function testModelMetavaultStrategy(client) {
   assert(unprofitable.includes("Highest net APY: 0 loops"), "highest net APY is 0 loops when borrow > base", `got: ${unprofitable.match(/Highest net APY:.*/)?.[0]}`);
 
   // No YT compounding, no external deposits (minimal params)
-  const { text: minimal } = await client.callTool("model_metavault_strategy", {
+  const { text: minimal } = await client.callTool("spectra_model_metavault", {
     base_apy: 10,
   });
   assert(minimal.includes("MetaVault Strategy Model"), "minimal params work", "missing");
   assert(!minimal.includes("YT→LP Compounding"), "no YT compounding line when 0", "should be absent");
   assert(!minimal.includes("Curator Economics"), "no curator economics without capital_usd", "should be absent");
 
-  // Schema: model_metavault_strategy now has chain and metavault_address
+  // Schema: spectra_model_metavault now has chain and metavault_address
   const tools = await client.listTools();
-  const mvModelTool = tools.find((t) => t.name === "model_metavault_strategy");
+  const mvModelTool = tools.find((t) => t.name === "spectra_model_metavault");
   if (mvModelTool) {
     const props = mvModelTool.inputSchema.properties;
-    assert(props.chain, "model_metavault_strategy has chain param", "missing");
-    assert(props.metavault_address, "model_metavault_strategy has metavault_address param", "missing");
+    assert(props.chain, "spectra_model_metavault has chain param", "missing");
+    assert(props.metavault_address, "spectra_model_metavault has metavault_address param", "missing");
     assert(props.metavault_address.pattern, "metavault_address has regex pattern", "missing");
     const required = mvModelTool.inputSchema.required || [];
-    assert(!required.includes("base_apy"), "model_metavault_strategy: base_apy is optional (can be auto-fetched)", `required: ${JSON.stringify(required)}`);
-    assert(!required.includes("chain"), "model_metavault_strategy: chain is optional", `required: ${JSON.stringify(required)}`);
-    assert(!required.includes("metavault_address"), "model_metavault_strategy: metavault_address is optional", `required: ${JSON.stringify(required)}`);
+    assert(!required.includes("base_apy"), "spectra_model_metavault: base_apy is optional (can be auto-fetched)", `required: ${JSON.stringify(required)}`);
+    assert(!required.includes("chain"), "spectra_model_metavault: chain is optional", `required: ${JSON.stringify(required)}`);
+    assert(!required.includes("metavault_address"), "spectra_model_metavault: metavault_address is optional", `required: ${JSON.stringify(required)}`);
   }
 
   // Error case: no base_apy and no metavault_address
-  const { text: noApy, raw: noApyRaw } = await client.callTool("model_metavault_strategy", {});
+  const { text: noApy, raw: noApyRaw } = await client.callTool("spectra_model_metavault", {});
   assert(
     noApy.includes("base_apy is required") || (noApyRaw && noApyRaw.isError),
     "error when no base_apy and no metavault_address",
     `unexpected: ${noApy.slice(0, 100)}`
   );
 
-  // Next steps should mention get_metavaults
-  assert(basic.includes("get_metavaults"), "next steps mention get_metavaults", "missing");
+  // Next steps should mention spectra_list_metavaults
+  assert(basic.includes("spectra_list_metavaults"), "next steps mention spectra_list_metavaults", "missing");
 
   // Next steps should mention cross-protocol scanner
-  assert(basic.includes("scan_curator_opportunities"), "next steps mention scan_curator_opportunities", "missing");
+  assert(basic.includes("mv_scan_curator_opportunities"), "next steps mention mv_scan_curator_opportunities", "missing");
 
   // ── Phase 2: Blended allocation (Spectra + Pendle) ──
 
   // Blended allocation with pendle_allocation_pct
-  const { text: blended } = await client.callTool("model_metavault_strategy", {
+  const { text: blended } = await client.callTool("spectra_model_metavault", {
     base_apy: 12,
     pendle_allocation_pct: 30,
     pendle_lp_apy: 8,
@@ -1891,7 +1891,7 @@ async function testModelMetavaultStrategy(client) {
   assert(blended.includes("10.80%"), "blended base APY is 10.8%", `got: ${blended.match(/Blended Base APY:.*/)?.[0]}`);
 
   // Validation: pendle_allocation_pct > 0 without pendle_lp_apy
-  const { text: noLpApy, raw: noLpApyRaw } = await client.callTool("model_metavault_strategy", {
+  const { text: noLpApy, raw: noLpApyRaw } = await client.callTool("spectra_model_metavault", {
     base_apy: 12,
     pendle_allocation_pct: 30,
   });
@@ -1907,8 +1907,8 @@ async function testModelMetavaultStrategy(client) {
   // Schema: new params exist
   if (mvModelTool) {
     const props = mvModelTool.inputSchema.properties;
-    assert(props.pendle_allocation_pct, "model_metavault_strategy has pendle_allocation_pct param", "missing");
-    assert(props.pendle_lp_apy, "model_metavault_strategy has pendle_lp_apy param", "missing");
+    assert(props.pendle_allocation_pct, "spectra_model_metavault has pendle_allocation_pct param", "missing");
+    assert(props.pendle_lp_apy, "spectra_model_metavault has pendle_lp_apy param", "missing");
     const required = mvModelTool.inputSchema.required || [];
     assert(!required.includes("pendle_allocation_pct"), "pendle_allocation_pct is optional", `required: ${JSON.stringify(required)}`);
     assert(!required.includes("pendle_lp_apy"), "pendle_lp_apy is optional", `required: ${JSON.stringify(required)}`);
@@ -1916,10 +1916,10 @@ async function testModelMetavaultStrategy(client) {
 }
 
 async function testGetAddressActivity(client) {
-  console.log("\n--- get_address_activity ---");
+  console.log("\n--- spectra_get_address_activity ---");
 
   // Use zero address (should find no activity, but shouldn't crash)
-  const { text: noActivity } = await client.callTool("get_address_activity", {
+  const { text: noActivity } = await client.callTool("spectra_get_address_activity", {
     address: ZERO_ADDRESS,
     chain: "mainnet",
   }, 30_000);
@@ -1932,23 +1932,23 @@ async function testGetAddressActivity(client) {
 
   // Schema check: must have address param with regex
   const tools = await client.listTools();
-  const addrActTool = tools.find((t) => t.name === "get_address_activity");
-  assert(addrActTool, "get_address_activity registered", "missing");
+  const addrActTool = tools.find((t) => t.name === "spectra_get_address_activity");
+  assert(addrActTool, "spectra_get_address_activity registered", "missing");
 
   if (addrActTool) {
     const props = addrActTool.inputSchema.properties;
-    assert(props.address && props.address.pattern, "get_address_activity address has regex", "missing");
-    assert(props.chain, "get_address_activity has optional chain param", "missing");
-    assert(props.min_volume_usd, "get_address_activity has min_volume_usd param", "missing");
+    assert(props.address && props.address.pattern, "spectra_get_address_activity address has regex", "missing");
+    assert(props.chain, "spectra_get_address_activity has optional chain param", "missing");
+    assert(props.min_volume_usd, "spectra_get_address_activity has min_volume_usd param", "missing");
 
     const required = addrActTool.inputSchema.required || [];
-    assert(required.includes("address"), "get_address_activity requires address", `required: ${JSON.stringify(required)}`);
-    assert(!required.includes("chain"), "get_address_activity: chain is optional", `required: ${JSON.stringify(required)}`);
-    assert(!required.includes("min_volume_usd"), "get_address_activity: min_volume_usd is optional", `required: ${JSON.stringify(required)}`);
+    assert(required.includes("address"), "spectra_get_address_activity requires address", `required: ${JSON.stringify(required)}`);
+    assert(!required.includes("chain"), "spectra_get_address_activity: chain is optional", `required: ${JSON.stringify(required)}`);
+    assert(!required.includes("min_volume_usd"), "spectra_get_address_activity: min_volume_usd is optional", `required: ${JSON.stringify(required)}`);
   }
 
   // Test all-chain scan with zero address (should complete without crash, may be slow)
-  const { text: allChain } = await client.callTool("get_address_activity", {
+  const { text: allChain } = await client.callTool("spectra_get_address_activity", {
     address: ZERO_ADDRESS,
   }, 60_000);
 
@@ -1959,9 +1959,9 @@ async function testGetAddressActivity(client) {
   );
 
   // If we have a known pool with activity, try scanning mainnet for a real active address
-  // We'll pick an address from get_pool_activity's Address Concentration if available
+  // We'll pick an address from spectra_get_pool_activity's Address Concentration if available
   if (KNOWN_POOL) {
-    const { text: poolAct } = await client.callTool("get_pool_activity", {
+    const { text: poolAct } = await client.callTool("spectra_get_pool_activity", {
       chain: "mainnet",
       pool_address: KNOWN_POOL,
       limit: 5,
@@ -1971,7 +1971,7 @@ async function testGetAddressActivity(client) {
     const addrMatch = poolAct.match(/\s+(0x[a-fA-F0-9]{40})\s+\d+ txns/);
     if (addrMatch) {
       const activeAddr = addrMatch[1];
-      const { text: realScan } = await client.callTool("get_address_activity", {
+      const { text: realScan } = await client.callTool("spectra_get_address_activity", {
         address: activeAddr,
         chain: "mainnet",
       }, 30_000);
@@ -1986,7 +1986,7 @@ async function testGetAddressActivity(client) {
         assert(realScan.includes("Pools with Activity"), "shows pool count", "missing");
         assert(realScan.includes("Volume:"), "shows volume per pool", "missing");
         assert(realScan.includes("Cross-Pool Totals"), "shows cross-pool totals", "missing");
-        assert(realScan.includes("get_pool_activity"), "shows tip for deep analysis", "missing");
+        assert(realScan.includes("spectra_get_pool_activity"), "shows tip for deep analysis", "missing");
         pass("real address activity scan verified");
       } else {
         pass("real address had no activity on mainnet (valid empty result)");
@@ -1998,31 +1998,31 @@ async function testGetAddressActivity(client) {
 }
 
 async function testGetCuratorDashboard(client) {
-  console.log("\n--- get_curator_dashboard ---");
+  console.log("\n--- spectra_get_curator_dashboard ---");
 
   // Schema checks
   const tools = await client.listTools();
-  const dashTool = tools.find((t) => t.name === "get_curator_dashboard");
-  assert(dashTool, "get_curator_dashboard registered", "missing");
+  const dashTool = tools.find((t) => t.name === "spectra_get_curator_dashboard");
+  assert(dashTool, "spectra_get_curator_dashboard registered", "missing");
   if (dashTool) {
     const props = dashTool.inputSchema.properties;
-    assert(props.chain, "get_curator_dashboard has chain param", "missing");
-    assert(props.metavault_address, "get_curator_dashboard has metavault_address param", "missing");
-    assert(props.curator_fee_pct, "get_curator_dashboard has curator_fee_pct param", "missing");
+    assert(props.chain, "spectra_get_curator_dashboard has chain param", "missing");
+    assert(props.metavault_address, "spectra_get_curator_dashboard has metavault_address param", "missing");
+    assert(props.curator_fee_pct, "spectra_get_curator_dashboard has curator_fee_pct param", "missing");
     const required = dashTool.inputSchema.required || [];
-    assert(required.includes("chain"), "get_curator_dashboard: chain is required", `required: ${JSON.stringify(required)}`);
-    assert(required.includes("metavault_address"), "get_curator_dashboard: metavault_address is required", `required: ${JSON.stringify(required)}`);
-    assert(!required.includes("curator_fee_pct"), "get_curator_dashboard: curator_fee_pct is optional", `required: ${JSON.stringify(required)}`);
+    assert(required.includes("chain"), "spectra_get_curator_dashboard: chain is required", `required: ${JSON.stringify(required)}`);
+    assert(required.includes("metavault_address"), "spectra_get_curator_dashboard: metavault_address is required", `required: ${JSON.stringify(required)}`);
+    assert(!required.includes("curator_fee_pct"), "spectra_get_curator_dashboard: curator_fee_pct is optional", `required: ${JSON.stringify(required)}`);
   }
 
   // Live test: fetch all MetaVaults to find a real address, then call dashboard
-  const { text: mvList } = await client.callTool("get_metavaults", {});
+  const { text: mvList } = await client.callTool("spectra_list_metavaults", {});
   const mvAddrMatch = mvList.match(/MetaVault:\s*(0x[a-fA-F0-9]{40})/);
   const mvChainMatch = mvList.match(/Chain:\s*(\w+)/);
   if (mvAddrMatch && mvChainMatch) {
     const mvAddr = mvAddrMatch[1];
     const mvChain = mvChainMatch[1];
-    const { text: dash } = await client.callTool("get_curator_dashboard", {
+    const { text: dash } = await client.callTool("spectra_get_curator_dashboard", {
       chain: mvChain,
       metavault_address: mvAddr,
     });
@@ -2031,11 +2031,11 @@ async function testGetCuratorDashboard(client) {
     assert(dash.includes("Positions") || dash.includes("Pool Allocations"), "has positions section", "missing");
     assert(dash.includes("Fee Revenue"), "has fee revenue section", "missing");
     assert(dash.includes("Next Steps"), "has next steps", "missing");
-    assert(dash.includes("model_metavault_strategy"), "next steps mention strategy tool", "missing");
+    assert(dash.includes("spectra_model_metavault"), "next steps mention strategy tool", "missing");
     // Phase 2: protocol tags — all current positions should be [Spectra]
     assert(dash.includes("[Spectra]") || dash.includes("No active pool"), "positions have [Spectra] protocol tag or no positions", "missing protocol tag");
     // Phase 2: cross-protocol pointer in dashboard next steps
-    assert(dash.includes("scan_curator_opportunities"), "dashboard next steps mention cross-protocol scanner", "missing");
+    assert(dash.includes("mv_scan_curator_opportunities"), "dashboard next steps mention cross-protocol scanner", "missing");
     // Vault allocation: positions should show percentage + USD allocation, or "No active pool"
     const hasAllocation = dash.includes("% |") && dash.includes("$");
     assert(hasAllocation || dash.includes("No active pool"), "positions show allocation % + USD or no positions", "neither found");
@@ -2044,7 +2044,7 @@ async function testGetCuratorDashboard(client) {
   }
 
   // Error case: invalid address
-  const { text: errText, isError } = await client.callTool("get_curator_dashboard", {
+  const { text: errText, isError } = await client.callTool("spectra_get_curator_dashboard", {
     chain: "base",
     metavault_address: "0x0000000000000000000000000000000000000000",
   });
@@ -2060,7 +2060,7 @@ async function testOnChainQuoting(client) {
   }
 
   // A normal-sized buy should attempt on-chain quoting
-  const { text: buy } = await client.callTool("quote_trade", {
+  const { text: buy } = await client.callTool("spectra_quote_trade", {
     chain: "mainnet",
     pt_address: KNOWN_PT,
     amount: 100,
@@ -2085,7 +2085,7 @@ async function testOnChainQuoting(client) {
   }
 
   // A sell should also work
-  const { text: sell } = await client.callTool("quote_trade", {
+  const { text: sell } = await client.callTool("spectra_quote_trade", {
     chain: "mainnet",
     pt_address: KNOWN_PT,
     amount: 100,
@@ -2100,16 +2100,16 @@ async function testOnChainQuoting(client) {
 }
 
 async function testGetOnchainActivity(client) {
-  console.log("\n--- get_onchain_activity ---");
+  console.log("\n--- spectra_get_onchain_activity ---");
 
   // Test with a known Spectra pool on Base (has default RPC)
   // Use a small lookback to keep it fast
   if (!KNOWN_POOL) {
-    skip("get_onchain_activity: no KNOWN_POOL discovered");
+    skip("spectra_get_onchain_activity: no KNOWN_POOL discovered");
     return;
   }
 
-  const { text } = await client.callTool("get_onchain_activity", {
+  const { text } = await client.callTool("spectra_get_onchain_activity", {
     chain: "base",
     pool_address: KNOWN_POOL,
     lookback_hours: 48,
@@ -2134,7 +2134,7 @@ async function testGetOnchainActivity(client) {
   );
 
   // Test error case: chain with no RPC and no override (monad has no default RPC)
-  const { text: noRpc } = await client.callTool("get_onchain_activity", {
+  const { text: noRpc } = await client.callTool("spectra_get_onchain_activity", {
     chain: "monad",
     pool_address: "0x0000000000000000000000000000000000000001",
     lookback_hours: 1,
@@ -2147,8 +2147,8 @@ async function testGetOnchainActivity(client) {
 
   // Test schema: verify rpc_url param exists
   const tools = await client.listTools();
-  const onchainTool = tools.find((t) => t.name === "get_onchain_activity");
-  assert(onchainTool, "get_onchain_activity registered", "missing");
+  const onchainTool = tools.find((t) => t.name === "spectra_get_onchain_activity");
+  assert(onchainTool, "spectra_get_onchain_activity registered", "missing");
   if (onchainTool) {
     const props = onchainTool.inputSchema.properties;
     assert(props.rpc_url, "has rpc_url param", "missing");
@@ -2180,7 +2180,7 @@ async function testGetOnchainActivity(client) {
   }
 
   // Test: neither pool_address nor pt_address → error
-  const { text: noAddr } = await client.callTool("get_onchain_activity", {
+  const { text: noAddr } = await client.callTool("spectra_get_onchain_activity", {
     chain: "base",
   });
   assert(
@@ -2191,10 +2191,10 @@ async function testGetOnchainActivity(client) {
 }
 
 async function testGetExpiringPools(client) {
-  console.log("\n--- get_expiring_pools ---");
+  console.log("\n--- spectra_list_expiring_pools ---");
 
   // Default call — scan all chains, 21-day threshold
-  const { text } = await client.callTool("get_expiring_pools", {}, 60_000);
+  const { text } = await client.callTool("spectra_list_expiring_pools", {}, 60_000);
   // Should return valid output (either expiring pools or "No pools expiring")
   assert(
     text.includes("Expiring Pools") || text.includes("No pools expiring"),
@@ -2229,7 +2229,7 @@ async function testGetExpiringPools(client) {
   }
 
   // Compact mode
-  const { text: compact } = await client.callTool("get_expiring_pools", {
+  const { text: compact } = await client.callTool("spectra_list_expiring_pools", {
     compact: true,
   }, 60_000);
   assert(
@@ -2245,7 +2245,7 @@ async function testGetExpiringPools(client) {
   }
 
   // Very short threshold — should return empty or very few
-  const { text: short } = await client.callTool("get_expiring_pools", {
+  const { text: short } = await client.callTool("spectra_list_expiring_pools", {
     threshold_days: 1,
   }, 60_000);
   assert(
@@ -2255,7 +2255,7 @@ async function testGetExpiringPools(client) {
   );
 
   // Very long threshold — should find more pools
-  const { text: long } = await client.callTool("get_expiring_pools", {
+  const { text: long } = await client.callTool("spectra_list_expiring_pools", {
     threshold_days: 180,
   }, 60_000);
   assert(
@@ -2272,7 +2272,7 @@ async function testGetExpiringPools(client) {
   }
 
   // Single chain filter
-  const { text: chainFilter } = await client.callTool("get_expiring_pools", {
+  const { text: chainFilter } = await client.callTool("spectra_list_expiring_pools", {
     threshold_days: 365,
     chain: "mainnet",
   }, 60_000);
@@ -2287,7 +2287,7 @@ async function testGetExpiringPools(client) {
   }
 
   // High TVL filter
-  const { text: highTvl } = await client.callTool("get_expiring_pools", {
+  const { text: highTvl } = await client.callTool("spectra_list_expiring_pools", {
     threshold_days: 365,
     min_tvl_usd: 999999999999,
   }, 60_000);
@@ -2302,7 +2302,7 @@ async function testMalformedAddresses(client) {
   console.log("\n--- Malformed address validation ---");
 
   // Too short
-  const { text: tooShort } = await client.callTool("get_pt_details", {
+  const { text: tooShort } = await client.callTool("spectra_get_pt_details", {
     chain: "mainnet",
     pt_address: "0x1234",
   });
@@ -2313,7 +2313,7 @@ async function testMalformedAddresses(client) {
   );
 
   // Non-hex characters
-  const { text: nonHex } = await client.callTool("get_pt_details", {
+  const { text: nonHex } = await client.callTool("spectra_get_pt_details", {
     chain: "mainnet",
     pt_address: "0xZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
   });
@@ -2324,7 +2324,7 @@ async function testMalformedAddresses(client) {
   );
 
   // Missing 0x prefix
-  const { text: noPrefix } = await client.callTool("get_pt_details", {
+  const { text: noPrefix } = await client.callTool("spectra_get_pt_details", {
     chain: "mainnet",
     pt_address: "1234567890abcdef1234567890abcdef12345678",
   });
@@ -2335,7 +2335,7 @@ async function testMalformedAddresses(client) {
   );
 
   // Too long
-  const { text: tooLong } = await client.callTool("get_pt_details", {
+  const { text: tooLong } = await client.callTool("spectra_get_pt_details", {
     chain: "mainnet",
     pt_address: "0x00000000000000000000000000000000000000000000",
   });
@@ -2346,7 +2346,7 @@ async function testMalformedAddresses(client) {
   );
 
   // Empty string
-  const { text: empty } = await client.callTool("get_pt_details", {
+  const { text: empty } = await client.callTool("spectra_get_pt_details", {
     chain: "mainnet",
     pt_address: "",
   });
@@ -2357,7 +2357,7 @@ async function testMalformedAddresses(client) {
   );
 
   // Morpho market_key: too short (should be 64 hex chars)
-  const { text: shortKey } = await client.callTool("get_morpho_rate", {
+  const { text: shortKey } = await client.callTool("morpho_get_rate", {
     chain: "mainnet",
     market_key: "0xabcd",
   });
@@ -2373,7 +2373,7 @@ async function testMalformedAddresses(client) {
 // ---------------------------------------------------------------------------
 
 async function main() {
-  console.log("Spectra MCP Server -- Test Suite");
+  console.log("MetaVault MCP Server -- Test Suite");
   console.log(`Mode: ${OFFLINE ? "OFFLINE (registration only)" : "FULL (with live API calls)"}`);
   console.log(`Server: ${SERVER_PATH}`);
 
@@ -2398,7 +2398,7 @@ async function main() {
       await testGetSupportedChains(client);
       await testGetProtocolStats(client);
 
-      // list_pools must run before pool-dependent tests (discovers KNOWN_POOL)
+      // spectra_list_pools must run before pool-dependent tests (discovers KNOWN_POOL)
       await testListPools(client);
 
       // Tools that use discovered pool address
@@ -2407,7 +2407,7 @@ async function main() {
       await testActivityEmptyFilter(client);
       await testGetAddressActivity(client);
 
-      // Tools that need a PT address (discovered from list_pools)
+      // Tools that need a PT address (discovered from spectra_list_pools)
       await testGetPtDetails(client);
       await testCompareYield(client);
       await testGetLoopingStrategy(client);

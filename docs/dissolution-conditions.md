@@ -37,7 +37,7 @@ so that silent data gaps don't produce silently misleading output.
 
 ### 4-phase pipeline (fetch / compute / sort / format)
 
-Used by `scan_opportunities` and `scan_yt_arbitrage`. Serves as long as the
+Used by `spectra_scan_opportunities` and `spectra_scan_yt_arbitrage`. Serves as long as the
 phases are truly sequential dependencies. If streaming/progressive output
 becomes valuable (e.g., returning results as chains respond rather than
 waiting for all), the pipeline should dissolve into an async generator.
@@ -45,7 +45,7 @@ waiting for all), the pipeline should dissolve into an async generator.
 ### Constant-product price impact model
 
 Serves as the fallback for tools without on-chain Curve get_dy() access
-(`scan_opportunities`, `compare_yield`, `get_best_fixed_yields`). When
+(`spectra_scan_opportunities`, `spectra_compare_yield`, `spectra_get_best_fixed_yields`). When
 all scan tools can batch on-chain quotes (e.g., via multicall), the math
 model becomes a misleading conservative approximation and should be removed.
 
@@ -53,23 +53,23 @@ model becomes a misleading conservative approximation and should be removed.
 
 ## Layer 3 Output Hints
 
-### get_pool_volume: Volume signals (formatVolumeHints)
+### spectra_get_pool_volume: Volume signals (formatVolumeHints)
 
 Dissolution: When Spectra API returns pre-computed volume-to-liquidity
 ratios, trend data, or activity classification directly.
 
-### get_morpho_markets: Market hints (formatMorphoMarketHints)
+### morpho_list_markets: Market hints (formatMorphoMarketHints)
 
-Dissolution: When `scan_opportunities` becomes the exclusive entry point
-for all looping decisions and agents stop calling `get_morpho_markets`
+Dissolution: When `spectra_scan_opportunities` becomes the exclusive entry point
+for all looping decisions and agents stop calling `morpho_list_markets`
 directly for strategy evaluation.
 
-### get_morpho_rate: PT spread analysis
+### morpho_get_rate: PT spread analysis
 
 Dissolution: When the Morpho API returns the PT's implied APY alongside
 the borrow rate, or when a unified "looping readiness" endpoint exists.
 
-### get_morpho_rate: Supply-side enrichment
+### morpho_get_rate: Supply-side enrichment
 
 Surfaces top suppliers inline with rate data so agents see supply
 concentration alongside borrow rates. Uses best-effort enrichment
@@ -79,7 +79,7 @@ Dissolution: When the Morpho API returns supplier data directly in
 the market query response, or when a unified "market health" endpoint
 combines rate, spread, and supply-side metrics in a single call.
 
-### get_morpho_market_suppliers: Supplier identification via two-step query
+### morpho_get_market_suppliers: Supplier identification via two-step query
 
 Two-step fetch: marketPositions (ranked by supply shares) then vault
 cross-reference (address_in query against vault registry). This is a
@@ -90,11 +90,11 @@ language consistent with Open Emergence principles.
 
 Dissolution: When the Morpho API provides a dedicated supplier query
 that returns vault metadata, curator info, and position type
-classification in a single call. Also dissolves if `scan_opportunities`
+classification in a single call. Also dissolves if `spectra_scan_opportunities`
 integrates supply-side analysis directly and agents stop calling
 this tool for individual market investigation.
 
-### get_morpho_vaults: Vault discovery via search query
+### morpho_list_vaults: Vault discovery via search query
 
 Lists vaults on a chain with allocation breakdown. Serves as the
 discovery layer for understanding where supply-side capital lives.
@@ -108,24 +108,24 @@ market queries). Also dissolves if Morpho vaults become the default
 view in a portfolio tool that shows positions + supply sources
 together.
 
-### get_portfolio: Portfolio signals (formatPortfolioHints)
+### spectra_get_portfolio: Portfolio signals (formatPortfolioHints)
 
 Dissolution: When Spectra adds a native portfolio analytics endpoint that
 computes concentration, maturity alerts, and strategy shape server-side.
 
-### scan_opportunities: Strategy tension line
+### spectra_scan_opportunities: Strategy tension line
 
 Dissolution: When agents reliably surface competing strategies (PT looping
 vs YT accumulation vs LP farming) without explicit prompting -- i.e., the
 tension is emerging naturally from the data without the scaffolding.
 
-### scan_yt_arbitrage: Ambiguity language on large spreads
+### spectra_scan_yt_arbitrage: Ambiguity language on large spreads
 
 Dissolution: When the tool can track IBT APR history (not just the current
 snapshot) and provide statistically grounded spread persistence estimates
 rather than point-in-time comparisons.
 
-### get_looping_strategy: "Could be" on optimal recommendation
+### spectra_get_looping_strategy: "Could be" on optimal recommendation
 
 Dissolution: When the tool can model borrow rate volatility (e.g., fetch
 historical Morpho utilization data) and provide confidence intervals
@@ -135,12 +135,12 @@ rather than point estimates at current rates.
 
 ## Cross-References
 
-### get_supported_chains -> scan_opportunities reference
+### spectra_list_chains -> spectra_scan_opportunities reference
 
-Dissolution: If `scan_opportunities` is renamed, merged with another tool,
+Dissolution: If `spectra_scan_opportunities` is renamed, merged with another tool,
 or if chain discovery moves to a different workflow entirely.
 
-### get_best_fixed_yields <-> scan_opportunities friction note
+### spectra_get_best_fixed_yields <-> spectra_scan_opportunities friction note
 
 Dissolution: If the two tools are merged, or if "effective APY" becomes
 the universal default metric and raw APY rankings lose all utility
@@ -152,8 +152,8 @@ the universal default metric and raw APY rankings lose all utility
 
 ### Raw APY vs Effective APY disagreement
 
-Between `get_best_fixed_yields` (raw implied APY ranking) and
-`scan_opportunities` (effective APY after entry cost). Maintained
+Between `spectra_get_best_fixed_yields` (raw implied APY ranking) and
+`spectra_scan_opportunities` (effective APY after entry cost). Maintained
 deliberately. The two rankings will often disagree on the same pools,
 forcing agents to develop their own framework for "best."
 
@@ -163,7 +163,7 @@ for slippage or capital size.
 
 ### PT looping vs YT accumulation tension
 
-In `scan_opportunities` output (Strategy Tension line). When a pool's
+In `spectra_scan_opportunities` output (Strategy Tension line). When a pool's
 YT leveraged exposure competes with the PT looping effective APY,
 the tension is surfaced explicitly. This forces the agent to reason
 about rate direction conviction rather than defaulting to the ranked answer.
@@ -174,7 +174,7 @@ non-transferable or loses its leveraged yield property).
 
 ### Ranking as suggestion vs ranking as conclusion
 
-In `scan_opportunities` and `scan_yt_arbitrage` output. The `~` prefix
+In `spectra_scan_opportunities` and `spectra_scan_yt_arbitrage` output. The `~` prefix
 on APY numbers, `(at current rates)` qualifier, and footer caveats
 signal that rankings are projections. This resists the tendency to
 treat ranked lists as resolved conclusions.
@@ -185,10 +185,10 @@ the scaffolding has done its job and can be removed.
 
 ---
 
-## MetaVault tools: get_metavaults + model_metavault_strategy
+## MetaVault tools: spectra_list_metavaults + spectra_model_metavault
 
-`get_metavaults` fetches live MetaVault data from the Spectra API
-(`/v1/{network}/metavaults`). `model_metavault_strategy` can auto-populate
+`spectra_list_metavaults` fetches live MetaVault data from the Spectra API
+(`/v1/{network}/metavaults`). `spectra_model_metavault` can auto-populate
 base_apy from live data (chain + metavault_address) or run in manual mode
 for hypothetical modeling.
 
@@ -202,10 +202,10 @@ strategy modeling, wire that endpoint as well.
 
 ---
 
-## Pendle cross-protocol tools: list_pendle_markets + compare_pendle_spectra
+## Pendle cross-protocol tools: pendle_list_markets + mv_compare_yield
 
-`list_pendle_markets` fetches active Pendle markets from the Pendle API
-(`api-v2.pendle.finance`). `compare_pendle_spectra` auto-matches Pendle and
+`pendle_list_markets` fetches active Pendle markets from the Pendle API
+(`api-v2.pendle.finance`). `mv_compare_yield` auto-matches Pendle and
 Spectra markets by underlying asset for side-by-side yield comparison.
 
 Dissolution: If Pendle's API changes significantly or is retired. If Spectra
@@ -214,7 +214,7 @@ unified cross-protocol yield aggregator API emerges that makes individual
 protocol querying redundant. Also dissolves if MetaVault curators stop
 considering Pendle as an alternative allocation target.
 
-## On-chain historical activity: get_onchain_activity
+## On-chain historical activity: spectra_get_onchain_activity
 
 Reads historical event logs directly from the blockchain via chunked
 `eth_getLogs`. Supports two contract types: Curve StableSwap-NG pool events
@@ -231,7 +231,7 @@ RPCs (Katana, Monad) without requiring server configuration.
 
 Dissolution: When the Spectra REST API provides full historical activity data
 with no time-window limitation (pagination over all historical transactions).
-At that point, `get_onchain_activity` becomes redundant and the on-chain
+At that point, `spectra_get_onchain_activity` becomes redundant and the on-chain
 fallback path adds complexity without value.
 
 ### Pre-computed event topic hashes
@@ -285,7 +285,7 @@ YieldClaimed event that moves the amount to the data field (standard pattern).
 
 On-chain event logs contain raw token amounts but no price data. The tool
 shows human-readable token amounts and advises cross-referencing with
-`get_pt_details` for price context.
+`spectra_get_pt_details` for price context.
 
 Dissolution: When an on-chain price oracle is integrated that can provide
 historical token prices at specific block numbers, enabling USD conversion
@@ -316,7 +316,7 @@ for inference from YT balance alone.
 
 Surfaces the temporal blind spot in portfolio data. Position Shape shows current
 balance ratios but says nothing about entry timing or cost basis. The hint creates
-a navigation path to get_pool_activity for temporal reconstruction.
+a navigation path to spectra_get_pool_activity for temporal reconstruction.
 
 Dissolution: When the Spectra portfolio API returns acquisition timestamps, entry
 prices, or cost basis data for each position component (PT/YT/LP).
@@ -324,7 +324,7 @@ prices, or cost basis data for each position component (PT/YT/LP).
 ### Gauge boost cross-reference (formatPositionSummary)
 
 Surfaces the yield range for LP positions in gauge-boosted pools and creates a
-navigation path to get_ve_info. Without this, an agent seeing "LP APY: 70.89%"
+navigation path to spectra_get_ve_info. Without this, an agent seeing "LP APY: 70.89%"
 has no signal that the actual yield could be 199% with veSPECTRA boost.
 
 Dissolution: When the Spectra portfolio API returns the user's actual boost level
@@ -353,17 +353,17 @@ aggregates unclaimed redemptions.
 
 Portfolio-level reminder that LP positions may be affected by veSPECTRA boost.
 Complements the per-position gauge boost range (Enhancement 3) with a single
-aggregate signal that navigates to get_ve_info.
+aggregate signal that navigates to spectra_get_ve_info.
 
 Dissolution: When the portfolio API returns the user's veSPECTRA balance and
 computed boost for each LP position.
 
-### Improved no-activity messaging for address filter (get_pool_activity)
+### Improved no-activity messaging for address filter (spectra_get_pool_activity)
 
 When an address has no visible activity on a pool, the previous message suggested
 the address "may not have interacted." The improved message explains that Spectra
 Router operations (atomic mint + LP) are invisible in pool activity data, and
-navigates to get_portfolio and get_address_activity as alternatives.
+navigates to spectra_get_portfolio and spectra_get_address_activity as alternatives.
 
 Dissolution: When the Spectra API provides a unified transaction history endpoint
 that includes Router-batched operations alongside pool activity.

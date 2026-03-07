@@ -1,5 +1,5 @@
 /**
- * Tool: get_pool_capacity
+ * Tool: spectra_get_pool_capacity
  *
  * Runs a multi-size quote ladder against a PT pool to show how price impact
  * and effective APY degrade at increasing capital sizes. Helps curators and
@@ -15,7 +15,7 @@ import { tryOnChainQuote } from "./quote.js";
 
 export function register(server: McpServer): void {
   server.tool(
-    "get_pool_capacity",
+    "spectra_get_pool_capacity",
     `Analyze a pool's capacity by quoting PT trades at increasing capital sizes.
 
 Shows how price impact and effective APY degrade as capital grows, helping
@@ -28,9 +28,9 @@ multiple txns would face additional impact from pool state changes.
 On-chain quotes use the actual Curve StableSwap-NG amplification parameter.
 Set use_on_chain=false for math-only estimates (faster, more conservative).
 
-Use quote_trade for a single exact quote at a specific amount.
-Use scan_opportunities for capital-aware ranking across all pools.
-Use check_ibt_health to verify the underlying IBT before deploying.`,
+Use spectra_quote_trade for a single exact quote at a specific amount.
+Use spectra_scan_opportunities for capital-aware ranking across all pools.
+Use mv_check_ibt_health to verify the underlying IBT before deploying.`,
     {
       chain: CHAIN_ENUM.describe("The blockchain network"),
       pt_address: EVM_ADDRESS.describe("The PT contract address (0x...)"),

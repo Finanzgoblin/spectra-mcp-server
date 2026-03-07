@@ -345,7 +345,7 @@ export interface ScanOpportunity {
   tvlUsd: number;
   poolLiquidityUsd: number;
 
-  // Capital-aware metrics (the differentiator vs get_best_fixed_yields)
+  // Capital-aware metrics (the differentiator vs spectra_get_best_fixed_yields)
   entryImpactPct: number;
   effectiveApy: number;       // base APY minus amortized entry cost
   capacityUsd: number;        // max capital before impact exceeds threshold
@@ -671,7 +671,7 @@ export interface CuratorOpportunity {
   poolAddress?: string;        // Spectra Curve pool address
   pendleMarketAddress?: string; // Pendle market address
   pendlePtAddress?: string;    // Pendle PT address
-  pendleSyAddress?: string;    // Pendle SY address (for check_ibt_health)
+  pendleSyAddress?: string;    // Pendle SY address (for mv_check_ibt_health)
 
   // Enrichment (populated for both Spectra and Pendle)
   looping?: ScanOpportunity["looping"];
