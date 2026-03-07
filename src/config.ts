@@ -1,24 +1,32 @@
 /**
  * Configuration — constants, chain definitions, Zod schemas, and protocol parameters.
+ *
+ * Environment variable overrides (set any of these to redirect API traffic at runtime):
+ *   SPECTRA_BASE_URL    — Spectra API base (default: https://api.spectra.finance)
+ *   SPECTRA_APP_URL     — Spectra App API base (default: https://app.spectra.finance)
+ *   MORPHO_GRAPHQL_URL  — Morpho GraphQL endpoint (default: https://api.morpho.org/graphql)
+ *   PENDLE_API_URL      — Pendle API base (default: https://api-v2.pendle.finance/core)
+ *   FETCH_TIMEOUT       — API timeout in ms (default: 15000)
+ *   VE_SPECTRA_RPC_URL  — RPC for veSPECTRA reads (default: https://mainnet.base.org)
  */
 
 import { z } from "zod";
 
 // =============================================================================
-// API Endpoints
+// API Endpoints — env overrides allow runtime reconfiguration without rebuild
 // =============================================================================
 
-export const SPECTRA_BASE = "https://api.spectra.finance";
+export const SPECTRA_BASE = process.env.SPECTRA_BASE_URL || "https://api.spectra.finance";
 export const SPECTRA_API = `${SPECTRA_BASE}/v1`;
 
-export const SPECTRA_APP_BASE = "https://app.spectra.finance";
+export const SPECTRA_APP_BASE = process.env.SPECTRA_APP_URL || "https://app.spectra.finance";
 export const SPECTRA_APP_API = `${SPECTRA_APP_BASE}/api/v1`;
 
-export const MORPHO_GRAPHQL = "https://api.morpho.org/graphql";
+export const MORPHO_GRAPHQL = process.env.MORPHO_GRAPHQL_URL || "https://api.morpho.org/graphql";
 
-export const PENDLE_API = "https://api-v2.pendle.finance/core";
+export const PENDLE_API = process.env.PENDLE_API_URL || "https://api-v2.pendle.finance/core";
 
-export const FETCH_TIMEOUT_MS = 15_000;
+export const FETCH_TIMEOUT_MS = Number(process.env.FETCH_TIMEOUT) || 15_000;
 
 // =============================================================================
 // Chain Configuration
@@ -39,6 +47,10 @@ export const MORPHO_CHAIN_IDS: Record<string, number> = {
 // and Pendle-only chains. Curators need the full picture to evaluate cross-protocol
 // opportunities and identify chains where Spectra could expand.
 // Source: GET /core/v1/chains (confirmed Feb 2026)
+//
+// DISSOLUTION: Re-fetch from GET /core/v1/chains when Pendle adds new chains.
+// Pendle has no versioned chain registry — this list must be manually maintained.
+// If Pendle launches on a new L2, add it here AND in PENDLE_CHAIN_NAMES below.
 export const PENDLE_CHAIN_IDS: Record<string, number> = {
   mainnet: 1,
   optimism: 10,
@@ -166,11 +178,14 @@ export const PROTOCOL_CONSTANTS = {
 //   locked(uint256 tokenId) = 0xb45a3c0e  ✓ (returns amount, end, isPermanent)
 //   ownerOf(uint256) = 0x6352211e  ✓
 // Non-working: balanceOfNFT (0x6bfa7380), tokenOfOwnerByIndex, getVotes
+// DISSOLUTION: If veSPECTRA migrates to a new proxy, update address + implementation.
+// The contract is behind EIP-1967 proxy — implementation can change without address change.
+// Selectors are standard ERC-721/voting-escrow and won't change unless ABI changes.
 export const VE_SPECTRA = {
-  address: "0x6a89228055c7c28430692e342f149f37462b478b",
+  address: process.env.VE_SPECTRA_ADDRESS || "0x6a89228055c7c28430692e342f149f37462b478b",
   implementation: "0x8a92294ffcfe469a3df4a85c76a0b0d2b3292119", // EIP-1967 proxy
   chainId: 8453, // Base
-  rpcUrl: "https://mainnet.base.org",
+  rpcUrl: process.env.VE_SPECTRA_RPC_URL || "https://mainnet.base.org",
   selectors: {
     totalSupply: "0x18160ddd",
     balanceOf: "0x70a08231",
@@ -212,13 +227,15 @@ export const CHAIN_RPC_URLS: Partial<Record<string, string>> = {
 // The correct per-chain address is available from the Morpho GraphQL API via morphoBlue { address }.
 // market(bytes32 id) returns (totalSupplyAssets, totalSupplyShares, totalBorrowAssets,
 //                              totalBorrowShares, lastUpdate, fee) — all uint128.
+// DISSOLUTION: If Morpho governance redeploys, update per-chain addresses.
+// The GraphQL API's morphoBlue.address field is the canonical source of truth.
+// Override via env: MORPHO_BLUE_<CHAIN>=0x... (e.g., MORPHO_BLUE_MAINNET=0x...)
 export const MORPHO_BLUE = {
-  // Per-chain addresses — the GraphQL API's morphoBlue.address field is the authority.
   addresses: {
-    mainnet:  "0xBBBBBBBBbb9cC5e90e3b3Af64bdAF62C37EEFFCb",
-    base:     "0xBBBBBBBBbb9cC5e90e3b3Af64bdAF62C37EEFFCb",
-    arbitrum: "0xBBBBBBBBbb9cC5e90e3b3Af64bdAF62C37EEFFCb",
-    katana:   "0xD50F2DffFd62f94Ee4AEd9ca05C61d0753268aBc",
+    mainnet:  process.env.MORPHO_BLUE_MAINNET  || "0xBBBBBBBBbb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+    base:     process.env.MORPHO_BLUE_BASE     || "0xBBBBBBBBbb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+    arbitrum: process.env.MORPHO_BLUE_ARBITRUM  || "0xBBBBBBBBbb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+    katana:   process.env.MORPHO_BLUE_KATANA   || "0xD50F2DffFd62f94Ee4AEd9ca05C61d0753268aBc",
   } as Record<string, string>,
   selectors: {
     market: "0x5c60e39a", // keccak256("market(bytes32)")[:4] — verified on mainnet + katana
@@ -226,6 +243,7 @@ export const MORPHO_BLUE = {
 } as const;
 
 // Fallback RPCs — tried when the primary RPC fails. Order matters (first fallback tried first).
+// Every chain with a primary RPC should have at least one fallback to survive rate-limits.
 export const CHAIN_RPC_FALLBACKS: Partial<Record<string, string[]>> = {
   mainnet: [
     "https://rpc.ankr.com/eth",
@@ -234,9 +252,28 @@ export const CHAIN_RPC_FALLBACKS: Partial<Record<string, string[]>> = {
   ],
   base: [
     "https://base-rpc.publicnode.com",
+    "https://1rpc.io/base",
   ],
   arbitrum: [
     "https://arbitrum-one-rpc.publicnode.com",
+    "https://1rpc.io/arb",
+  ],
+  optimism: [
+    "https://optimism-rpc.publicnode.com",
+    "https://1rpc.io/op",
+  ],
+  avalanche: [
+    "https://avalanche-c-chain-rpc.publicnode.com",
+  ],
+  bsc: [
+    "https://bsc-dataseed2.binance.org",
+    "https://bsc-rpc.publicnode.com",
+  ],
+  sonic: [
+    "https://rpc.ankr.com/sonic",
+  ],
+  flare: [
+    "https://rpc.ankr.com/flare",
   ],
 };
 
@@ -312,4 +349,70 @@ export function resolveRpcUrlsWithFallbacks(chain: string, overrideRpcUrl?: stri
   const fallbacks = CHAIN_RPC_FALLBACKS[network];
   if (fallbacks) urls.push(...fallbacks);
   return urls;
+}
+
+// =============================================================================
+// Config Staleness Tracking
+// =============================================================================
+
+/**
+ * Verified dates for hardcoded config sections. If any section is older than
+ * STALENESS_THRESHOLD_DAYS, a warning is emitted at startup. This makes
+ * invisible staleness visible to operators.
+ */
+export const CONFIG_VERIFIED_DATES: Record<string, string> = {
+  protocolConstants:  "2026-02-01",
+  veSpectra:          "2026-02-01",
+  morphoBlueAddresses: "2026-02-01",
+  pendleChainIds:     "2026-02-01",
+  chainBlockTimes:    "2026-02-01",
+  chainGasEstimates:  "2026-02-01",
+};
+
+const STALENESS_THRESHOLD_DAYS = 120;
+
+/**
+ * Emit warnings to stderr for any config section verified more than
+ * STALENESS_THRESHOLD_DAYS ago. Called once at startup.
+ */
+export function checkConfigStaleness(): void {
+  const now = Date.now();
+  for (const [section, dateStr] of Object.entries(CONFIG_VERIFIED_DATES)) {
+    const verifiedAt = new Date(dateStr).getTime();
+    const ageDays = (now - verifiedAt) / (1000 * 60 * 60 * 24);
+    if (ageDays > STALENESS_THRESHOLD_DAYS) {
+      console.error(
+        `[config-staleness] ⚠ "${section}" was last verified ${dateStr} (${Math.round(ageDays)}d ago). ` +
+        `Review and update CONFIG_VERIFIED_DATES after re-verification.`
+      );
+    }
+  }
+}
+
+// =============================================================================
+// Chain Config Completeness Validation
+// =============================================================================
+
+/**
+ * Validate that every chain in SUPPORTED_CHAINS (except aliases) has entries
+ * in all per-chain config maps. Emits warnings for gaps — does NOT throw,
+ * since missing entries degrade gracefully at runtime.
+ */
+export function validateChainConfig(): void {
+  const chains = API_NETWORKS; // excludes the "ethereum" alias
+  const checks: { name: string; map: Partial<Record<string, unknown>> }[] = [
+    { name: "CHAIN_RPC_URLS", map: CHAIN_RPC_URLS },
+    { name: "CHAIN_BLOCK_TIMES", map: CHAIN_BLOCK_TIMES },
+    { name: "CHAIN_GAS_ESTIMATES", map: CHAIN_GAS_ESTIMATES },
+  ];
+
+  for (const { name, map } of checks) {
+    const missing = chains.filter((c) => !(c in map));
+    if (missing.length > 0) {
+      console.error(
+        `[config-validation] ⚠ ${name} missing entries for: ${missing.join(", ")}. ` +
+        `These chains will use fallback defaults or return null at runtime.`
+      );
+    }
+  }
 }
