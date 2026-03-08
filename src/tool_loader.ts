@@ -12,7 +12,7 @@
 
 import { readdir } from "node:fs/promises";
 import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -39,7 +39,7 @@ export async function discoverAndRegisterTools(server: McpServer): Promise<void>
   for (const file of toolFiles) {
     try {
       const modulePath = join(toolsDir, file);
-      const mod = await import(modulePath);
+      const mod = await import(pathToFileURL(modulePath).href);
 
       if (typeof mod.register === "function") {
         mod.register(server);

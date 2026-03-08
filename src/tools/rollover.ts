@@ -8,7 +8,7 @@
  * Reuses scanning primitives from scan_curator_opportunities logic:
  *   - scanAllChainPools (Spectra)
  *   - scanAllPendleMarkets (Pendle)
- *   - estimatePriceImpact / estimatePendlePriceImpact
+ *   - estimateLpDepositImpact (LP deposit model, not swap impact)
  *   - findMorphoMarketsForPts (looping availability)
  */
 
@@ -32,8 +32,9 @@ import {
   formatDate,
   daysToMaturity,
   pendleDaysToMaturity,
-  estimatePriceImpact,
-  // estimatePendlePriceImpact needs totalPt/totalSy — use estimatePriceImpact for simpler rollover ranking
+  estimateLpDepositImpact,
+  // MetaVault rollovers are LP operations (balanced IBT+PT deposit), not directional PT swaps.
+  // Use LP deposit impact model instead of swap impact for accurate capacity assessment.
   normalizeUnderlyingSymbol,
   cumulativeLeverageAtLoop,
   formatMorphoLltv,
@@ -313,7 +314,8 @@ Use spectra_get_pool_capacity to assess depth at your capital size for specific 
             // Skip expired or very short maturity candidates
             if (days <= 7) continue;
 
-            const impactFrac = estimatePriceImpact(capitalForImpact, poolLiqUsd);
+            // MetaVault rollovers are LP operations — use LP deposit impact, not swap impact
+            const impactFrac = estimateLpDepositImpact(capitalForImpact, poolLiqUsd);
             const impactPct = impactFrac * 100;
             const annualizedEntryCost = days > 0
               ? impactFrac * (365 / days) * 100
@@ -362,8 +364,8 @@ Use spectra_get_pool_capacity to assess depth at your capital size for specific 
             }
 
             const warnings: string[] = [];
-            if (impactPct > 3) warnings.push(`Entry impact ${formatPct(impactPct)} may be significant at ${formatUsd(capitalForImpact)}`);
-            if (poolLiqUsd < capitalForImpact * 0.5) warnings.push(`Pool liquidity (${formatUsd(poolLiqUsd)}) is thin relative to position size`);
+            if (impactPct > 0.5) warnings.push(`LP deposit imbalance fee ${formatPct(impactPct)} may be significant at ${formatUsd(capitalForImpact)}`);
+            if (poolLiqUsd < capitalForImpact * 0.5) warnings.push(`Pool liquidity (${formatUsd(poolLiqUsd)}) — your LP share would exceed 50%`);
             if (candChain !== chain) warnings.push(`Cross-chain rollover (${chain} → ${candChain}) requires bridge transfer`);
 
             candidates.push({
@@ -399,7 +401,8 @@ Use spectra_get_pool_capacity to assess depth at your capital size for specific 
 
             if (days <= 7) continue;
 
-            const impactFrac = estimatePriceImpact(capitalForImpact, poolLiqUsd);
+            // MetaVault rollovers are LP operations — use LP deposit impact
+            const impactFrac = estimateLpDepositImpact(capitalForImpact, poolLiqUsd);
             const impactPct = impactFrac * 100;
             const annualizedEntryCost = days > 0
               ? impactFrac * (365 / days) * 100
@@ -415,8 +418,8 @@ Use spectra_get_pool_capacity to assess depth at your capital size for specific 
             const overlapDays = pos.daysToMaturity > 0 ? pos.daysToMaturity : null;
 
             const warnings: string[] = [];
-            if (impactPct > 3) warnings.push(`Entry impact ${formatPct(impactPct)} may be significant`);
-            if (poolLiqUsd < capitalForImpact * 0.5) warnings.push(`Pool liquidity thin relative to position size`);
+            if (impactPct > 0.5) warnings.push(`LP deposit imbalance fee ${formatPct(impactPct)} may be significant`);
+            if (poolLiqUsd < capitalForImpact * 0.5) warnings.push(`Pool liquidity thin — LP share would exceed 50%`);
             if (candChain !== chain) warnings.push(`Cross-chain rollover requires bridge transfer`);
             warnings.push(`Pendle positions require manual rollover (no MetaVault auto-roll)`);
 
@@ -463,7 +466,7 @@ Use spectra_get_pool_capacity to assess depth at your capital size for specific 
 
         // ── Considerations ────────────────────────────────────────
         outputSections.push(`--- Considerations ---`);
-        outputSections.push(`  - Entry impact uses conservative constant-product model — real Curve StableSwap-NG pools are more capital-efficient`);
+        outputSections.push(`  - Entry impact uses LP deposit imbalance model (not swap impact) — MetaVault rollovers are balanced LP deposits`);
         outputSections.push(`  - Yield gap assumes instantaneous redemption + re-entry. Real transitions involve bridge latency and gas costs`);
         outputSections.push(`  - Overlap window shows double capital requirement — relevant if entering new position before old matures`);
         outputSections.push(`  - LP APY includes gauge emissions which may change at next gauge vote`);

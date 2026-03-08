@@ -1155,7 +1155,9 @@ export function amountToBigInt(amount: number, decimals: number): bigint {
 
 // Curve StableSwap-NG function selectors (from keccak256 of signatures)
 const CURVE_SELECTORS = {
-  get_dy: "0x5e0d443f",  // get_dy(int128,int128,uint256)
+  get_dy: "0x5e0d443f",               // get_dy(int128,int128,uint256)
+  calc_token_amount_dyn: "0x3db06dd8", // calc_token_amount(uint256[],bool) — StableSwap-NG
+  calc_token_amount_2: "0xed8e84f3",   // calc_token_amount(uint256[2],bool) — legacy 2-coin
 } as const;
 
 /**
@@ -1230,6 +1232,114 @@ export async function fetchCurveGetDy(
   } catch {
     return null; // Best-effort — fall back to math estimate
   }
+}
+
+// =============================================================================
+// On-Chain Curve Pool LP Quoting (calc_token_amount)
+// =============================================================================
+
+/**
+ * Encode a Curve calc_token_amount(amounts, is_deposit) call as raw calldata.
+ * StableSwap-NG uses dynamic arrays (uint256[]), legacy pools use fixed (uint256[2]).
+ * We try both selectors in sequence — the wrong one will revert and return null.
+ */
+function encodeCurveCalcTokenAmountDynamic(amounts: [bigint, bigint], isDeposit: boolean): string {
+  // ABI encoding for (uint256[], bool):
+  // Word 0: offset to dynamic array data = 0x40 (64 bytes, past the bool slot)
+  // Word 1: bool is_deposit
+  // Word 2: array length = 2
+  // Word 3: amounts[0]
+  // Word 4: amounts[1]
+  const offsetHex = "0".repeat(62) + "40";
+  const boolHex = "0".repeat(63) + (isDeposit ? "1" : "0");
+  const lenHex = "0".repeat(63) + "2";
+  const amt0Hex = amounts[0].toString(16).padStart(64, "0");
+  const amt1Hex = amounts[1].toString(16).padStart(64, "0");
+  return CURVE_SELECTORS.calc_token_amount_dyn + offsetHex + boolHex + lenHex + amt0Hex + amt1Hex;
+}
+
+function encodeCurveCalcTokenAmountFixed2(amounts: [bigint, bigint], isDeposit: boolean): string {
+  // ABI encoding for (uint256[2], bool):
+  // Word 0: amounts[0]
+  // Word 1: amounts[1]
+  // Word 2: bool is_deposit
+  const amt0Hex = amounts[0].toString(16).padStart(64, "0");
+  const amt1Hex = amounts[1].toString(16).padStart(64, "0");
+  const boolHex = "0".repeat(63) + (isDeposit ? "1" : "0");
+  return CURVE_SELECTORS.calc_token_amount_2 + amt0Hex + amt1Hex + boolHex;
+}
+
+/**
+ * Call Curve pool's calc_token_amount(amounts, is_deposit) on-chain via eth_call.
+ * Returns the expected LP tokens minted for a deposit (or burned for withdrawal) as bigint.
+ *
+ * Tries the StableSwap-NG dynamic array selector first, falls back to legacy fixed-2 selector.
+ * Returns null if both revert (pool doesn't support this function or is expired).
+ *
+ * Best-effort — returns null if RPC is unavailable or call reverts.
+ *
+ * @param poolAddress - Curve pool contract address
+ * @param amounts - [IBT amount, PT amount] in raw token units
+ * @param isDeposit - true for deposit (minting LP), false for withdrawal
+ * @param chainSlug - Spectra chain slug (e.g., "mainnet", "base")
+ */
+export async function fetchCurveCalcTokenAmount(
+  poolAddress: string,
+  amounts: [bigint, bigint],
+  isDeposit: boolean,
+  chainSlug: string,
+): Promise<bigint | null> {
+  const network = resolveNetwork(chainSlug);
+  const rpcUrl = CHAIN_RPC_URLS[network];
+  if (!rpcUrl) return null;
+
+  // Try both selectors: dynamic array (NG) first, then fixed 2-coin (legacy)
+  const calldatas = [
+    encodeCurveCalcTokenAmountDynamic(amounts, isDeposit),
+    encodeCurveCalcTokenAmountFixed2(amounts, isDeposit),
+  ];
+
+  for (const calldata of calldatas) {
+    try {
+      const res = await fetchWithRetry(() =>
+        fetch(rpcUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "eth_call",
+            params: [
+              { to: poolAddress, data: calldata },
+              "latest",
+            ],
+          }),
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        })
+      );
+
+      if (!res.ok) continue;
+
+      let json: any;
+      try {
+        json = await res.json();
+      } catch {
+        continue;
+      }
+
+      if (json.error) continue;
+
+      const hex: string = json.result;
+      if (!hex || hex === "0x" || hex === "0x0") continue;
+
+      const result = BigInt(hex);
+      if (result > 0n) return result; // Valid result — return it
+    } catch {
+      continue; // Try next selector
+    }
+  }
+
+  return null; // Both selectors failed — fall back to math estimate
 }
 
 // =============================================================================
