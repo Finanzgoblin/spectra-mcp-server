@@ -6,7 +6,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, MORPHO_CHAIN_IDS, resolveNetwork } from "../config.js";
-import type { MorphoMarket, MorphoUserPositions, MorphoUserMarketPosition, MorphoUserVaultPosition, MorphoHistoricalAnalysis, MorphoHistoricalDataPoint, MorphoRateStats } from "../types.js";
+import type { MorphoMarket, MorphoVault, MorphoUserPositions, MorphoUserMarketPosition, MorphoUserVaultPosition, MorphoHistoricalAnalysis, MorphoHistoricalDataPoint, MorphoRateStats } from "../types.js";
 import { fetchMorpho, sanitizeGraphQL, MORPHO_MARKET_FIELDS, fetchSpectraPtAddresses, fetchMorphoMarketSuppliers, fetchMorphoVaults, fetchMorphoMarketRates, fetchMorphoUserPositions, fetchMorphoMarketHistory } from "../api.js";
 import { formatPct, formatUsd, formatMorphoLltv, formatMorphoMarketSummary, formatMorphoMarketHints, formatMorphoSupplierAnalysis, formatMorphoVaultSummary, formatMorphoVaultSummaryEnriched, formatMorphoUserPositions, formatMorphoHistoricalAnalysis, formatMorphoHistoryHints, parsePtResponse } from "../formatters.js";
 import { fetchSpectra } from "../api.js";
@@ -131,7 +131,7 @@ Use spectra_scan_opportunities for automated cross-chain looping discovery.`,
         try {
           const networks = chain ? [resolveNetwork(chain)] : Object.keys(MORPHO_CHAIN_IDS);
           const allVaults = (await Promise.all(
-            networks.map((net) => fetchMorphoVaults(net).catch(() => [])),
+            networks.map((net) => fetchMorphoVaults(net).then(r => r.vaults).catch((): MorphoVault[] => [])),
           )).flat();
           if (allVaults.length === 0) vaultDataAvailable = false;
           for (const v of allVaults) {
@@ -290,10 +290,12 @@ Use spectra_get_looping_strategy with these rates to calculate leveraged yield p
         // Best-effort supply-side analysis with vault cross-linking
         let supplierDataAvailable = false;
         try {
-          const [suppliers, vaults] = await Promise.all([
+          const [suppResult, vaultResult] = await Promise.all([
             fetchMorphoMarketSuppliers(market_key, morphoChainId, 5),
-            fetchMorphoVaults(chain).catch(() => []),
+            fetchMorphoVaults(chain).then(r => r.vaults).catch((): MorphoVault[] => []),
           ]);
+          const suppliers = suppResult.suppliers;
+          const vaults = vaultResult;
           if (suppliers.length > 0) {
             supplierDataAvailable = true;
             lines.push(``);
@@ -411,10 +413,12 @@ Use morpho_get_rate for borrow-side rate and PT spread analysis.`,
           }
         }`;
 
-        const [marketData, suppliers] = await Promise.all([
+        const [marketData, suppResult] = await Promise.all([
           fetchMorpho(marketQuery) as Promise<any>,
           fetchMorphoMarketSuppliers(market_key, morphoChainId, top_n),
         ]);
+        const suppliers = suppResult.suppliers;
+        const suppTotal = suppResult.total;
 
         const market: MorphoMarket | null = marketData?.marketByUniqueKey;
 
@@ -425,6 +429,11 @@ Use morpho_get_rate for borrow-side rate and PT spread analysis.`,
 
         const analysis = formatMorphoSupplierAnalysis(suppliers, market);
 
+        // Truncation notice
+        const truncNotice = suppTotal > suppliers.length
+          ? `\n⚠ Showing top ${suppliers.length} of ${suppTotal} supplier(s). Increase top_n (max 50) to see more.\n`
+          : "";
+
         const footer = [
           ``,
           `--- Next Steps ---`,
@@ -433,7 +442,7 @@ Use morpho_get_rate for borrow-side rate and PT spread analysis.`,
           `• Looping: spectra_get_looping_strategy(chain="${chain}", pt_address=PT_ADDRESS) to model leveraged yield`,
         ].join("\n");
 
-        const text = analysis + footer;
+        const text = analysis + truncNotice + footer;
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
         const text = `Error fetching market suppliers: ${e.message}`;
@@ -495,11 +504,13 @@ Use spectra_get_looping_strategy to model leveraged yield after identifying supp
           return { content: [{ type: "text" as const, text }], isError: true };
         }
 
-        const vaults = await fetchMorphoVaults(chain, {
+        const vaultResult = await fetchMorphoVaults(chain, {
           assetFilter: asset_filter,
           minTvlUsd: min_tvl_usd,
           topN: top_n,
         });
+        const vaults = vaultResult.vaults;
+        const vaultTotal = vaultResult.total;
 
         if (vaults.length === 0) {
           const lines = [
@@ -535,8 +546,15 @@ Use spectra_get_looping_strategy to model leveraged yield after identifying supp
           (v.state?.allocation || []).some((a) => spectraPtAddrs.has(a.collateralAddress || "")),
         ).length;
 
-        const header = `== Morpho Vaults: ${chain}${asset_filter ? ` (filter: ${asset_filter})` : ""} ==\n` +
-          `  Found ${vaults.length} vault(s) (${spectraVaultCount} with Spectra PT allocations)\n`;
+        const truncated = vaultTotal - vaults.length;
+        const headerLines = [
+          `== Morpho Vaults: ${chain}${asset_filter ? ` (filter: ${asset_filter})` : ""} ==`,
+          `  Found ${vaults.length} of ${vaultTotal} vault(s) (${spectraVaultCount} with Spectra PT allocations)`,
+        ];
+        if (truncated > 0) {
+          headerLines.push(`  ⚠ ${truncated} additional vault(s) not shown. Increase top_n (max 50) or use asset_filter to narrow results.`);
+        }
+        const header = headerLines.join("\n") + "\n";
 
         const summaries = vaults.map((v, i) =>
           formatMorphoVaultSummaryEnriched(v, i + 1, marketRates, spectraPtAddrs),
