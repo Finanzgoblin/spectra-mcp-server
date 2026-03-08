@@ -68,45 +68,8 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { API_NETWORKS, SUPPORTED_CHAINS } from "./config.js";
-
-// Tool registrations — each module exports register(server)
-import { register as registerPt } from "./tools/pt.js";
-import { register as registerLooping } from "./tools/looping.js";
-import { register as registerPortfolio } from "./tools/portfolio.js";
-import { register as registerPool } from "./tools/pool.js";
-import { register as registerMorpho } from "./tools/morpho.js";
-import { register as registerProtocol } from "./tools/protocol.js";
-import { register as registerQuote } from "./tools/quote.js";
-import { register as registerSimulate } from "./tools/simulate.js";
-import { register as registerStrategy } from "./tools/strategy.js";
-import { register as registerYtArb } from "./tools/yt_arb.js";
-import { register as registerVe } from "./tools/ve.js";
-import { register as registerMetavault } from "./tools/metavault.js";
-import { register as registerContext } from "./tools/context.js";
-import { register as registerPendle } from "./tools/pendle.js";
-import { register as registerPendleDetails } from "./tools/pendle_details.js";
-import { register as registerPendleYields } from "./tools/pendle_yields.js";
-import { register as registerPendlePortfolio } from "./tools/pendle_portfolio.js";
-import { register as registerPendleScanner } from "./tools/pendle_scanner.js";
-import { register as registerPendleCapacity } from "./tools/pendle_capacity.js";
-import { register as registerPendleYieldCurve } from "./tools/pendle_yield_curve.js";
-import { register as registerPendleExpiry } from "./tools/pendle_expiry.js";
-import { register as registerPendleYtArb } from "./tools/pendle_yt_arb.js";
-import { register as registerPendleStats } from "./tools/pendle_stats.js";
-import { register as registerPendleLooping } from "./tools/pendle_looping.js";
-import { register as registerPendleQuote } from "./tools/pendle_quote.js";
-import { register as registerPendleSimulate } from "./tools/pendle_simulate.js";
-import { register as registerCuratorScan } from "./tools/curator_scan.js";
-import { register as registerOnchain } from "./tools/onchain.js";
-import { register as registerCapacity } from "./tools/capacity.js";
-import { register as registerIbtHealth } from "./tools/ibt_health.js";
-import { register as registerYieldCurve } from "./tools/yield_curve.js";
-import { register as registerRiskMonitor } from "./tools/risk_monitor.js";
-import { register as registerStressTest } from "./tools/stress_test.js";
-import { register as registerRollover } from "./tools/rollover.js";
-import { register as registerCuratorPortfolio } from "./tools/curator_portfolio.js";
-import { register as registerExpiryMonitor } from "./tools/expiry_monitor.js";
+import { API_NETWORKS, SUPPORTED_CHAINS, checkConfigStaleness, validateChainConfig } from "./config.js";
+import { discoverAndRegisterTools } from "./tool_loader.js";
 
 // =============================================================================
 // MCP Server Setup
@@ -117,43 +80,10 @@ const server = new McpServer({
   version: "2.0.0",
 });
 
-// Register all tools
-registerPt(server);
-registerLooping(server);
-registerPortfolio(server);
-registerPool(server);
-registerMorpho(server);
-registerProtocol(server);
-registerQuote(server);
-registerSimulate(server);
-registerStrategy(server);
-registerYtArb(server);
-registerVe(server);
-registerMetavault(server);
-registerContext(server);
-registerPendle(server);
-registerPendleDetails(server);
-registerPendleYields(server);
-registerPendlePortfolio(server);
-registerPendleScanner(server);
-registerPendleCapacity(server);
-registerPendleYieldCurve(server);
-registerPendleExpiry(server);
-registerPendleYtArb(server);
-registerPendleStats(server);
-registerPendleLooping(server);
-registerPendleQuote(server);
-registerPendleSimulate(server);
-registerCuratorScan(server);
-registerOnchain(server);
-registerCapacity(server);
-registerIbtHealth(server);
-registerYieldCurve(server);
-registerRiskMonitor(server);
-registerStressTest(server);
-registerRollover(server);
-registerCuratorPortfolio(server);
-registerExpiryMonitor(server);
+// Auto-discover and register all tools from src/tools/*.ts
+// Each tool module must export: register(server: McpServer)
+// New tools are picked up automatically — no manual imports needed.
+await discoverAndRegisterTools(server);
 
 // =============================================================================
 // Resources: Protocol context for agents
@@ -409,6 +339,10 @@ flywheel effect. They serve different audiences and reinforce each other.
 // =============================================================================
 
 async function main() {
+  // Startup health checks — emit warnings, never throw
+  checkConfigStaleness();
+  validateChainConfig();
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("MetaVault MCP Server running on stdio");
