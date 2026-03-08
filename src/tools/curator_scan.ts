@@ -31,6 +31,7 @@ import {
   daysToMaturity,
   pendleDaysToMaturity,
   estimatePriceImpact,
+  estimateLpDepositImpact,
   estimatePendlePriceImpact,
   estimateLoopingEntryCost,
   formatMorphoLltv,
@@ -190,8 +191,12 @@ Use spectra_get_curator_dashboard for operational monitoring of an existing Meta
             const maturityTs = pt.maturity;
             const days = daysToMaturity(maturityTs);
 
+            // PT swap impact (directional trade)
             const impactFrac = estimatePriceImpact(capital_usd, poolLiqUsd);
             const impactPct = impactFrac * 100;
+
+            // LP deposit impact (balanced add — much lower than swap impact)
+            const lpImpactFrac = estimateLpDepositImpact(capital_usd, poolLiqUsd);
 
             const annualizedEntryCost = days > 0
               ? impactFrac * (365 / days) * 100
@@ -206,24 +211,32 @@ Use spectra_get_curator_dashboard for operational monitoring of an existing Meta
             }
             const lpData = extractLpApyBreakdown(pool, boostInfo?.boostFraction ?? 0);
 
-            // Impact filter: skip only if BOTH PT and LP strategies are unviable
-            // PT swap impact doesn't apply to LP adds, so LP-dominant pools should survive
-            if (impactFrac > maxImpactFrac && lpData.lpApy <= 0) continue;
+            // Determine best strategy before filtering
+            const bestIsLp = lpData.lpApy > effectiveApy;
+
+            // Impact filter: use LP deposit impact when LP is the best strategy
+            // LP adds DEEPEN pools (near-zero impact), so LP-viable pools should survive
+            const relevantImpact = bestIsLp ? lpImpactFrac : impactFrac;
+            if (relevantImpact > maxImpactFrac && lpData.lpApy <= 0) continue;
+
+            // Display the impact relevant to the best strategy
+            const displayImpactPct = bestIsLp ? lpImpactFrac * 100 : impactPct;
 
             const warnings: string[] = [];
             if (days < 14) warnings.push("Very short maturity (<14d)");
             else if (days < 30) warnings.push("Short maturity (<30d)");
             if (poolLiqUsd < 50000) warnings.push("Low liquidity (<$50K)");
-            if (impactPct > 2) warnings.push(`High entry impact (${formatPct(impactPct)})`);
-            if (effectiveApy < 0) warnings.push("Negative effective APY");
-
-            const bestIsLp = lpData.lpApy > effectiveApy;
+            if (!bestIsLp && impactPct > 2) warnings.push(`High entry impact (${formatPct(impactPct)})`);
+            if (effectiveApy < 0 && !bestIsLp) warnings.push("Negative effective APY");
 
             // Look up Merkl campaigns
             const spectraNet = resolveNetwork(chain);
             const spectraMerklMap = curatorMerklMaps.get(spectraNet) || new Map();
             const spectraAddrs = [pt.address, pool.address, pt.ibt?.address].filter(Boolean) as string[];
             const spectraMerklCampaigns = lookupMerklCampaigns(spectraMerklMap, spectraAddrs);
+
+            // LP capacity is much higher than swap capacity (LP adds deepen pools)
+            const lpCapacityUsd = poolLiqUsd * 10; // conservative lower bound
 
             opportunities.push({
               protocol: "spectra",
@@ -237,9 +250,9 @@ Use spectra_get_curator_dashboard for operational monitoring of an existing Meta
               variableApr,
               tvlUsd,
               poolLiquidityUsd: poolLiqUsd,
-              entryImpactPct: impactPct,
+              entryImpactPct: displayImpactPct,
               effectiveApy,
-              capacityUsd,
+              capacityUsd: bestIsLp ? lpCapacityUsd : capacityUsd,
               sortApy: Math.max(effectiveApy, lpData.lpApy), // best strategy wins
               bestStrategy: bestIsLp ? "lp" : "pt_spot",     // updated in Phase 3 if looping beats both
               ptAddress: pt.address,

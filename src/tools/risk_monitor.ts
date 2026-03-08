@@ -57,10 +57,7 @@ Use spectra_get_looping_strategy to model deleverage scenarios.`,
       try {
         // Validate chain has Morpho support if specified
         if (chain) {
-          const hasKey = Object.keys(MORPHO_CHAIN_IDS).some(
-            (k) => k === chain || k === (chain === "mainnet" ? "ethereum" : chain),
-          );
-          if (!hasKey) {
+          if (!(chain in MORPHO_CHAIN_IDS)) {
             const supported = Object.keys(MORPHO_CHAIN_IDS).join(", ");
             const text = `No Morpho markets tracked for ${chain}. Supported: ${supported}.`;
             return { content: [{ type: "text" as const, text }], isError: true };
