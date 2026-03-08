@@ -302,6 +302,11 @@ Use spectra_get_curator_dashboard for operational monitoring of an existing Meta
 
             const bestIsLp = lpApy > effectiveApy;
 
+            // LP deposit impact for Pendle (same model — balanced deposits have near-zero cost)
+            const pendleLpImpactFrac = estimateLpDepositImpact(capital_usd, poolLiqUsd);
+            const displayImpactPct = bestIsLp ? pendleLpImpactFrac * 100 : impactPct;
+            const lpCapacityUsd = poolLiqUsd * 10;
+
             // Parse clean underlying symbol from Pendle market name (strip date suffix like "-26MAR2026")
             const pendleUnderlying = market.name.replace(/-\d{1,2}[A-Z]{3}\d{4}$/, "");
 
@@ -336,9 +341,9 @@ Use spectra_get_curator_dashboard for operational monitoring of an existing Meta
               variableApr,
               tvlUsd,
               poolLiquidityUsd: poolLiqUsd,
-              entryImpactPct: impactPct,
+              entryImpactPct: displayImpactPct,
               effectiveApy,
-              capacityUsd,
+              capacityUsd: bestIsLp ? lpCapacityUsd : capacityUsd,
               sortApy: Math.max(effectiveApy, lpApy), // best strategy wins
               bestStrategy: bestIsLp ? "lp" : "pt_spot",
               pendleMarketAddress: market.address,
