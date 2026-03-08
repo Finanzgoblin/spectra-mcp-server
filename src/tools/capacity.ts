@@ -70,7 +70,8 @@ Use mv_check_ibt_health to verify the underlying IBT before deploying.`,
         const pt = parsePtResponse(data);
 
         if (!pt) {
-          return { content: [{ type: "text" as const, text: `No PT found at ${pt_address} on ${chain}` }], isError: true };
+          const text = `No PT found at ${pt_address} on ${chain}.\nIf this PT belongs to a cross-chain MetaVault position, try the chain where the pool actually lives (e.g., a Base MetaVault may have positions on Avalanche via CCTP bridge).`;
+          return { content: [{ type: "text" as const, text }], isError: true };
         }
 
         const pool = pt.pools?.[0];
