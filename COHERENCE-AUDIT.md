@@ -34,21 +34,15 @@ The audit identified **no critical bugs** but found documentation inaccuracies i
 **Issue:** `export interface BorrowRateAnalysis` is defined but never referenced anywhere — not in types.ts itself, not in any tool, not in any test.
 **Severity:** Low (dead code)
 
-#### 2b. Unused formatters (6 functions)
+#### 2b. ~~Unused formatters (6 functions)~~ — RETRACTED
 **File:** `src/formatters.ts`
-**Functions never imported by any tool or test:**
-- `computeReallocatableUsd` — defined but never used anywhere
-- `formatMorphoVaultAllocationEnriched` — defined but never used anywhere
-- `formatYtArbitrageOpportunity` — defined but never used anywhere (note: `formatYtArbCompact` IS used)
-- `formatMetavaultSummary` — defined but never used anywhere
-- `formatMetavaultCompact` — defined but never used anywhere
-- `formatMetavaultScanEntry` — defined but never used anywhere
+**Status:** Upon deeper inspection, all 6 functions are used internally within `formatters.ts` by other exported functions (e.g., `formatMetavaultScanSection()` calls `formatMetavaultSummary()`, `formatMetavaultCompact()`, and `formatMetavaultScanEntry()`; `formatYtArbitrageResults()` calls `formatYtArbitrageOpportunity()`; `formatMorphoVaultSummaryEnriched()` calls `formatMorphoVaultAllocationEnriched()`; `getEffectiveLiquidityUsd()` calls `computeReallocatableUsd()`). The initial audit only checked cross-file imports and missed intra-file usage.
 
 **Functions used only in test files (not in actual tools):**
 - `computeLpApyAtBoost` — tested in `formatters.test.ts` but never called by any tool
 - `formatLpApyLines` — tested in `formatters.test.ts` but never called by any tool
 
-**Severity:** Low (code bloat, maintenance burden)
+**Severity:** None (no action needed)
 
 #### 2c. Unnecessarily exported API functions
 **File:** `src/api.ts`
@@ -124,13 +118,15 @@ These aren't bugs but could benefit from decomposition for maintainability.
 
 ## Recommendations (Priority Order)
 
-1. **Fix CLAUDE.md inaccuracies** (1a, 1b) — these actively mislead agents/developers
-2. **Remove dead formatters** (2b) — 6 functions that no tool uses; reduces maintenance burden
-3. **Simplify risk_monitor.ts dead logic** (3a) — misleading condition
-4. **Remove orphaned `BorrowRateAnalysis` type** (2a)
-5. **Consider un-exporting internal-only functions** (2c, 2d) — tighter API surface
-6. **Long-term: Add explicit handler types** (4) — addresses the 229 TS7031 errors
+1. ~~**Fix CLAUDE.md inaccuracies** (1a, 1b)~~ — **DONE**: corrected API base URL and network names
+2. ~~**Remove dead formatters** (2b)~~ — **RETRACTED**: all 6 are used internally within formatters.ts
+3. ~~**Simplify risk_monitor.ts dead logic** (3a)~~ — **DONE**: replaced with `chain in MORPHO_CHAIN_IDS`
+4. ~~**Remove orphaned `BorrowRateAnalysis` type** (2a)~~ — **DONE**: removed from types.ts
+5. ~~**Un-export internal-only config constants** (2d)~~ — **DONE**: `SPECTRA_BASE`, `SPECTRA_APP_BASE`, `CONFIG_VERIFIED_DATES` no longer exported
+6. **api.ts exports** (2c) — **KEPT**: `extractPoolAddressFromReasonKey` and `parseWei` are imported by test files
+7. **Long-term: Add explicit handler types** (4) — addresses the 229 TS7031 errors
 
 ---
 
 *Audit performed against commit on branch `claude/codebase-coherence-audit-tfvtt`*
+*Fixes applied in follow-up commit on same branch*

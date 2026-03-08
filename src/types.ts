@@ -811,20 +811,6 @@ export interface BorrowRateRisk {
   safe95thPercentile: boolean;   // breakEven > mean + 2*stdDev
 }
 
-/** Historical rate analysis for risk assessment. */
-export interface BorrowRateAnalysis {
-  marketKey: string;
-  chain: string;
-  period: string;             // e.g. "30d"
-  dataPoints: number;
-  meanBorrowApy: number;      // %
-  stdDevBorrowApy: number;    // %
-  maxBorrowApy: number;       // %
-  minBorrowApy: number;       // %
-  currentBorrowApy: number;   // %
-  riskTable: BorrowRateRisk[];
-}
-
 // =============================================================================
 // Withdrawal Stress Test Interfaces
 // =============================================================================

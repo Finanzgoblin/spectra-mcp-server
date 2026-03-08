@@ -16,10 +16,10 @@ import { z } from "zod";
 // API Endpoints — env overrides allow runtime reconfiguration without rebuild
 // =============================================================================
 
-export const SPECTRA_BASE = process.env.SPECTRA_BASE_URL || "https://api.spectra.finance";
+const SPECTRA_BASE = process.env.SPECTRA_BASE_URL || "https://api.spectra.finance";
 export const SPECTRA_API = `${SPECTRA_BASE}/v1`;
 
-export const SPECTRA_APP_BASE = process.env.SPECTRA_APP_URL || "https://app.spectra.finance";
+const SPECTRA_APP_BASE = process.env.SPECTRA_APP_URL || "https://app.spectra.finance";
 export const SPECTRA_APP_API = `${SPECTRA_APP_BASE}/api/v1`;
 
 export const MORPHO_GRAPHQL = process.env.MORPHO_GRAPHQL_URL || "https://api.morpho.org/graphql";
@@ -343,7 +343,7 @@ export function resolveRpcUrlsWithFallbacks(chain: string, overrideRpcUrl?: stri
  * STALENESS_THRESHOLD_DAYS, a warning is emitted at startup. This makes
  * invisible staleness visible to operators.
  */
-export const CONFIG_VERIFIED_DATES: Record<string, string> = {
+const CONFIG_VERIFIED_DATES: Record<string, string> = {
   protocolConstants:  "2026-02-01",
   veSpectra:          "2026-02-01",
   morphoBlueAddresses: "2026-02-01",
