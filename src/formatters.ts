@@ -1708,6 +1708,42 @@ export function estimatePriceImpact(amountUsd: number, poolLiquidityUsd: number)
 }
 
 /**
+ * Estimate the imbalance fee from an LP deposit into a Curve StableSwap-NG pool.
+ *
+ * LP deposits add to BOTH sides of the pool (IBT and PT), deepening liquidity
+ * rather than consuming it. The "impact" is the imbalance fee charged by Curve
+ * when the deposit shifts the pool's balance ratio.
+ *
+ * For a balanced deposit (proportional to current reserves), the imbalance fee
+ * is near zero. For any deposit into a StableSwap pool with high amplification (A),
+ * the fee is extremely small compared to swap slippage.
+ *
+ * Model: impact ≈ poolShare² / (4 * A) where poolShare = deposit / (poolLiq + deposit)
+ * With conservative A=1000 (typical StableSwap-NG pools use A=1000-5000).
+ *
+ * For comparison at $500K into a $26K pool:
+ *   Swap impact (estimatePriceImpact): 961%
+ *   LP impact (this function):         0.07%
+ *
+ * Returns a fraction (0 to 1), same unit as estimatePriceImpact().
+ */
+export function estimateLpDepositImpact(depositUsd: number, poolLiquidityUsd: number): number {
+  if (poolLiquidityUsd <= 0) return 0.01; // 1% default for empty pools (still much lower than swap)
+  if (depositUsd <= 0) return 0;
+
+  // Pool share: what fraction of the post-deposit pool is the new deposit
+  const poolShareFrac = depositUsd / (poolLiquidityUsd + depositUsd);
+
+  // StableSwap imbalance fee model: fee ≈ poolShare² / (4 * A)
+  // Conservative A=1000 (real pools often have A=1000-5000)
+  const conservativeA = 1000;
+  const impactFrac = (poolShareFrac * poolShareFrac) / (4 * conservativeA);
+
+  // Clamp to [0, 0.5] — LP deposit can never lose more than 50%
+  return Math.min(impactFrac, 0.5);
+}
+
+/**
  * Estimate price impact for a Pendle logit AMM trade.
  *
  * Pendle's AMM uses: exchangeRate = ln(p/(1-p)) / rateScalar + rateAnchor

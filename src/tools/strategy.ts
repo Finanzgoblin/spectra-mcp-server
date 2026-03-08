@@ -27,6 +27,7 @@ import {
   formatUsd,
   daysToMaturity,
   estimatePriceImpact,
+  estimateLpDepositImpact,
   estimateLoopingEntryCost,
   formatMorphoLltv,
   cumulativeLeverageAtLoop,
@@ -198,12 +199,12 @@ Use spectra_model_metavault to model MetaVault looping economics.`,
             const maturityTs = pt.maturity;
             const days = daysToMaturity(maturityTs);
 
-            // Price impact at agent's capital size
+            // Price impact at agent's capital size (PT swap impact)
             const impactFrac = estimatePriceImpact(capital_usd, poolLiqUsd);
             const impactPct = impactFrac * 100;
 
-            // Filter by max price impact
-            if (impactFrac > maxImpactFrac) continue;
+            // LP deposit impact (much lower than swap impact for balanced deposits)
+            const lpImpactFrac = estimateLpDepositImpact(capital_usd, poolLiqUsd);
 
             // Effective APY: base APY minus entry cost amortized over holding period
             // Entry cost (fraction) annualized: impactFrac * (365 / days) * 100 (as %)
@@ -212,25 +213,37 @@ Use spectra_model_metavault to model MetaVault looping economics.`,
               : impactFrac * 100;
             const effectiveApy = impliedApy - annualizedEntryCost;
 
+            // Extract LP APY with gauge emissions BEFORE filtering (needed to determine best strategy)
+            let boostInfo: BoostInfo | undefined;
+            if (ve_spectra_balance !== undefined && ve_spectra_balance > 0 && veTotalSupply !== null) {
+              boostInfo = computeSpectraBoost(ve_spectra_balance, veTotalSupply, tvlUsd, capital_usd);
+            }
+            const lpData = extractLpApyBreakdown(pool, boostInfo?.boostFraction ?? 0);
+
+            // Determine best strategy: LP vs PT spot
+            const bestIsLp = lpData.lpApy > effectiveApy;
+
+            // Filter by max price impact using the RELEVANT impact for the best strategy:
+            // - PT swap impact for directional PT buying
+            // - LP deposit impact for LP provision (much lower — LP adds deepen pools)
+            const relevantImpact = bestIsLp ? lpImpactFrac : impactFrac;
+            if (relevantImpact > maxImpactFrac) continue;
+
             // Capacity: max capital where impact < threshold
-            // impactFrac = capital / (2 * poolLiq) => capital = threshold * 2 * poolLiq
-            const capacityUsd = maxImpactFrac * 2 * poolLiqUsd;
+            // For PT: impactFrac = capital / (2 * poolLiq) => capital = threshold * 2 * poolLiq
+            // For LP: capacity is much higher (LP adds deepen pools)
+            const capacityUsd = bestIsLp
+              ? poolLiqUsd * 10  // LP capacity is roughly 10x+ swap capacity (conservative)
+              : maxImpactFrac * 2 * poolLiqUsd;
 
             // Warnings
             const warnings: string[] = [];
             if (days < 14) warnings.push("Very short maturity (<14 days)");
             else if (days < 30) warnings.push("Short maturity (<30 days)");
             if (poolLiqUsd < 50000) warnings.push("Low pool liquidity (<$50K)");
-            if (impactPct > 2) warnings.push(`Significant entry impact (${formatPct(impactPct)})`);
+            if (!bestIsLp && impactPct > 2) warnings.push(`Significant entry impact (${formatPct(impactPct)})`);
             if (tvlUsd < 50000) warnings.push("Low TVL (<$50K)");
-            if (effectiveApy < 0) warnings.push("Effective APY negative after entry cost");
-
-            // Extract LP APY with gauge emissions (computed from real boost formula)
-            let boostInfo: BoostInfo | undefined;
-            if (ve_spectra_balance !== undefined && ve_spectra_balance > 0 && veTotalSupply !== null) {
-              boostInfo = computeSpectraBoost(ve_spectra_balance, veTotalSupply, tvlUsd, capital_usd);
-            }
-            const lpData = extractLpApyBreakdown(pool, boostInfo?.boostFraction ?? 0);
+            if (effectiveApy < 0 && !bestIsLp) warnings.push("Effective APY negative after entry cost");
 
             // Look up Merkl campaigns for this pool
             const network = resolveNetwork(chain);
@@ -251,7 +264,7 @@ Use spectra_model_metavault to model MetaVault looping economics.`,
               daysToMaturity: days,
               tvlUsd,
               poolLiquidityUsd: poolLiqUsd,
-              entryImpactPct: impactPct,
+              entryImpactPct: bestIsLp ? lpImpactFrac * 100 : impactPct,
               effectiveApy,
               capacityUsd,
               looping: null,           // filled in Phase 3
@@ -260,7 +273,7 @@ Use spectra_model_metavault to model MetaVault looping economics.`,
               lpApyAtBoost: lpData.lpApyAtBoost,
               lpApyBreakdown: lpData.lpApyBreakdown,
               merklCampaigns: merklCampaigns.length > 0 ? merklCampaigns : undefined,
-              sortApy: effectiveApy,   // updated in Phase 3 if looping profitable
+              sortApy: bestIsLp ? lpData.lpApy : effectiveApy,   // LP APY if LP is best strategy; updated in Phase 3 if looping profitable
               underlying: pt.underlying?.symbol || "?",
               ibtAddress: pt.ibt?.address || "",
               ibtSymbol: pt.ibt?.symbol || "?",

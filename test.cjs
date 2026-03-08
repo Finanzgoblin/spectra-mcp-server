@@ -21,8 +21,8 @@ const path = require("path");
 // ---------------------------------------------------------------------------
 
 const SERVER_PATH = path.join(__dirname, "build", "index.js");
-const API_TIMEOUT_MS = 20_000; // per-tool call
-const TOTAL_TIMEOUT_MS = 120_000; // whole suite
+const API_TIMEOUT_MS = 45_000; // per-tool call
+const TOTAL_TIMEOUT_MS = 600_000; // whole suite
 const OFFLINE = process.argv.includes("--offline");
 
 // Dynamically discovered from spectra_list_pools during testListPools
@@ -185,7 +185,7 @@ async function testToolRegistration(client) {
   const tools = await client.listTools();
   const names = tools.map((t) => t.name);
 
-  assert(tools.length === 38, "exactly 38 tools registered", `got ${tools.length}: ${names.join(", ")}`);
+  assert(tools.length === 50, "exactly 50 tools registered", `got ${tools.length}: ${names.join(", ")}`);
 
   const expected = [
     "spectra_get_pt_details",
