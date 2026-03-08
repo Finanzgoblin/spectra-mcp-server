@@ -282,7 +282,7 @@ export async function fetchMorphoMarketSuppliers(
   marketKey: string,
   chainId: number,
   topN: number = 10,
-): Promise<MorphoMarketSupplier[]> {
+): Promise<{ suppliers: MorphoMarketSupplier[]; total: number }> {
   try {
     // Step 1: Get top suppliers by supply shares
     const posQuery = `{
@@ -308,18 +308,20 @@ export async function fetchMorphoMarketSuppliers(
             collateralUsd
           }
         }
+        pageInfo { count countTotal }
       }
     }`;
 
     const posData = await fetchMorpho(posQuery) as any;
     const positions = posData?.marketPositions?.items || [];
+    const posTotal = posData?.marketPositions?.pageInfo?.countTotal || 0;
 
     // Filter to actual suppliers (non-zero supply)
     const suppliers = positions.filter(
       (p: any) => p.state?.supplyAssetsUsd > 0
     );
 
-    if (suppliers.length === 0) return [];
+    if (suppliers.length === 0) return { suppliers: [], total: posTotal };
 
     // Step 2: Check which supplier addresses are Morpho vaults
     const supplierAddrs = suppliers.map((p: any) => p.user?.address).filter(Boolean);
@@ -379,10 +381,10 @@ export async function fetchMorphoMarketSuppliers(
       });
     }
 
-    return result;
+    return { suppliers: result, total: posTotal };
   } catch (err) {
     console.error(`Morpho supplier lookup failed for market ${marketKey}:`, err instanceof Error ? err.message : err);
-    return [];
+    return { suppliers: [], total: 0 };
   }
 }
 
@@ -479,10 +481,10 @@ const MORPHO_VAULT_FIELDS = `
 export async function fetchMorphoVaults(
   chain: string,
   opts?: { assetFilter?: string; minTvlUsd?: number; topN?: number },
-): Promise<MorphoVault[]> {
+): Promise<{ vaults: MorphoVault[]; total: number }> {
   const network = resolveNetwork(chain);
   const morphoChainId = MORPHO_CHAIN_IDS[network];
-  if (!morphoChainId) return [];
+  if (!morphoChainId) return { vaults: [], total: 0 };
 
   try {
     const topN = Math.min(opts?.topN || 50, 100);
@@ -506,8 +508,9 @@ export async function fetchMorphoVaults(
 
     const data = await fetchMorpho(query) as any;
     const items = data?.vaults?.items || [];
+    const total = data?.vaults?.pageInfo?.countTotal || items.length;
 
-    return items.map((v: any): MorphoVault => {
+    const vaults = items.map((v: any): MorphoVault => {
       const curatorName = v.metadata?.curators?.[0]?.name;
       const allocations: MorphoVaultAllocation[] = (v.state?.allocation || []).map((a: any) => ({
         marketKey: a.market?.uniqueKey || "",
@@ -536,9 +539,10 @@ export async function fetchMorphoVaults(
         curator: curatorName || undefined,
       };
     });
+    return { vaults, total };
   } catch (err) {
     console.error(`Morpho vault fetch failed for ${chain}:`, err instanceof Error ? err.message : err);
-    return [];
+    return { vaults: [], total: 0 };
   }
 }
 
