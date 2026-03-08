@@ -98,9 +98,9 @@ Most user interactions go through the **Spectra Router** (flash-mints, flash-red
 
 ## API Architecture
 - `src/api.ts` contains `fetchSpectra()` for Spectra API calls, `findMorphoMarketsForPts()` for Morpho market lookups, `fetchMerkl()`/`parseMerklRewards()` for Merkl reward integration, and `amountToBigInt()` for safe float→BigInt conversion
-- Spectra API base: `https://app.spectra.finance/api/v1/`
-- Network names in API: `ethereum`, `base`, `arbitrum`, `optimism`, `avalanche`, `katana`, `sonic`, `flare`, `bsc`, `monad`
-- `resolveNetwork()` maps user-facing chain names to API network names (e.g., "mainnet" → "ethereum")
+- Spectra API base: `https://api.spectra.finance/v1` (primary); `https://app.spectra.finance/api/v1` is the secondary app-specific API
+- Network names in API: `mainnet`, `base`, `arbitrum`, `optimism`, `avalanche`, `katana`, `sonic`, `flare`, `bsc`, `monad` (`ethereum` is a user-facing alias)
+- `resolveNetwork()` maps user-facing aliases to API network names (e.g., "ethereum" → "mainnet")
 
 ## Common Patterns
 - Pool activity types: `BUY_PT`, `SELL_PT`, `AMM_ADD_LIQUIDITY`, `AMM_REMOVE_LIQUIDITY`
