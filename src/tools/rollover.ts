@@ -77,6 +77,7 @@ function formatRolloverPlan(
   chain: string,
   position: { symbol: string; daysToMaturity: number; maturityTimestamp: number; allocationUsd: number },
   candidates: RolloverCandidate[],
+  totalBeforeTruncation?: number,
 ): string {
   const lines: string[] = [];
   lines.push(`-- Rollover: ${position.symbol} --`);
@@ -89,7 +90,10 @@ function formatRolloverPlan(
     lines.push(`  No rollover candidates found matching the underlying asset.`);
     lines.push(`  Consider: broader asset_filter, or creating a new Spectra pool for this underlying.`);
   } else {
-    lines.push(`  Rollover Candidates (${candidates.length}):`);
+    const truncNote = totalBeforeTruncation != null && totalBeforeTruncation > candidates.length
+      ? ` (showing top ${candidates.length} of ${totalBeforeTruncation})`
+      : "";
+    lines.push(`  Rollover Candidates (${candidates.length})${truncNote}:`);
     for (let i = 0; i < candidates.length; i++) {
       lines.push(formatRolloverCandidate(candidates[i], i + 1));
     }
@@ -460,6 +464,7 @@ Use spectra_get_pool_capacity to assess depth at your capital size for specific 
             chain,
             pos,
             topCandidates,
+            candidates.length,  // total before truncation
           ));
           outputSections.push(``);
         }

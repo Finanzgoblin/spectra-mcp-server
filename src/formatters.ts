@@ -2357,6 +2357,17 @@ export function formatScanOpportunity(opp: ScanOpportunity, rank: number, boostI
     }
   }
 
+  // Combined LP + Loop strategy hint: when both LP and looping are viable,
+  // curators can split their mint output — LP some PT, loop some PT, keep YT.
+  // Dissolution condition: Dissolves when agents reliably discover combined
+  // strategies from Yield Dimensions alone.
+  if (opp.looping && opp.lpApy > 5) {
+    const bestLp = opp.lpApyBoostedTotal > opp.lpApy ? opp.lpApyBoostedTotal : opp.lpApy;
+    if (bestLp > opp.looping.optimalEffectiveNetApy * 0.5) {
+      lines.push(`    Combined Strategy: Mint PT+YT → LP a portion (${formatPct(bestLp)} LP APY) + loop remaining PT via Morpho (${formatPct(opp.looping.optimalEffectiveNetApy)} net). YT earns variable yield. Split ratio depends on pool depth vs Morpho liquidity (${formatUsd(opp.looping.morphoLiquidityUsd)} available).`);
+    }
+  }
+
   // Underlying info
   lines.push(`    Underlying: ${opp.underlying} | IBT: ${opp.ibtSymbol} (${opp.ibtProtocol})`);
 
@@ -2415,6 +2426,7 @@ export function formatScanResults(
   includeLooping: boolean,
   veSpectraBalance?: number,
   boostInfos?: (BoostInfo | undefined)[],
+  totalBeforeTruncation?: number,
 ): string {
   const lines: string[] = [];
 
@@ -2426,7 +2438,10 @@ export function formatScanResults(
   if (veSpectraBalance !== undefined && veSpectraBalance > 0) {
     lines.push(`  veSPECTRA: ${veSpectraBalance.toLocaleString("en-US")} tokens (boost varies per pool)`);
   }
-  lines.push(`  Results: ${opportunities.length} opportunities sorted by ${includeLooping ? "looping net APY / " : ""}effective APY (see Yield Dimensions for other strategies)`);
+  const truncNote = totalBeforeTruncation != null && totalBeforeTruncation > opportunities.length
+    ? ` (showing top ${opportunities.length} of ${totalBeforeTruncation})`
+    : "";
+  lines.push(`  Results: ${opportunities.length} opportunities${truncNote} sorted by ${includeLooping ? "looping net APY / " : ""}effective APY (see Yield Dimensions for other strategies)`);
 
   if (failedChains.length > 0) {
     lines.push(`  Note: ${failedChains.length} chain(s) failed (${failedChains.join(", ")}). Results may be partial.`);
@@ -2551,11 +2566,15 @@ export function formatYtArbitrageResults(
   failedChains: string[],
   veSpectraBalance?: number,
   boostInfos?: (BoostInfo | undefined)[],
+  totalBeforeTruncation?: number,
 ): string {
   const lines: string[] = [];
 
   const positiveSpread = opportunities.filter((o) => o.spreadPct > 0).length;
   const negativeSpread = opportunities.filter((o) => o.spreadPct <= 0).length;
+  const truncNote = totalBeforeTruncation != null && totalBeforeTruncation > opportunities.length
+    ? ` (showing top ${opportunities.length} of ${totalBeforeTruncation})`
+    : "";
 
   // Header
   lines.push(`== YT Arbitrage Scan: ${formatUsd(capitalUsd)} capital ==`);
@@ -2564,7 +2583,7 @@ export function formatYtArbitrageResults(
   if (veSpectraBalance !== undefined && veSpectraBalance > 0) {
     lines.push(`  veSPECTRA: ${veSpectraBalance.toLocaleString("en-US")} tokens (boost varies per pool)`);
   }
-  lines.push(`  Results: ${opportunities.length} opportunities (${positiveSpread} positive spread, ${negativeSpread} negative spread)`);
+  lines.push(`  Results: ${opportunities.length} opportunities${truncNote} (${positiveSpread} positive spread, ${negativeSpread} negative spread)`);
 
   if (failedChains.length > 0) {
     lines.push(`  Note: ${failedChains.length} chain(s) failed (${failedChains.join(", ")}). Results may be partial.`);
@@ -3772,6 +3791,12 @@ export function formatCuratorOpportunity(opp: CuratorOpportunity, rank: number):
 
   lines.push(`      Variable: ${formatPct(opp.variableApr)} APR`);
 
+  // Combined LP + Loop hint: when both LP and looping are viable, curators can split
+  // their mint output — LP some PT in the pool, loop remaining PT via Morpho, keep YT.
+  if (opp.looping && opp.lpApy > 5 && opp.lpApy > opp.looping.optimalEffectiveNetApy * 0.5) {
+    lines.push(`      Combined: Mint PT+YT → LP a portion (${formatPct(opp.lpApy)}) + loop remaining PT (${formatPct(opp.looping.optimalEffectiveNetApy)} net). Split by Morpho depth (${formatUsd(opp.morpho?.availableLiquidityUsd || 0)}).`);
+  }
+
   // Morpho Market section
   lines.push(``);
   if (opp.morpho) {
@@ -3835,6 +3860,7 @@ export function formatCuratorScanResults(
   assetFilter: string | undefined,
   failedChains: string[],
   compact: boolean,
+  totalBeforeTruncation?: number,
 ): string {
   const lines: string[] = [];
   lines.push(`== Curator Opportunity Scan: ${formatUsd(capitalUsd)} capital ==`);
@@ -3843,7 +3869,10 @@ export function formatCuratorScanResults(
 
   const spectraCount = opps.filter(o => o.protocol === "spectra").length;
   const pendleCount = opps.filter(o => o.protocol === "pendle").length;
-  lines.push(`  Results: ${opps.length} (${spectraCount} Spectra, ${pendleCount} Pendle) | Max Impact: ${formatPct(maxImpactPct)}`);
+  const truncNote = totalBeforeTruncation != null && totalBeforeTruncation > opps.length
+    ? ` (showing top ${opps.length} of ${totalBeforeTruncation})`
+    : "";
+  lines.push(`  Results: ${opps.length} (${spectraCount} Spectra, ${pendleCount} Pendle)${truncNote} | Max Impact: ${formatPct(maxImpactPct)}`);
   if (failedChains.length > 0) lines.push(`  Failed chains: ${failedChains.join(", ")}`);
   lines.push(``);
 
@@ -3891,8 +3920,8 @@ export function formatCuratorScanResults(
 
   lines.push(``);
   lines.push(`--- Protocol Legend ---`);
-  lines.push(`  [S] = Spectra (Curve AMM, SPECTRA gauge, Morpho looping available)`);
-  lines.push(`  [P] = Pendle (Pendle AMM, PENDLE incentives, no Morpho looping yet)`);
+  lines.push(`  [S] = Spectra (Curve AMM, SPECTRA gauge, Morpho looping on mainnet/base/arbitrum/katana)`);
+  lines.push(`  [P] = Pendle (Pendle AMM, PENDLE incentives, Morpho looping on mainnet/base/arbitrum)`);
   lines.push(`  ↔ = Cross-protocol match on same underlying + similar maturity`);
 
   lines.push(``);

@@ -651,6 +651,7 @@ Use spectra_get_curator_dashboard for operational monitoring of an existing Meta
           asset_filter,
           failedChains,
           compact,
+          filtered.length,  // total opportunities before top_n truncation
         );
 
         if (!merklAvailable) {
