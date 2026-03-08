@@ -88,11 +88,13 @@ function findOptimal(rows: MetavaultLoopRow[]): { loop: number; netApy: number; 
 function computePerformanceMetrics(
   epochs: SpectraMetavaultEpoch[],
   riskFreeRatePct: number = 5,
+  underlyingDecimals: number = 6,
 ): MetavaultPerformanceMetrics | null {
   if (!epochs || epochs.length < 2) return null;
 
+  const rateDivisor = Math.pow(10, underlyingDecimals);
   const sorted = [...epochs].sort((a, b) => a.timestamp - b.timestamp);
-  const rates = sorted.map((e) => Number(e.rate) / 1e6);
+  const rates = sorted.map((e) => Number(e.rate) / rateDivisor);
   const timestamps = sorted.map((e) => e.timestamp);
 
   const firstRate = rates[0];
@@ -184,7 +186,14 @@ function formatPerformanceMetrics(metrics: MetavaultPerformanceMetrics): string 
   lines.push(`  Volatility: ${formatPct(metrics.volatilityAnnualizedPct)} annualized`);
 
   if (metrics.sharpeRatio !== null) {
-    lines.push(`  Sharpe Ratio: ${metrics.sharpeRatio.toFixed(1)} (vs ${formatPct(metrics.riskFreeRatePct)} risk-free proxy)`);
+    const sharpeStr = `  Sharpe Ratio: ${metrics.sharpeRatio.toFixed(1)} (vs ${formatPct(metrics.riskFreeRatePct)} risk-free proxy)`;
+    if (metrics.totalDays < 30) {
+      lines.push(`${sharpeStr} ⚠ ${metrics.totalDays}d track record — too short for meaningful Sharpe`);
+    } else if (metrics.totalDays < 90) {
+      lines.push(`${sharpeStr} (${metrics.totalDays}d track record — interpret with caution)`);
+    } else {
+      lines.push(sharpeStr);
+    }
   } else {
     lines.push(`  Sharpe Ratio: N/A (insufficient volatility data)`);
   }
@@ -691,8 +700,8 @@ Use spectra_get_address_activity on the curator's EOA for cross-pool curator act
 
         if (mv.epochs && mv.epochs.length >= 2) {
           const sorted = [...mv.epochs].sort((a, b) => a.timestamp - b.timestamp);
-          firstRate = Number(sorted[0].rate) / 1e6;
-          lastRate = Number(sorted[sorted.length - 1].rate) / 1e6;
+          firstRate = Number(sorted[0].rate) / divisor;
+          lastRate = Number(sorted[sorted.length - 1].rate) / divisor;
 
           let cumulativeYield = 0;
           let cumulativeNetDeposits = 0;
@@ -702,8 +711,8 @@ Use spectra_get_address_activity on the curator's EOA for cross-pool curator act
             const curr = sorted[i];
             const prevAssets = Number(prev.assets) / divisor;
             const currAssets = Number(curr.assets) / divisor;
-            const prevRate = Number(prev.rate) / 1e6;
-            const currRate = Number(curr.rate) / 1e6;
+            const prevRate = Number(prev.rate) / divisor;
+            const currRate = Number(curr.rate) / divisor;
 
             const assetDelta = currAssets - prevAssets;
             const yieldAccrual = prevRate > 0 ? prevAssets * (currRate - prevRate) / prevRate : 0;
@@ -851,7 +860,7 @@ Use spectra_get_address_activity on the curator's EOA for cross-pool curator act
         let text = formatCuratorDashboard(dashOpts);
 
         // Append performance metrics if enough epoch data
-        const perfMetrics = computePerformanceMetrics(mv.epochs || []);
+        const perfMetrics = computePerformanceMetrics(mv.epochs || [], 5, underlyingDecimals);
         if (perfMetrics) {
           const perfText = formatPerformanceMetrics(perfMetrics);
           const nextStepsMarker = "--- Next Steps ---";
