@@ -164,8 +164,18 @@ Use spectra_scan_opportunities for automated cross-chain looping discovery.`,
           (m) => spectraPtAddrs.has(m.collateralAsset?.address?.toLowerCase() || "")
         ).length;
         const scope = chain || "all chains";
-        const header = `Found ${items.length} of ${total} Morpho PT market(s) (${scope}${pt_symbol_filter ? `, filter: ${pt_symbol_filter}` : ""}, sorted by ${sort_by}):\n` +
-          `  Spectra: ${spectraCount} | Pendle/Other: ${items.length - spectraCount}\n`;
+        const headerLines = [
+          `Found ${items.length} of ${total} Morpho PT market(s) (${scope}${pt_symbol_filter ? `, filter: ${pt_symbol_filter}` : ""}, sorted by ${sort_by}):`,
+          `  Displayed: Spectra: ${spectraCount} | Pendle/Other: ${items.length - spectraCount}`,
+        ];
+        // Truncation notice — prevent agents from generalizing displayed composition to the full set
+        const truncated = total - items.length;
+        if (truncated > 0 && !chain) {
+          const morphoChains = Object.keys(MORPHO_CHAIN_IDS).join(", ");
+          headerLines.push(`  ⚠ ${truncated} additional market(s) not shown. Smaller markets on specific chains may not appear in top-${items.length} global ranking.`);
+          headerLines.push(`    → Use chain parameter (e.g., chain="katana") for chain-specific discovery. Morpho-capable chains: ${morphoChains}`);
+        }
+        const header = headerLines.join("\n") + "\n";
 
         const footer = [
           ``,

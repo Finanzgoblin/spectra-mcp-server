@@ -238,10 +238,12 @@ Use mv_compare_yield for cross-protocol comparison on the same underlying.`,
           return { content: [{ type: "text" as const, text: lines }] };
         }
 
+        const pendleYtTruncNote = opportunities.length > topN ? ` (showing top ${topOpps.length} of ${opportunities.length})` : "";
+
         const lines: string[] = [];
         lines.push(`== Pendle YT Arbitrage Scan ==`);
         lines.push(`  Capital: ${formatUsd(capital_usd)} | Min Spread: ${formatPct(min_spread_pct)} | Max Impact: ${formatPct(max_price_impact_pct)}`);
-        lines.push(`  Results: ${topOpps.length} opportunit${topOpps.length === 1 ? "y" : "ies"}`);
+        lines.push(`  Results: ${topOpps.length} opportunit${topOpps.length === 1 ? "y" : "ies"}${pendleYtTruncNote}`);
         if (asset_filter) lines.push(`  Asset filter: ${asset_filter}`);
         if (failedChains.length > 0) lines.push(`  Failed chains: ${failedChains.join(", ")}`);
         lines.push(``);

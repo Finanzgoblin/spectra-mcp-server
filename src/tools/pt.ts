@@ -289,7 +289,8 @@ develop conviction about which pools genuinely serve your strategy.`,
           return { content: [{ type: "text" as const, text }] };
         }
 
-        const header = `Top ${top.length} Fixed Yield Opportunities on Spectra${asset_filter ? ` (filtered: ${asset_filter})` : ""}:\n`;
+        const truncNote = rawOpps.length > top_n ? ` (showing top ${top.length} of ${rawOpps.length})` : "";
+        const header = `Top ${top.length} Fixed Yield Opportunities on Spectra${asset_filter ? ` (filtered: ${asset_filter})` : ""}${truncNote}:\n`;
         let body: string;
         if (compact) {
           body = top.map((opp, i) => `#${i + 1} ${formatPoolCompact(opp.pt, opp.pool, opp.chain)}`).join("\n");

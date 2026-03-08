@@ -298,11 +298,13 @@ Use spectra_get_pool_activity to monitor recent trading patterns in the target p
           return { content: [{ type: "text" as const, text: lines.join("\n") }] };
         }
 
+        const ytTruncNote = indexed.length > topN ? ` (showing top ${topOpps.length} of ${indexed.length})` : "";
+
         let text: string;
         if (compact) {
           const lines = [`== YT Arbitrage Scan: ${formatUsd(capital_usd)} capital ==`];
           if (asset_filter) lines.push(`  Asset: ${asset_filter}`);
-          lines.push(`  Results: ${topOpps.length} | Min Spread: ${formatPct(min_spread_pct)}`);
+          lines.push(`  Results: ${topOpps.length}${ytTruncNote} | Min Spread: ${formatPct(min_spread_pct)}`);
           if (failedChains.length > 0) lines.push(`  Failed: ${failedChains.join(", ")}`);
           lines.push(``);
           for (let i = 0; i < topOpps.length; i++) {
@@ -318,6 +320,7 @@ Use spectra_get_pool_activity to monitor recent trading patterns in the target p
             failedChains,
             ve_spectra_balance,
             topBoostInfos,
+            indexed.length,  // total before truncation
           );
         }
 

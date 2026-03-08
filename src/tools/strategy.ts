@@ -439,11 +439,13 @@ Use spectra_model_metavault to model MetaVault looping economics.`,
           return { content: [{ type: "text" as const, text: lines.join("\n") }] };
         }
 
+        const truncNote = indexed.length > topN ? ` (showing top ${topOpps.length} of ${indexed.length})` : "";
+
         let text: string;
         if (compact) {
           const lines = [`== Opportunity Scan: ${formatUsd(capital_usd)} capital ==`];
           if (asset_filter) lines.push(`  Asset: ${asset_filter}`);
-          lines.push(`  Results: ${topOpps.length} | Max Impact: ${formatPct(max_price_impact_pct)}`);
+          lines.push(`  Results: ${topOpps.length}${truncNote} | Max Impact: ${formatPct(max_price_impact_pct)}`);
           if (failedChains.length > 0) lines.push(`  Failed: ${failedChains.join(", ")}`);
           if (!merklAvailable) lines.push(`  Note: Merkl incentive data unavailable — external campaign APR may be missing`);
           lines.push(``);
@@ -461,6 +463,7 @@ Use spectra_model_metavault to model MetaVault looping economics.`,
           include_looping,
           ve_spectra_balance,
           topBoostInfos,
+          indexed.length,  // total before truncation
         );
         }
 
