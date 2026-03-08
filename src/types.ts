@@ -108,7 +108,7 @@ export interface MorphoAsset {
   priceUsd?: number | null;
 }
 
-export interface MorphoMarketReward {
+interface MorphoMarketReward {
   asset: { address: string; symbol: string };
   supplyApr: number | null;
   borrowApr: number | null;
@@ -138,7 +138,7 @@ export interface MorphoPublicAllocatorLiquidity {
   } | null;
 }
 
-export interface MorphoWarning {
+interface MorphoWarning {
   type: string;
   level: string;
 }
