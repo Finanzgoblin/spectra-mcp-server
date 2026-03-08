@@ -78,6 +78,9 @@ Use morpho_monitor_risk for Morpho position risk.`,
         const redemptionUsd = vaultTvl * (redemption_pct / 100);
         const stressMultiplier = market_stress ? 2 : 1;
 
+        // ── Bridge data for cross-chain risk ──
+        const bridgePendingUsd = mv.bridge?.totalPendingUsd || 0;
+
         // ── Build positions with liquidity data ──
         const positions = (mv.positions || []).map((pos) => {
           const pool = pos.pools?.[0];
@@ -98,6 +101,11 @@ Use morpho_monitor_risk for Morpho position risk.`,
           // The vault's allocation is a fraction of the pool — pool TVL is typically larger
           const poolTvlUsd = pos.tvl?.usd || 0;
 
+          // Detect cross-chain: position or pool lives on a different chain than the MetaVault
+          const isCrossChain =
+            (pos.chainId != null && pos.chainId !== mv.chainId) ||
+            (pool?.chainId != null && pool.chainId !== mv.chainId);
+
           return {
             symbol: pos.symbol,
             maturityDays: matDays,
@@ -105,7 +113,7 @@ Use morpho_monitor_risk for Morpho position risk.`,
             allocationUsd: vaultAllocationUsd || 0,
             poolLiquidityUsd: poolTvlUsd,
             poolAddress: pool?.address || null,
-            isCrossChain: false, // TODO: detect cross-chain positions via bridge data
+            isCrossChain,
           };
         });
 
@@ -133,17 +141,23 @@ Use morpho_monitor_risk for Morpho position risk.`,
           cumulativeCoverageUsd: cumulative,
         });
 
-        // Tier 2: Maturing positions (within 7 days)
-        const maturingPositions = positions.filter((p) => p.maturityDays <= 7 || p.expired);
+        // Tier 2: Maturing positions (within 7 days) — same-chain only
+        // Cross-chain maturing positions need bridge settlement, so they can't be
+        // counted as free liquidity within one epoch.
+        const maturingSameChain = positions.filter((p) => (p.maturityDays <= 7 || p.expired) && !p.isCrossChain);
+        const maturingCrossChain = positions.filter((p) => (p.maturityDays <= 7 || p.expired) && p.isCrossChain);
         const tier2Available = Math.min(
-          maturingPositions.reduce((s, p) => s + p.allocationUsd, 0),
+          maturingSameChain.reduce((s, p) => s + p.allocationUsd, 0),
           remaining,
         );
         cumulative += tier2Available;
         remaining -= tier2Available;
+        const tier2Desc = maturingCrossChain.length > 0
+          ? `${maturingSameChain.length} same-chain position(s) expiring within 7 days (${maturingCrossChain.length} cross-chain excluded — bridge latency)`
+          : `${maturingSameChain.length} position(s) expiring within 7 days`;
         waterfall.push({
           name: "Maturing Positions",
-          description: `${maturingPositions.length} position(s) expiring within 7 days`,
+          description: tier2Desc,
           availableUsd: tier2Available,
           coveragePct: redemptionUsd > 0 ? (tier2Available / redemptionUsd) * 100 : 0,
           estimatedCostUsd: 0,
@@ -151,11 +165,20 @@ Use morpho_monitor_risk for Morpho position risk.`,
           cumulativeCoverageUsd: cumulative,
         });
 
-        // Tier 3: LP removal
+        // Tier 3: LP removal — same-chain first, then cross-chain with bridge penalty
         const activePositions = positions.filter((p) => !p.expired && p.maturityDays > 7);
+        // Include cross-chain maturing positions here (they need LP exit + bridge settlement)
+        const crossChainMaturingActive = maturingCrossChain;
+        const allActiveSameChain = activePositions.filter((p) => !p.isCrossChain);
+        const allActiveCrossChain = [
+          ...crossChainMaturingActive,
+          ...activePositions.filter((p) => p.isCrossChain),
+        ];
+
         let tier3Available = 0;
         let tier3Cost = 0;
-        for (const pos of activePositions) {
+        // Same-chain first (no bridge penalty)
+        for (const pos of allActiveSameChain) {
           if (remaining <= 0) break;
           const removable = Math.min(pos.allocationUsd, remaining);
           const impact = estimatePriceImpact(removable, pos.poolLiquidityUsd) * stressMultiplier;
@@ -164,10 +187,25 @@ Use morpho_monitor_risk for Morpho position risk.`,
           tier3Cost += cost;
           remaining -= removable;
         }
+        // Cross-chain: 1.5x impact multiplier (bridge latency + execution uncertainty)
+        for (const pos of allActiveCrossChain) {
+          if (remaining <= 0) break;
+          const removable = Math.min(pos.allocationUsd, remaining);
+          const bridgePenalty = 1.5;
+          const impact = estimatePriceImpact(removable, pos.poolLiquidityUsd) * stressMultiplier * bridgePenalty;
+          const cost = removable * impact;
+          tier3Available += removable;
+          tier3Cost += cost;
+          remaining -= removable;
+        }
         cumulative += tier3Available;
+        const tier3CrossCount = allActiveCrossChain.filter((p) => p.allocationUsd > 0).length;
+        const tier3Desc = tier3CrossCount > 0
+          ? `Remove liquidity from ${allActiveSameChain.length + allActiveCrossChain.length} pool(s) (${tier3CrossCount} cross-chain, 1.5x impact penalty)`
+          : `Remove liquidity from ${allActiveSameChain.length} active pool(s)`;
         waterfall.push({
           name: "LP Removal",
-          description: `Remove liquidity from ${activePositions.length} active pool(s)`,
+          description: tier3Desc,
           availableUsd: tier3Available,
           coveragePct: redemptionUsd > 0 ? (tier3Available / redemptionUsd) * 100 : 0,
           estimatedCostUsd: tier3Cost,
@@ -180,11 +218,22 @@ Use morpho_monitor_risk for Morpho position risk.`,
         let tier4Available = 0;
         let tier4Cost = 0;
         if (remaining > 0) {
-          for (const pos of activePositions) {
+          // Same-chain first
+          for (const pos of allActiveSameChain) {
             if (remaining <= 0) break;
-            // PT sale available is roughly the PT component of the LP (~50% of allocation)
             const ptSellable = Math.min(pos.allocationUsd * 0.5, remaining);
             const impact = estimatePriceImpact(ptSellable, pos.poolLiquidityUsd) * 2 * stressMultiplier;
+            const cost = ptSellable * impact;
+            tier4Available += ptSellable;
+            tier4Cost += cost;
+            remaining -= ptSellable;
+          }
+          // Cross-chain with bridge penalty
+          for (const pos of allActiveCrossChain) {
+            if (remaining <= 0) break;
+            const ptSellable = Math.min(pos.allocationUsd * 0.5, remaining);
+            const bridgePenalty = 1.5;
+            const impact = estimatePriceImpact(ptSellable, pos.poolLiquidityUsd) * 2 * stressMultiplier * bridgePenalty;
             const cost = ptSellable * impact;
             tier4Available += ptSellable;
             tier4Cost += cost;
@@ -205,8 +254,16 @@ Use morpho_monitor_risk for Morpho position risk.`,
         const totalCost = tier3Cost + tier4Cost;
         const totalCovered = cumulative >= redemptionUsd;
 
+        // ── Cross-chain summary ──
+        const crossChainPositions = positions
+          .filter((p) => p.isCrossChain && p.allocationUsd > 0)
+          .map((p) => ({ symbol: p.symbol, allocationUsd: p.allocationUsd }));
+        const crossChainTotalUsd = crossChainPositions.reduce((s, p) => s + p.allocationUsd, 0);
+
         // ── Compute max safe redemption (< 1% loss to remaining) ──
         // Binary search for the largest redemption where total cost < 1% of remaining TVL
+        // Uses same cross-chain logic: same-chain maturing = free, cross-chain gets bridge penalty
+        const sameChainMaturingTotal = maturingSameChain.reduce((s, p) => s + p.allocationUsd, 0);
         let maxSafePct = 0;
         for (let testPct = 1; testPct <= 100; testPct++) {
           const testAmount = vaultTvl * (testPct / 100);
@@ -218,23 +275,34 @@ Use morpho_monitor_risk for Morpho position risk.`,
 
           // Tier 1: idle
           testRem -= Math.min(idleCapitalUsd, testRem);
-          // Tier 2: maturing
-          testRem -= Math.min(
-            maturingPositions.reduce((s, p) => s + p.allocationUsd, 0),
-            testRem,
-          );
-          // Tier 3: LP removal
-          for (const pos of activePositions) {
+          // Tier 2: same-chain maturing only
+          testRem -= Math.min(sameChainMaturingTotal, testRem);
+          // Tier 3: LP removal — same-chain first
+          for (const pos of allActiveSameChain) {
             if (testRem <= 0) break;
             const removable = Math.min(pos.allocationUsd, testRem);
             testCost += removable * estimatePriceImpact(removable, pos.poolLiquidityUsd) * stressMultiplier;
             testRem -= removable;
           }
-          // Tier 4: PT sale
-          for (const pos of activePositions) {
+          // Tier 3: LP removal — cross-chain with penalty
+          for (const pos of allActiveCrossChain) {
+            if (testRem <= 0) break;
+            const removable = Math.min(pos.allocationUsd, testRem);
+            testCost += removable * estimatePriceImpact(removable, pos.poolLiquidityUsd) * stressMultiplier * 1.5;
+            testRem -= removable;
+          }
+          // Tier 4: PT sale — same-chain
+          for (const pos of allActiveSameChain) {
             if (testRem <= 0) break;
             const ptSellable = Math.min(pos.allocationUsd * 0.5, testRem);
             testCost += ptSellable * estimatePriceImpact(ptSellable, pos.poolLiquidityUsd) * 2 * stressMultiplier;
+            testRem -= ptSellable;
+          }
+          // Tier 4: PT sale — cross-chain with penalty
+          for (const pos of allActiveCrossChain) {
+            if (testRem <= 0) break;
+            const ptSellable = Math.min(pos.allocationUsd * 0.5, testRem);
+            testCost += ptSellable * estimatePriceImpact(ptSellable, pos.poolLiquidityUsd) * 2 * stressMultiplier * 1.5;
             testRem -= ptSellable;
           }
 
@@ -260,6 +328,9 @@ Use morpho_monitor_risk for Morpho position risk.`,
           totalCostToRemainingPct: remainingTvlAfter > 0 ? (totalCost / remainingTvlAfter) * 100 : 0,
           maxSafeRedemptionPct: maxSafePct,
           maxSafeRedemptionUsd: vaultTvl * (maxSafePct / 100),
+          crossChainPositions,
+          crossChainTotalUsd,
+          bridgePendingUsd,
         };
 
         const text = formatStressTestResult(result);
@@ -319,11 +390,28 @@ function formatStressTestResult(r: StressTestResult): string {
     lines.push(`    - Accept higher slippage on forced LP exits`);
   }
 
+  // ── Cross-chain risk section ──
+  if (r.crossChainPositions.length > 0) {
+    lines.push(``);
+    lines.push(`  Cross-Chain Exposure:`);
+    for (const p of r.crossChainPositions) {
+      lines.push(`    ${p.symbol}: ${formatUsd(p.allocationUsd)}`);
+    }
+    lines.push(`    Total cross-chain: ${formatUsd(r.crossChainTotalUsd)} (${formatPct((r.crossChainTotalUsd / r.tvlUsd) * 100)} of TVL)`);
+    lines.push(`    Impact: 1.5x penalty applied — bridge latency + execution uncertainty`);
+    lines.push(`    Maturing cross-chain positions excluded from Tier 2 (cannot settle within one epoch)`);
+    if (r.bridgePendingUsd > 0) {
+      lines.push(`    Bridge pending: ${formatUsd(r.bridgePendingUsd)} in-flight (adds settlement delay)`);
+    }
+  }
+
   lines.push(``);
   lines.push(`--- Considerations ---`);
   lines.push(`  - Impact estimates use a constant-product model (conservative lower bound)`);
   lines.push(`  - Real Curve StableSwap-NG pools are more capital-efficient — actual impact likely lower`);
-  lines.push(`  - Cross-chain positions add bridge latency — may not be available within one epoch`);
+  if (r.crossChainPositions.length > 0) {
+    lines.push(`  - Cross-chain positions (${r.crossChainPositions.length}) have 1.5x impact penalty and are excluded from free-maturity tier`);
+  }
   lines.push(`  - The "max safe redemption" assumes orderly exit — panic scenarios could cascade`);
 
   lines.push(``);

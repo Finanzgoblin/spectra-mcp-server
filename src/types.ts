@@ -855,6 +855,12 @@ export interface StressTestResult {
   totalCostToRemainingPct: number;
   maxSafeRedemptionPct: number;
   maxSafeRedemptionUsd: number;
+  /** Cross-chain position summary (empty when all positions are same-chain). */
+  crossChainPositions: Array<{ symbol: string; allocationUsd: number }>;
+  /** Total USD allocated to cross-chain positions (subject to bridge latency). */
+  crossChainTotalUsd: number;
+  /** USD currently in-flight via bridge (from MetaVault bridge data). */
+  bridgePendingUsd: number;
 }
 
 // =============================================================================
