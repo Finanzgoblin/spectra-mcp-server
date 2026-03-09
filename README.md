@@ -1,12 +1,12 @@
 # MetaVault MCP
 
-Makes [Spectra Finance](https://spectra.finance) discoverable and usable by AI agents via the [Model Context Protocol](https://modelcontextprotocol.io).
+Multi-protocol yield intelligence for AI agents — covering [Spectra Finance](https://spectra.finance), [Pendle](https://pendle.finance), and [Morpho](https://morpho.org) via the [Model Context Protocol](https://modelcontextprotocol.io).
 
-50 tools · 10+ chains · read-only · on-chain Curve quoting · ERC-4626 health checks · yield curve term structure · historical eth_getLogs · full Pendle protocol parity (13 tools) · cross-protocol Spectra↔Pendle comparison · Morpho supply-side visibility · Morpho user positions & historical rates · Merkl campaign APR integration · curator risk monitoring · withdrawal stress testing · rollover planning · multi-vault portfolio aggregation · pool expiry monitoring · zero web3 library dependencies
+50 tools · 3 protocols · 10+ chains · read-only · on-chain Curve quoting · Pendle logit AMM modeling · ERC-4626 health checks · yield curve term structure · historical eth_getLogs · full Pendle protocol parity (13 tools) · cross-protocol Spectra↔Pendle comparison · Morpho supply-side visibility · Morpho user positions & historical rates · Merkl campaign APR integration · curator risk monitoring · withdrawal stress testing · rollover planning · multi-vault portfolio aggregation · pool expiry monitoring · zero web3 library dependencies
 
 ## What This Does
 
-Any AI agent (Claude, GPT, open-source) that supports MCP can now:
+Any AI agent (Claude, GPT, open-source) that supports MCP can query Spectra, Pendle, and Morpho in a unified interface to:
 
 - **Discover** the best fixed-rate yield opportunities across 10 chains simultaneously
 - **Analyze** specific PT/YT positions with full data (APY, TVL, liquidity, prices)
@@ -118,11 +118,12 @@ Layer 4: Observation Coverage (quantifies blind spots in tool output)
 
 ### Why This Matters
 
-A cold-start agent with zero prior knowledge of Spectra can:
-1. Call `spectra_get_pool_activity` — see trading patterns with ⚠ hints about ambiguous events
-2. Call `spectra_get_portfolio` on flagged addresses — see Position Shape (balance ratios like "YT/PT 4:1")
-3. Read the cross-reference nudges — compose its own analytical workflow
-4. Identify novel strategies the server was never explicitly programmed to detect
+A cold-start agent with zero prior knowledge of the protocols can:
+1. Call `mv_scan_curator_opportunities` — see cross-protocol (Spectra + Pendle) yield rankings with capital-aware metrics
+2. Call `spectra_get_pool_activity` — see trading patterns with ⚠ hints about ambiguous events
+3. Call `spectra_get_portfolio` and `pendle_get_portfolio` on flagged addresses — see Position Shape across both protocols
+4. Read the cross-reference nudges — compose its own analytical workflow spanning all three protocols
+5. Identify novel strategies the server was never explicitly programmed to detect
 
 This was validated: a subagent spawned with zero priming correctly identified a mint-and-sell-PT loop strategy (YT accumulation via PT discount) in 3 tool calls, using only the mechanics taught in descriptions and the structured hints in output.
 
@@ -267,7 +268,7 @@ Add to your `claude_desktop_config.json`:
 }
 ```
 
-Restart Claude Desktop. You'll see the Spectra tools available.
+Restart Claude Desktop. You'll see all 50 tools (Spectra, Pendle, Morpho, cross-protocol) available.
 
 ## Connect to Claude Code
 
