@@ -94,7 +94,7 @@ Most user interactions go through the **Spectra Router** (flash-mints, flash-red
 - **Katana**: Has a default RPC (`https://rpc.katana.network`) hardcoded in `config.ts`.
 - **Monad**: No default RPC. Requires `rpc_url` parameter.
 - Most other chains (mainnet, base, arbitrum, sonic, etc.) have hardcoded public RPCs.
-- Morpho looping markets exist on: mainnet, base, arbitrum, katana.
+- Morpho PT markets can exist on any chain where Morpho is deployed. Use `morpho_list_markets` to discover.
 
 ## API Architecture
 - `src/api.ts` contains `fetchSpectra()` for Spectra API calls, `findMorphoMarketsForPts()` for Morpho market lookups, `fetchMerkl()`/`parseMerklRewards()` for Merkl reward integration, and `amountToBigInt()` for safe float→BigInt conversion
