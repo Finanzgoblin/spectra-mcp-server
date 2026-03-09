@@ -22,7 +22,11 @@ const TOPICS: Record<string, string> = {
 - Maturity Value context: Tools often show maturityValue < 1.0 (e.g., 0.852). This is the IBT
   rate (how much underlying 1 IBT is worth). It is NOT a loss — you bought PT at a discount
   to this value. The spread (maturityValue - ptPrice) is your yield.
-  Example: PT price 0.82, maturity value 0.852 → 3.2 underlying profit per 100 PT.`,
+  Example: PT price 0.82, maturity value 0.852 → 3.2 underlying profit per 100 PT.
+- Pendle uses the same PT/YT concept but different mechanics:
+  AMM: time-decay logit model (not Curve). YT trades DIRECTLY on the AMM (SY↔YT).
+  Token wrapping: SY (Standardized Yield) instead of IBT. Health checks use SY address.
+  See topic "pendle_morpho" for full differences.`,
 
   "router_batching": `Router Batching (critical for interpreting pool activity)
 - The Spectra Router's execute() batches multiple operations into one atomic tx.
@@ -52,6 +56,10 @@ const TOPICS: Record<string, string> = {
 - Multi-pool wallets may show DIFFERENT strategies per pool. Do not force a unified narrative.
   The absence of a single consistent strategy IS a signal — it may indicate adaptive behavior.
 - Strategies often span multiple wallets — check all concentrated addresses.
+- Cross-protocol: Use pendle_get_portfolio(address) alongside spectra_get_portfolio(address)
+  to see holdings on both protocols. A wallet active on Spectra may also have Pendle positions.
+  morpho_get_positions(address) reveals leveraged positions (looping, vault deposits).
+  Full picture = Spectra + Pendle + Morpho positions combined.
 - OBSERVATION COVERAGE: spectra_get_pool_activity now quantifies its own blind spots:
   (1) Value coverage — % of position explained by observable activity. Low coverage
       means most behavior is invisible to the tool (direct mints, transfers, cross-chain).
@@ -71,13 +79,27 @@ const TOPICS: Record<string, string> = {
 - Requires a Morpho market that accepts the specific PT as collateral.
 - Borrow rates are variable — spread can turn negative if rates spike.
 - Entry cost (price impact) compounds across loops.
-- Use spectra_scan_opportunities for capital-aware looping analysis across all chains.`,
+- Use spectra_scan_opportunities for capital-aware looping analysis across all chains.
+- Pendle looping works identically: buy Pendle PT → Morpho collateral → borrow → buy more PT.
+  Use pendle_get_looping_strategy(chain, market_address) to model Pendle-specific loops.
+  Morpho markets for Pendle PTs can exist on any Morpho-supported chain.
+- Use morpho_get_history to assess borrow rate stability before entering a loop.
+  A market with wild rate swings is riskier than one with predictable rates.
+- morpho_monitor_risk tracks health factor and liquidation distance for active loops.`,
 
   "networks": `Supported Networks
+
+Spectra chains:
 ${API_NETWORKS.map((k) => `- ${SUPPORTED_CHAINS[k].name} (use "${k}" in queries, chain ID ${SUPPORTED_CHAINS[k].id})`).join("\n")}
 - "ethereum" is accepted as an alias for "mainnet".
-- Morpho PT markets exist on: mainnet, base, arbitrum, katana.
-- veSPECTRA governance lives on Base.`,
+
+Pendle chains (pendle_* tools):
+${Object.entries(PENDLE_CHAIN_NAMES).map(([k, v]) => `- ${v} (use "${k}")`).join("\n")}
+- Overlap with Spectra: mainnet, base, arbitrum, optimism, sonic, bsc.
+- Pendle-only chains: ${Object.keys(PENDLE_CHAIN_IDS).filter((k) => !SUPPORTED_CHAINS[k]).map((k) => PENDLE_CHAIN_NAMES[k]).join(", ")}.
+
+Morpho PT markets can exist on any chain where Morpho is deployed. Use morpho_list_markets to discover.
+veSPECTRA governance lives on Base.`,
 
   "deposit_path": `How to Enter Spectra Positions (Deposit Paths)
 - To buy PT (lock in fixed rate): Send underlying (e.g., USDC) to the Spectra Router.
@@ -95,7 +117,22 @@ ${API_NETWORKS.map((k) => `- ${SUPPORTED_CHAINS[k].name} (use "${k}" in queries,
   borrow underlying → buy more PT → repeat. Requires a Morpho market for this PT.
   Use spectra_get_looping_strategy() to model leverage levels and break-even borrow rates.
 - Prerequisites: You need the underlying asset (USDC, ETH, etc.) on the right chain.
-  Everything else is handled atomically by the Spectra Router. No manual multi-step process.`,
+  Everything else is handled atomically by the Spectra Router. No manual multi-step process.
+
+Pendle Entry Paths (differences from Spectra):
+- To buy PT on Pendle: Send underlying → Pendle Router wraps to SY → swaps SY for PT on logit AMM.
+  The AMM uses time-decay pricing (not Curve StableSwap). Near maturity, the AMM is more
+  capital-efficient, so impact is lower. Use pendle_quote_trade for quotes.
+- To get YT on Pendle: Swap SY → YT directly on the Pendle AMM. Unlike Spectra where YT
+  requires flash-mint/flash-redeem through the Router, Pendle YT trades natively on the AMM.
+  This makes Pendle YT arbitrage simpler to execute.
+- To LP on Pendle: Add SY + PT to the Pendle AMM pool. LP earns swap fees + PENDLE incentives.
+  vePENDLE holders get boosted LP APY. Note: Pendle LP has different IL profile due to
+  time-decay AMM — IL is path-dependent on rate changes, not just final price.
+- To loop Pendle PT: Same as Spectra — buy PT → Morpho collateral → borrow → buy more PT.
+  Use pendle_get_looping_strategy to model. Use morpho_list_markets to find available markets.
+- Key difference: Pendle positions do NOT auto-roll. When a Pendle market matures, you must
+  manually redeem and re-enter a new market. Spectra MetaVaults handle this automatically.`,
 
   "glossary": `Glossary — Key Terms for Newcomers
 - IBT (Interest-Bearing Token): An ERC-4626 vault share that accrues yield over time.
@@ -147,7 +184,23 @@ ${API_NETWORKS.map((k) => `- ${SUPPORTED_CHAINS[k].name} (use "${k}" in queries,
 - Boost: The veSPECTRA multiplier on LP gauge rewards. Formula:
   B = min(2.5, 1.5 × (v/V) × (D/d) + 1), where v = your veSPECTRA, V = total supply,
   D = pool TVL, d = your deposit. Full 2.5x when your vote share ≥ your pool share.
-  Without any veSPECTRA, boost = 1x (base rate). Use spectra_get_ve_info to compute scenarios.`,
+  Without any veSPECTRA, boost = 1x (base rate). Use spectra_get_ve_info to compute scenarios.
+- SY (Standardized Yield): Pendle's equivalent of IBT. An ERC-20 wrapper around yield-bearing
+  tokens. For health checks, use mv_check_ibt_health(chain, ibt_address=SY_ADDRESS). Do NOT
+  use underlyingAsset — that's the base token (USDC, ETH) with no conversion rate to check.
+- Logit AMM: Pendle's time-decay AMM model. Unlike Curve StableSwap (fixed amplification),
+  the logit AMM adjusts pricing based on time to maturity. Near maturity, the AMM becomes
+  more capital-efficient (lower impact). Uses scalarRoot parameter for price sensitivity.
+  Impact estimates use pendle_quote_trade or pendle_get_market_capacity.
+- vePENDLE: Vote-escrowed PENDLE token. Boosts LP APY on Pendle markets (separate system
+  from veSPECTRA). Shown as "Max Boosted LP APY" in pendle_list_markets output.
+- MetaVault: Spectra-specific ERC-7540 curated vault. Automates LP rollover (re-entering new
+  pools at maturity) and compounds YT yield back into LP. Managed by curators who earn
+  performance fees. Depositors get hands-off yield exposure. Use spectra_list_metavaults
+  to discover, spectra_get_curator_dashboard for operations, spectra_model_metavault for modeling.
+- Health Factor: Morpho risk metric = (collateralUsd × LLTV) / borrowUsd. Below 1.0 =
+  liquidatable. Below 1.3 = danger zone. Morpho has NO close factor — when health hits 1.0,
+  the ENTIRE position can be liquidated in one transaction. Use morpho_monitor_risk to track.`,
 
   "pendle_morpho": `Pendle & Morpho — Multi-Protocol Context
 
@@ -218,9 +271,12 @@ Goal: "Find the best yield for my capital"
   questions. Both are valid depending on your assumptions about capital size and slippage.
 
 Goal: "Analyze a wallet's strategy"
-  Start with: spectra_get_portfolio(address) to see position shapes and balances
+  Start with: spectra_get_portfolio(address) AND pendle_get_portfolio(address) in parallel
+  Also: morpho_get_positions(address) for leveraged positions (looping, vault deposits)
   Then: spectra_get_pool_activity(chain, pool_address, address) on pools where they hold positions
   Then: spectra_get_address_activity(address) for cross-pool pattern discovery
+  Full picture = Spectra + Pendle + Morpho positions combined. A wallet may run different
+  strategies across protocols (e.g., fixed yield on Spectra, YT speculation on Pendle, looping on Morpho).
   Portfolio shows WHAT they hold; activity shows HOW they got there. Neither alone tells
   the full story — always cross-reference both.
   CHECK OBSERVATION COVERAGE in spectra_get_pool_activity output. If value coverage is low,
@@ -241,10 +297,13 @@ Goal: "Evaluate a specific opportunity in depth"
   underlyingAsset (which is the base token with no conversion rate).
 
 Goal: "Find YT mispricing"
-  Start with: spectra_scan_yt_arbitrage(capital_usd) for spread-sorted opportunities
+  Start with: spectra_scan_yt_arbitrage(capital_usd) AND pendle_scan_yt_arbitrage(capital_usd)
+  Run both in parallel for cross-protocol coverage.
   YT arbitrage is a different axis than PT yield optimization. Large spreads could mean
   real mispricing, IBT APR about to drop, or a liquidity event. The tool surfaces the
   spread; distinguishing the cause requires agent judgment.
+  Key difference: Pendle YT trades directly on the AMM (simpler execution). Spectra YT
+  requires flash-mint/flash-redeem via the Router (more complex, appears as PT trades in pool data).
 
 Goal: "Optimize governance position / veSPECTRA"
   Start with: spectra_get_ve_info(ve_balance, capital) for boost scenarios
@@ -296,17 +355,24 @@ Goal: "Assess pool depth and IBT safety before deploying"
   spectra_get_pool_capacity shows: impact & effective APY at geometric capital tiers, sweet spot, exhaustion.
 
 Goal: "Compare maturities for a single underlying (term structure)"
-  Start with: spectra_get_yield_curve(underlying="USDC") — all maturities across all chains
+  Start with: spectra_get_yield_curve(underlying="USDC") AND pendle_get_yield_curve(underlying="USDC")
+  Run both in parallel for cross-protocol term structure.
   Shows implied APY at each maturity point, sorted chronologically.
   Identifies curve shape (normal/inverted/flat), steepest segment, cross-chain pairs.
+  Cross-protocol comparison: same underlying at similar maturities may offer different rates
+  on Spectra vs Pendle. Use mv_compare_yield for head-to-head matching.
   Then: spectra_get_pt_details or mv_check_ibt_health on specific maturities to drill deeper.
 
-Four discovery tools and when to use each:
-  spectra_get_best_fixed_yields — headline rates across all chains (no capital adjustment)
-  spectra_scan_opportunities — capital-aware effective APY with Morpho looping (Spectra-only)
+Six discovery tools and when to use each:
+  spectra_get_best_fixed_yields — Spectra headline rates across all chains (no capital adjustment)
+  spectra_scan_opportunities — Spectra capital-aware effective APY with Morpho looping
+  pendle_get_best_fixed_yields — Pendle headline rates across all chains (no capital adjustment)
+  pendle_scan_opportunities — Pendle capital-aware effective APY with Morpho looping
   mv_scan_curator_opportunities — cross-protocol (Spectra + Pendle) capital-aware scanner
-  spectra_scan_yt_arbitrage — YT spread opportunities (rate conviction bets)
-  These four intentionally produce different rankings. The disagreement is a feature.
+  spectra_scan_yt_arbitrage / pendle_scan_yt_arbitrage — YT spread opportunities (both protocols)
+  These tools intentionally produce different rankings. The disagreement is a feature.
+  For broadest coverage: use mv_scan_curator_opportunities. For protocol-specific depth:
+  use the spectra_* or pendle_* variants.
 
 Two due-diligence tools for before-you-deploy checks:
   mv_check_ibt_health — IBT conversion rate, APR composition, protocol recognition, liquidity
@@ -323,9 +389,10 @@ Maximizing analysis depth — what user context unlocks which tools:
     → Without this: tools default to $10K, which may wildly misrepresent your real options
 
   Wallet address (e.g., "0xABC...")
-    → spectra_get_portfolio shows existing positions, claimable yield, Merkl rewards
-    → spectra_simulate_trade previews how a new trade changes your holdings
-    → spectra_get_pool_activity with address isolation reveals your own trading patterns
+    → spectra_get_portfolio + pendle_get_portfolio show positions on both protocols
+    → morpho_get_positions shows leveraged positions (loops, vault deposits)
+    → spectra_simulate_trade / pendle_simulate_trade preview how trades change holdings
+    → spectra_get_pool_activity with address isolation reveals trading patterns
     → Without this: analysis is generic, can't account for existing exposure
 
   veSPECTRA balance (e.g., "50,000 veSPECTRA")
