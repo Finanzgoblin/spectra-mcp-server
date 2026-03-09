@@ -149,6 +149,57 @@ ${API_NETWORKS.map((k) => `- ${SUPPORTED_CHAINS[k].name} (use "${k}" in queries,
   D = pool TVL, d = your deposit. Full 2.5x when your vote share ≥ your pool share.
   Without any veSPECTRA, boost = 1x (base rate). Use spectra_get_ve_info to compute scenarios.`,
 
+  "pendle_morpho": `Pendle & Morpho — Multi-Protocol Context
+
+This server covers THREE protocols, not just Spectra. Always consider all three when
+analyzing yields, scanning opportunities, or comparing rates.
+
+PENDLE (13 tools, pendle_* prefix):
+- Interest rate derivatives protocol similar to Spectra — same PT/YT concept.
+- AMM: Time-decay logit AMM (not Curve StableSwap). Use pendle_quote_trade for quotes.
+- YT trades DIRECTLY on the AMM (SY↔YT). Spectra YT trades indirectly via Router.
+- Token wrapping: Uses SY (Standardized Yield) tokens, not IBT.
+  For health checks: mv_check_ibt_health(chain, ibt_address=SY_ADDRESS).
+  Do NOT use underlyingAsset — that's the base token with no conversion rate.
+- Chains: Includes Mantle, Berachain, HyperEVM, Corn (not on Spectra).
+  Overlapping chains: Ethereum, Base, Arbitrum, Optimism, Sonic, BSC.
+- Incentives: PENDLE token emissions + vePENDLE boosting (separate from veSPECTRA).
+- Tools mirror Spectra: pendle_list_markets, pendle_scan_opportunities,
+  pendle_get_best_fixed_yields, pendle_quote_trade, pendle_simulate_trade,
+  pendle_get_looping_strategy, pendle_scan_yt_arbitrage, etc.
+
+MORPHO (7 tools, morpho_* prefix):
+- Lending protocol for leveraged yield strategies on both Spectra and Pendle PTs.
+- morpho_list_markets: Find markets accepting PTs as collateral (filter by chain/symbol).
+- morpho_get_rate: Live borrow rates with supply-side context.
+- morpho_get_market_suppliers: Who supplies lending liquidity (vault/EOA/looper breakdown).
+- morpho_list_vaults: Vault allocations with Spectra PT tagging.
+- morpho_get_positions: User positions across markets/vaults with health factors.
+- morpho_get_history: Historical rate trends with stability signals.
+- morpho_monitor_risk: Liquidation risk monitoring (health factor, distance-to-liquidation).
+- Looping works the same on both protocols: PT → Morpho collateral → borrow → buy more PT.
+  Use spectra_get_looping_strategy or pendle_get_looping_strategy to model.
+
+CROSS-PROTOCOL (6 tools, mv_* prefix):
+- mv_scan_curator_opportunities: Scans BOTH Spectra + Pendle with capital-aware metrics.
+  This is the broadest discovery tool — use it when comparing across protocols.
+- mv_compare_yield: Side-by-side Spectra vs Pendle with maturity-aware matching.
+- mv_check_ibt_health: Works for both Spectra IBTs and Pendle SY tokens.
+- mv_get_protocol_context: This tool — protocol mechanics for all protocols.
+- mv_plan_rollover: Cross-protocol rollover planning for expiring positions.
+- mv_get_curator_portfolio: Multi-vault aggregation across protocols.
+
+METAVAULTS (Spectra-specific, spectra_* prefix):
+- ERC-7540 curated vaults that automate LP rollover and compound YT yield.
+- spectra_list_metavaults: Discover live MetaVaults across all chains.
+- spectra_model_metavault: "Double loop" strategy modeling (vault + Morpho leverage).
+- spectra_get_curator_dashboard: Operational health monitoring for curators.
+- spectra_stress_test_vault: Withdrawal stress testing with liquidity waterfall.
+
+IMPORTANT: When asked to find the best yield, ALWAYS query both protocols.
+Run spectra_scan_opportunities AND pendle_scan_opportunities, or use
+mv_scan_curator_opportunities for a unified cross-protocol scan.`,
+
   "workflow_routing": `Workflow Routing — How tools compose for common goals
 
 If you're new to Spectra or unsure which tool to start with:
@@ -328,18 +379,21 @@ const ALL_TOPIC_NAMES = Object.keys(TOPICS);
 export function register(server: McpServer): void {
   server.tool(
     "mv_get_protocol_context",
-    `Get essential Spectra protocol mechanics needed for correct reasoning.
-Returns concise explanations of how PT/YT work, how Router batching affects
-pool activity interpretation, how to read wallet strategies from holdings,
-how looping works, how to enter positions, and how tools compose into workflows.
+    `Get essential protocol mechanics for Spectra, Pendle, and Morpho — needed for correct reasoning.
+This server covers 3 protocols with 50 tools. This context tool teaches how they all work.
 
-Covers mechanics that are easy to misinterpret without context — for example,
-SELL_PT in pool activity could be a flash-mint to acquire YT, not a PT sale.
+Use topic "pendle_morpho" first if you're unfamiliar with the multi-protocol scope — it
+explains all three protocols, their tools (spectra_*, pendle_*, morpho_*, mv_*), and
+when to use cross-protocol tools vs protocol-specific ones. IMPORTANT: MetaVaults
+(spectra_list_metavaults, spectra_model_metavault, spectra_get_curator_dashboard,
+spectra_stress_test_vault) are Spectra-specific curated vaults — don't miss them.
 
 Use topic "workflow_routing" to learn which tools to call for a given goal
-(yield optimization, wallet analysis, YT arbitrage, etc.) and how they feed
-into each other. Recommended starting point for agents new to the tool set.
+(yield optimization, wallet analysis, YT arbitrage, curator strategies, etc.)
+and how they feed into each other. Recommended starting point for agents new to the tool set.
 
+Use topic "pt_yt_mechanics" for how PT/YT splitting works on Spectra.
+Use topic "router_batching" for how Spectra Router affects pool activity interpretation.
 Use topic "deposit_path" for step-by-step entry mechanics (how to buy PT, mint YT, LP, loop).
 Use topic "glossary" for key term definitions (IBT, sw-prefix, LLTV, gauge, maturity value, APR vs APY, underlying, LP, ERC-4626, Curve StableSwap-NG, boost formula).
 
