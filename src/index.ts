@@ -96,8 +96,37 @@ server.resource(
     contents: [{
       uri: uri.href,
       mimeType: "text/plain",
-      text: `Spectra Finance Overview
-========================
+      text: `MetaVault MCP — Multi-Protocol Yield Intelligence
+===================================================
+This server covers THREE protocols with 50 tools. Always consider all three:
+
+  Spectra (24 tools, spectra_* prefix): Interest rate derivatives — PT/YT splitting,
+    Curve StableSwap-NG pools, MetaVaults, veSPECTRA governance.
+    Chains: ${API_NETWORKS.map((k) => SUPPORTED_CHAINS[k].name).join(", ")}
+
+  Pendle (13 tools, pendle_* prefix): Interest rate derivatives — PT/YT splitting,
+    time-decay logit AMM, vePENDLE governance. Full feature parity with Spectra tools.
+    Includes Pendle-only chains: Mantle, Berachain, HyperEVM, Corn.
+
+  Morpho (7 tools, morpho_* prefix): Lending markets — PT as collateral for leveraged
+    looping strategies. Supply-side analysis, vault allocations, risk monitoring.
+
+  Cross-protocol (6 tools, mv_* prefix): Unified analysis across protocols.
+    mv_scan_curator_opportunities — scans BOTH Spectra + Pendle with capital-aware metrics.
+    mv_compare_yield — side-by-side Spectra vs Pendle with maturity-aware matching.
+    mv_check_ibt_health — ERC-4626 health checks (works for both Spectra IBTs and Pendle SY).
+    mv_get_protocol_context — protocol mechanics reference (all protocols).
+    mv_plan_rollover — cross-protocol rollover planning.
+    mv_get_curator_portfolio — multi-vault portfolio aggregation.
+
+IMPORTANT FOR AGENTS: When asked to find yields, scan opportunities, or compare rates,
+query BOTH Spectra and Pendle — not just one. Use mv_scan_curator_opportunities for the
+broadest view, or run spectra_scan_opportunities AND pendle_scan_opportunities in parallel.
+
+---
+
+Spectra Protocol Mechanics
+==========================
 Spectra is a permissionless interest rate derivatives protocol for DeFi.
 
 Core Mechanism:
@@ -156,14 +185,18 @@ These patterns have MULTIPLE valid interpretations — do not collapse to one wi
 - High LP + high YT: COULD be mint+LP loop (minted PT+YT, LPed PT+IBT, kept YT).
 Always cross-reference portfolio (WHAT they hold) with activity (HOW they got there).
 
+MetaVaults (ERC-7540 curated vaults):
+- Auto-rolling liquidity vaults managed by curators
+- YT→LP compounding loop (curator converts YT yield to more LP)
+- MetaVault shares can be used as Morpho collateral for leverage ("double loop")
+- Live data via API: /v1/{network}/metavaults — use spectra_list_metavaults to discover
+- Use spectra_get_curator_dashboard for operational health monitoring
+- Use spectra_model_metavault for double-loop strategy modeling
+
 Key Integrations:
 - AMM: Curve Finance (PT/IBT pools)
 - Lending: Morpho (PT as collateral -- enables looping for leveraged fixed yield)
 - Vaults: Yearn V3, Aave, and other ERC-4626 compatible
-- MetaVaults: Auto-rolling liquidity vaults managed by curators (ERC-7540)
-  - YT→LP compounding loop (curator converts YT yield to more LP)
-  - MetaVault shares can be used as Morpho collateral for leverage ("double loop")
-  - Live data via API: /v1/{network}/metavaults — use spectra_list_metavaults to discover
 - Governance: ve(3,3) model on Base (veSPECTRA)
 
 Looping Strategy (most capital-efficient yield in DeFi):
@@ -173,6 +206,42 @@ Looping Strategy (most capital-efficient yield in DeFi):
 4. Borrow USDC against PT collateral
 5. Repeat steps 1-4 for leveraged fixed yield
 6. At maturity, PT redeems for IBT (at maturity value), repay Morpho, keep profit
+
+---
+
+Pendle Protocol Mechanics
+=========================
+Pendle is an interest rate derivatives protocol similar to Spectra but with key differences.
+
+Core similarities with Spectra:
+- Same PT/YT splitting concept — deposit yield-bearing token, get PT (fixed) + YT (variable)
+- PT trades at a discount; the discount is the fixed yield
+- Morpho looping works the same way (PT as collateral → borrow → buy more PT)
+
+Key differences from Spectra:
+- AMM model: Pendle uses a time-decay logit AMM (not Curve StableSwap). Quotes use logit model.
+- YT trading: Pendle YT trades DIRECTLY on the AMM (SY↔YT). Spectra YT trades indirectly
+  via Router flash-mint/redeem. This makes Pendle YT arbitrage simpler to execute.
+- Token wrapping: Pendle uses SY (Standardized Yield) tokens, not IBT. For health checks,
+  use mv_check_ibt_health(chain, ibt_address=SY_ADDRESS) — use the SY address, not underlyingAsset.
+- Incentives: PENDLE token emissions + vePENDLE boosting (separate from SPECTRA/veSPECTRA).
+- Chains: Pendle covers Mantle, Berachain, HyperEVM, Corn — chains Spectra doesn't support.
+
+Pendle tools mirror every Spectra tool: pendle_list_markets, pendle_scan_opportunities,
+pendle_get_best_fixed_yields, pendle_quote_trade, pendle_simulate_trade, etc.
+
+---
+
+Morpho Protocol Mechanics
+=========================
+Morpho is a lending protocol used for leveraged yield strategies on both Spectra and Pendle PTs.
+
+Tools: morpho_list_markets, morpho_get_rate, morpho_get_market_suppliers, morpho_list_vaults,
+morpho_get_positions, morpho_get_history, morpho_monitor_risk.
+
+How it connects: Both Spectra and Pendle PTs can be used as Morpho collateral to borrow
+underlying assets and loop for leveraged fixed yield. Use spectra_get_looping_strategy or
+pendle_get_looping_strategy to model this. morpho_monitor_risk tracks liquidation distance.
 
 Oracle: Custom Curve oracle built by Spectra team, used by Morpho for PT pricing.
 
