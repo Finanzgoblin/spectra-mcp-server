@@ -1409,9 +1409,11 @@ export async function fetchTokenDecimals(
 // On-Chain ERC-4626 Conversion Rate
 // =============================================================================
 
-// ERC-4626 function selector: convertToAssets(uint256)
+// ERC-4626 function selectors
+// convertToAssets(uint256) = keccak256("convertToAssets(uint256)")[0:4] = 0x07a2d13a
+// convertToShares(uint256) = keccak256("convertToShares(uint256)")[0:4] = 0xc6e6f592
 const ERC4626_SELECTORS = {
-  convertToAssets: "0xc6e6f592",
+  convertToAssets: "0x07a2d13a",
 } as const;
 
 /**
