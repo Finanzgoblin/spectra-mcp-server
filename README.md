@@ -1,12 +1,12 @@
 # MetaVault MCP
 
-Makes [Spectra Finance](https://spectra.finance) discoverable and usable by AI agents via the [Model Context Protocol](https://modelcontextprotocol.io).
+Multi-protocol yield intelligence for AI agents — covering [Spectra Finance](https://spectra.finance), [Pendle](https://pendle.finance), and [Morpho](https://morpho.org) via the [Model Context Protocol](https://modelcontextprotocol.io).
 
-50 tools · 10+ chains · read-only · on-chain Curve quoting · ERC-4626 health checks · yield curve term structure · historical eth_getLogs · full Pendle protocol parity (13 tools) · cross-protocol Spectra↔Pendle comparison · Morpho supply-side visibility · Morpho user positions & historical rates · Merkl campaign APR integration · curator risk monitoring · withdrawal stress testing · rollover planning · multi-vault portfolio aggregation · pool expiry monitoring · zero web3 library dependencies
+50 tools · 3 protocols · 10+ chains · read-only · on-chain Curve quoting · Pendle logit AMM modeling · ERC-4626 health checks · yield curve term structure · historical eth_getLogs · full Pendle protocol parity (13 tools) · cross-protocol Spectra↔Pendle comparison · Morpho supply-side visibility · Morpho user positions & historical rates · Merkl campaign APR integration · curator risk monitoring · withdrawal stress testing · rollover planning · multi-vault portfolio aggregation · pool expiry monitoring · zero web3 library dependencies
 
 ## What This Does
 
-Any AI agent (Claude, GPT, open-source) that supports MCP can now:
+Any AI agent (Claude, GPT, open-source) that supports MCP can query Spectra, Pendle, and Morpho in a unified interface to:
 
 - **Discover** the best fixed-rate yield opportunities across 10 chains simultaneously
 - **Analyze** specific PT/YT positions with full data (APY, TVL, liquidity, prices)
