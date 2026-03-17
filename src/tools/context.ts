@@ -202,6 +202,46 @@ Pendle Entry Paths (differences from Spectra):
   liquidatable. Below 1.3 = danger zone. Morpho has NO close factor — when health hits 1.0,
   the ENTIRE position can be liquidated in one transaction. Use morpho_monitor_risk to track.`,
 
+  "fees_and_costs": `Protocol Fees & External Reward Programs
+
+PROTOCOL YT FEES (applied to ALL yield accrued by YT, including points and external rewards):
+- Spectra: 3% fee on all YT yield. Source: docs.spectra.finance/tokenomics/fees, governance SGP 6 + SGP 13.
+- Pendle: 5% fee on all YT yield. Source: docs.pendle.finance/ProtocolMechanics/Mechanisms/Fees.
+  Merkl confirms the fee is applied during reward forwarding (docs.merkl.xyz/merkl-mechanisms/reward-forwarding).
+- These fees are NOT shown in any tool's yield fields. When computing YT economics,
+  multiply all yields by (1 - fee_rate): Spectra = 0.97, Pendle = 0.95.
+- Fee changes require governance votes — treat as near-constants but verify if results look off.
+
+REWARD BASIS — "per $ held" vs "per $ notional":
+- External points programs may accrue rewards on wallet balance ("per $ held") or on
+  leveraged exposure ("per $ notional"). For YT holders, "per $ notional" means:
+  points = rate × (leverage × capital) × days — which can be 50-100x higher than "per $ held."
+- ALWAYS verify the basis from the reward program's primary dashboard.
+  Tool outputs do not currently distinguish these. Getting this wrong can cause 100x errors.
+
+EXTERNAL REWARD PROGRAMS (not covered by MCP tools):
+- Protocols like Avant, EigenLayer, Ethena, etc. run their own points programs on top of
+  Spectra/Pendle/Merkl. These rates are NOT fetched by any MCP tool.
+- For any new asset, verify independently:
+  1. Whether the asset/venue is eligible (check the protocol's rewards dashboard, not just docs)
+  2. The rate and basis (held vs notional)
+  3. Whether Merkl campaigns and protocol points are the SAME reward channel (they often are —
+     Merkl distributes the protocol's points, so they don't stack)
+- Protocol docs are often STALE. Live dashboards (e.g., app.avantprotocol.com/rewards) are
+  ground truth. When docs and dashboard disagree, trust the dashboard.
+
+MERKL CAMPAIGN TYPES:
+- Merkl campaigns have an "action" field shown in tool output: (POOL), (HOLD), etc.
+  POOL = rewards for LP positions only — YT and PT holders are NOT eligible.
+  HOLD = rewards for token holders (including YT if the campaign targets YT).
+- If a campaign shows "(POOL)" in the output, do NOT count it as YT yield.
+
+COVERAGE BOUNDARIES:
+- MCP tools cover: Spectra, Pendle, Morpho, and Merkl protocol mechanics and live data.
+- MCP tools do NOT cover: external points programs, token launch schedules, FDV assumptions,
+  airdrop allocations, gas cost estimates. When analyzing a new asset, always ask:
+  "Is there an external reward layer I haven't checked?"`,
+
   "pendle_morpho": `Pendle & Morpho — Multi-Protocol Context
 
 This server covers THREE protocols, not just Spectra. Always consider all three when
@@ -463,6 +503,7 @@ Use topic "pt_yt_mechanics" for how PT/YT splitting works on Spectra.
 Use topic "router_batching" for how Spectra Router affects pool activity interpretation.
 Use topic "deposit_path" for step-by-step entry mechanics (how to buy PT, mint YT, LP, loop).
 Use topic "glossary" for key term definitions (IBT, sw-prefix, LLTV, gauge, maturity value, APR vs APY, underlying, LP, ERC-4626, Curve StableSwap-NG, boost formula).
+Use topic "fees_and_costs" for protocol YT fees (Spectra 3%, Pendle 5%), reward basis (held vs notional), Merkl campaign types, and external points programs.
 
 Available topics: ${ALL_TOPIC_NAMES.join(", ")}
 Omit the topic parameter to get all topics at once.`,

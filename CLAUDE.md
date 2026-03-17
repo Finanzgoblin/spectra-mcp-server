@@ -40,7 +40,7 @@
 - `src/tools/metavault.ts` — `spectra_list_metavaults`, `spectra_model_metavault`, `spectra_get_curator_dashboard`
 - `src/tools/protocol.ts` — `spectra_get_protocol_stats`, `spectra_list_chains`
 - `src/tools/ve.ts` — `spectra_get_ve_info` (live veSPECTRA data from Base chain)
-- `src/tools/context.ts` — `mv_get_protocol_context` (Layer 1 protocol mechanics, deposit paths, glossary, callable on-demand)
+- `src/tools/context.ts` — `mv_get_protocol_context` (Layer 1 protocol mechanics, deposit paths, glossary, fees & costs, callable on-demand)
 - `src/tools/capacity.ts` — `spectra_get_pool_capacity` (multi-size quote ladder, sweet spot / exhaustion detection)
 - `src/tools/ibt_health.ts` — `mv_check_ibt_health` (ERC-4626 conversion rate, APR composition, pool balance, verdict; supports direct ibt_address param for Pendle SY or any ERC-4626 vault)
 - `src/tools/yield_curve.ts` — `spectra_get_yield_curve` (term structure for a given underlying across all chains)
@@ -80,6 +80,18 @@ Most user interactions go through the **Spectra Router** (flash-mints, flash-red
 - When address-filtered, block range cap is increased 5x (2.5M blocks) since results are sparse
 - All Curve events (TokenExchange, AddLiquidity, RemoveLiquidity, RemoveLiquidityOne) and PT vault events (Mint, Redeem, YieldClaimed) have the user/caller as first indexed parameter
 - BUT: Router-batched txns have Router as `topics[1]`, not end user — see Router section above
+
+## Protocol YT Fees
+- **Spectra**: 3% fee on ALL yield accrued by YT, including external points/rewards. Source: docs.spectra.finance/tokenomics/fees, governance SGP 6 + SGP 13. Shown in `spectra_get_pt_details` and `formatPoolSummary` output.
+- **Pendle**: 5% fee on ALL yield accrued by YT, including points/rewards. Source: docs.pendle.finance/ProtocolMechanics/Mechanisms/Fees. Shown in `pendle_get_market_details` output.
+- These fees are surfaced in tool outputs but NOT applied to yield calculations — agents must multiply by (1 - fee_rate) manually.
+- The `mv_get_protocol_context` topic `fees_and_costs` teaches agents about these fees, reward basis (held vs notional), Merkl campaign types, and external points programs.
+
+## Merkl Campaign Eligibility
+- Merkl campaigns have an `action` field: `POOL`, `HOLD`, etc.
+- `POOL` = LP-only rewards — YT and PT holders are NOT eligible.
+- `HOLD` = rewards for token holders (including YT if targeted).
+- `formatMerklCampaignLines` always shows the action type and flags POOL campaigns as `[LP only — not for YT/PT holders]`.
 
 ## Merkl Rewards Integration
 - `spectra_get_portfolio` fetches Merkl rewards **in parallel** with portfolio data (no added latency)

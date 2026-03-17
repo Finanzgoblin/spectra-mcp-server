@@ -162,8 +162,9 @@ export function formatMerklCampaignLines(
   lines.push(`${indent.slice(2)}Merkl Campaigns:`);
   for (const c of filtered) {
     const tokens = c.rewardTokens.length > 0 ? c.rewardTokens.join(", ") : "Rewards";
-    const action = c.action ? ` (${c.action})` : "";
-    lines.push(`${indent}+-- ${tokens}${action}: ${formatPct(c.apr)} APR`);
+    const action = c.action || "UNKNOWN";
+    const eligNote = action === "POOL" ? " [LP only — not for YT/PT holders]" : "";
+    lines.push(`${indent}+-- ${tokens} (${action})${eligNote}: ${formatPct(c.apr)} APR`);
   }
   return lines;
 }
@@ -307,6 +308,8 @@ export function formatPoolSummary(pt: SpectraPt, pool: SpectraPool, chain: strin
   if (pt.tags && pt.tags.length > 0) {
     lines.push(`  Tags: ${pt.tags.join(", ")}`);
   }
+
+  lines.push(`  Protocol YT Fee: 3% on all yield + points (docs.spectra.finance/tokenomics/fees)`);
 
   return lines.join("\n");
 }
@@ -3449,6 +3452,9 @@ export function formatPendleMarketSummary(m: PendleMarket, chain: string, merklC
   if (d.totalPt > 0 || d.totalSy > 0) {
     lines.push(`  Pool Reserves: ${d.totalPt.toLocaleString("en-US", { maximumFractionDigits: 2 })} PT / ${d.totalSy.toLocaleString("en-US", { maximumFractionDigits: 2 })} SY`);
   }
+
+  lines.push(``);
+  lines.push(`  Protocol YT Fee: 5% on all yield + points (docs.pendle.finance/ProtocolMechanics/Mechanisms/Fees)`);
 
   return lines.join("\n");
 }
