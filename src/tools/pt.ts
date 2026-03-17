@@ -90,7 +90,8 @@ Use spectra_get_pool_activity to see trading patterns on this pool.`,
           `• Capital-aware ranking: spectra_scan_opportunities(capital_usd=YOUR_AMOUNT) to see where this PT ranks at your size`,
         ];
 
-        let text = summary + nextSteps.join("\n");
+        const feeNotice = `\n  Protocol YT Fee: 3% on all yield + points (docs.spectra.finance/tokenomics/fees)\n`;
+        let text = summary + feeNotice + nextSteps.join("\n");
         if (!merklResult.available) {
           text += `\nNote: Merkl incentive data unavailable — external campaign APR may be missing.`;
         }
