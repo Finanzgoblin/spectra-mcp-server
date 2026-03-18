@@ -155,6 +155,15 @@ Use spectra_compare_yield for fixed-vs-variable rate analysis on the same PT.`,
                 lines: [`Above 1.0 (IBT accruing value normally)`],
               });
             }
+
+            // Rate velocity check: a rate above 1.0 could mean healthy accrual OR stale oracle.
+            // The tool sees a single snapshot — it cannot distinguish between:
+            //   (A) Vault is actively accruing yield (rate rises over time)
+            //   (B) Oracle or vault is stale (rate is frozen, yield is not being compounded)
+            // Both produce the same single-point reading. Cross-reference with IBT APR below —
+            // if APR > 0 but rate barely exceeds 1.0 for a vault that has been live for months,
+            // the rate and APR may be measuring different things.
+            // This is NOT a bug — it is a measurement limitation of single-snapshot health checks.
           } else {
             checks.push({
               name: "Conversion Rate",
@@ -207,10 +216,11 @@ Use spectra_compare_yield for fixed-vs-variable rate analysis on the same PT.`,
 
           if (incentivePct > 80) {
             compLines.push(`${Math.round(incentivePct)}% from incentives — yield may drop if program ends`);
+            compLines.push(`But: high incentive share does not mean the vault is unhealthy — early-stage protocols often bootstrap with incentives that later convert to organic yield. The risk is discontinuity, not the ratio itself.`);
             checks.push({ name: "APR Composition", signal: "caution", lines: compLines });
           } else {
             compLines.push(`${Math.round(organicPct)}% organic at the Spectra layer`);
-            compLines.push(`Note: "organic" means Spectra sees no incentive breakdown — the underlying protocol may itself run incentive programs that Spectra cannot decompose`);
+            compLines.push(`Note: "organic" means Spectra sees no incentive breakdown — the underlying protocol may itself run incentive programs that Spectra cannot decompose. A 100% organic reading here does NOT guarantee the yield is sustainable.`);
             checks.push({ name: "APR Composition", signal: "ok", lines: compLines });
           }
         } else {
@@ -262,6 +272,10 @@ Use spectra_compare_yield for fixed-vs-variable rate analysis on the same PT.`,
                 lines: [
                   `PT:IBT ratio ${ratioStr} — severely imbalanced pool reserves — one side nearly depleted`,
                   `Reserves: ${ibtReserve.toLocaleString("en-US", { maximumFractionDigits: 2 })} IBT / ${ptReserve.toLocaleString("en-US", { maximumFractionDigits: 2 })} PT`,
+                  `Competing readings:`,
+                  `  (A) ${ratio > 1 ? "High PT / low IBT" : "High IBT / low PT"} — ${ratio > 1 ? "heavy PT buying exhausted IBT reserves (strong demand signal)" : "IBT accumulating as LPs withdraw or PT sellers exit (weak demand signal)"}`,
+                  `  (B) Pool may be approaching maturity convergence — PT/IBT ratio shifts naturally as expiry nears`,
+                  `  (C) Single large transaction skewed reserves — check spectra_get_pool_activity for recent whale activity`,
                 ],
               });
             } else if (ratio > 4 || ratio < 0.25) {
@@ -271,6 +285,7 @@ Use spectra_compare_yield for fixed-vs-variable rate analysis on the same PT.`,
                 lines: [
                   `PT:IBT ratio ${ratioStr} — pool imbalanced`,
                   `Reserves: ${ibtReserve.toLocaleString("en-US", { maximumFractionDigits: 2 })} IBT / ${ptReserve.toLocaleString("en-US", { maximumFractionDigits: 2 })} PT`,
+                  `This imbalance is ambiguous — ${ratio > 1 ? "PT-heavy could mean strong buyer demand (bullish for fixed-rate) OR LP withdrawal leaving PT behind (bearish for liquidity)" : "IBT-heavy could mean LPs depositing fresh capital (healthy) OR PT sellers dumping into the pool (bearish for fixed-rate)"}`,
                 ],
               });
             } else {
@@ -366,9 +381,22 @@ Use spectra_compare_yield for fixed-vs-variable rate analysis on the same PT.`,
           }
         }
 
+        // Observation boundary
+        lines.push("");
+        lines.push("── Observation Boundary ──");
+        lines.push("This health check is a single-point snapshot. It cannot detect:");
+        lines.push("  - Rate trajectory (accruing vs frozen) — only a single reading, not a time series");
+        lines.push("  - Underlying protocol health beyond conversion rate (governance, counterparty risk, audit status)");
+        lines.push("  - Whether pool imbalance is transient (single trade) or structural (sustained flow)");
+        if (!hasWarning && !hasCaution) {
+          lines.push("A HEALTHY verdict means no anomalies were detected in this snapshot.");
+          lines.push("It does NOT mean the IBT is safe to deploy unlimited capital into.");
+        }
+
         lines.push("");
         lines.push("Use spectra_compare_yield for fixed-vs-variable rate analysis.");
         lines.push("Use spectra_get_pool_capacity for capital-aware depth assessment.");
+        lines.push("Use spectra_get_pool_activity to check if pool imbalance is from a single trade or sustained pattern.");
 
         const text = lines.join("\n");
         return { content: [{ type: "text" as const, text }] };

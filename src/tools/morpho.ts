@@ -112,14 +112,21 @@ Use spectra_scan_opportunities for automated cross-chain looping discovery.`,
           const lines = [
             `No Morpho PT markets found on ${scope}${pt_symbol_filter ? ` matching "${pt_symbol_filter}"` : ""}.`,
             ``,
-            `--- What This Means ---`,
-            `No Morpho lending markets currently accept${pt_symbol_filter ? ` "${pt_symbol_filter}"` : ""} Spectra PTs as collateral on ${scope}.`,
-            ...(chain ? [`• Morpho PT markets are available on: mainnet, base, arbitrum, katana`] : []),
+            `--- Tensions ---`,
+            `⚡ No market exists — but ${total} PT markets exist on other chains/assets. Morpho market`,
+            `  creation is permissionless (createMarket() on Morpho.sol, ~$50 gas). Curators typically`,
+            `  create and seed these markets as a strategic act — they control risk parameters (LLTV,`,
+            `  oracle, caps) and earn supply-side yield on capital they provide.`,
+            `⚡ This absence could mean: (A) nobody has seen sufficient demand to justify creation,`,
+            `  (B) the underlying PT is too new or illiquid for comfortable collateralization, or`,
+            `  (C) no curator has identified the opportunity yet. Each interpretation implies a`,
+            `  different action — (A) suggests wait-and-see, (B) suggests the market shouldn't exist`,
+            `  yet, (C) suggests first-mover opportunity.`,
+            ``,
+            ...(chain ? [`• Morpho PT markets exist on: mainnet, base, arbitrum, katana`] : []),
             ...(chain ? [`• Try all chains: morpho_list_markets() without chain filter`] : []),
             ...(pt_symbol_filter ? [`• Try without filter: morpho_list_markets(${chain ? `chain="${chain}"` : ""}) to see all available PT markets`] : []),
-            `• Leveraged strategies require a Morpho market — without one, consider:`,
-            `    Unleveraged fixed yield: spectra_get_best_fixed_yields() or spectra_scan_opportunities()`,
-            `    YT arbitrage: spectra_scan_yt_arbitrage(capital_usd=YOUR_AMOUNT) for spread-based opportunities`,
+            `• Without leverage: spectra_get_best_fixed_yields() or spectra_scan_opportunities()`,
           ];
           const text = lines.join("\n");
           return { content: [{ type: "text" as const, text }] };
@@ -516,11 +523,10 @@ Use spectra_get_looping_strategy to model leveraged yield after identifying supp
           const lines = [
             `No Morpho vaults found on ${chain}${asset_filter ? ` matching "${asset_filter}"` : ""}.`,
             ``,
-            `--- What This Means ---`,
-            `No curated lending vaults are currently deployed on ${chain}${asset_filter ? ` for "${asset_filter}"` : ""}.`,
+            `⚡ No curated vaults on this chain${asset_filter ? ` for this asset` : ""} — supply-side liquidity`,
+            `  may come from EOAs directly, or vault creation hasn't happened yet (permissionless).`,
             ...(asset_filter ? [`• Try without filter: morpho_list_vaults(chain="${chain}") to see all vaults`] : []),
-            `• Supply-side liquidity may come from EOAs rather than vaults`,
-            `• Check specific markets: morpho_get_market_suppliers(chain="${chain}", market_key=KEY)`,
+            `• Check who actually supplies: morpho_get_market_suppliers(chain="${chain}", market_key=KEY)`,
           ];
           const text = lines.join("\n");
           return { content: [{ type: "text" as const, text }] };
@@ -727,7 +733,11 @@ Use spectra_get_portfolio for Spectra protocol positions (PT, YT, LP).`,
             ``,
             `--- What This Means ---`,
             `This address has no supply, borrow, collateral, or vault positions on Morpho.`,
+            `This does not mean the address is inactive — they may hold Spectra/Pendle positions`,
+            `without using Morpho for leverage, or use a different wallet for lending.`,
+            ``,
             `• Check Spectra positions: spectra_get_portfolio(address="${address}")`,
+            `• Check Pendle positions: pendle_get_portfolio(address="${address}")`,
             `• Morpho chains scanned: ${chainsToScan.map((c) => c.network).join(", ")}`,
           ].join("\n");
           return { content: [{ type: "text" as const, text }] };

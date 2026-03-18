@@ -131,13 +131,17 @@ Use morpho_list_markets to find available Morpho markets.`,
           lines.push(`  Morpho LTV: ${formatPct(effectiveLtv * 100)}${morpho_ltv !== undefined ? " (user provided)" : " (default estimate)"}`);
           lines.push(`  Borrow Rate: ${formatPct(effectiveBorrowRate)}${borrow_rate !== undefined ? " (user provided)" : " (default estimate)"}`);
           if (morpho_ltv === undefined || borrow_rate === undefined) {
-            lines.push(`  ** WARNING: No Morpho market found. Numbers below use placeholder assumptions.`);
-            lines.push(`     Looping is likely NOT possible for this PT on ${chain}. **`);
+            lines.push(`  ** WARNING: No Morpho market found. Numbers below use placeholder assumptions. **`);
             lines.push(``);
-            lines.push(`  Alternatives:`);
-            lines.push(`    • Unleveraged PT: pendle_get_market_details(chain="${chain}", market_address="${market_address}")`);
-            lines.push(`    • Find loopable markets: pendle_scan_opportunities(capital_usd=YOUR_AMOUNT, include_looping=true)`);
-            lines.push(`    • Check Morpho: morpho_list_markets(pt_symbol_filter="PT") for available Pendle PT collateral`);
+            lines.push(`  ⚡ TENSION: Looping is not currently possible — but Morpho market creation is`);
+            lines.push(`    permissionless (~$50 gas). This could mean:`);
+            lines.push(`    (A) No curator has identified the opportunity → first-mover advantage`);
+            lines.push(`    (B) The PT is too new/illiquid for comfortable collateralization → wait`);
+            lines.push(`    (C) Demand exists but supply-side hasn't formed → curators seed these markets`);
+            lines.push(``);
+            lines.push(`  Without leverage:`);
+            lines.push(`    • pendle_get_market_details(chain="${chain}", market_address="${market_address}") — evaluate unleveraged`);
+            lines.push(`    • pendle_scan_opportunities(capital_usd=YOUR_AMOUNT) — find markets with existing Morpho loops`);
           }
         }
 
