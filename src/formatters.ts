@@ -2447,6 +2447,39 @@ export function formatScanOpportunity(opp: ScanOpportunity, rank: number, boostI
     lines.push(`    Tags: ${opp.pt.tags.join(", ")}`);
   }
 
+  // Pool context — data the scanner already computed, surfaced so agents
+  // don't need to re-fetch via spectra_get_pt_details or spectra_get_pool_activity
+  lines.push(`    Pool: ${opp.poolAddress}`);
+  if (opp.pool.ibtAmount && opp.pool.ptAmount) {
+    const ibtDec = opp.pt.ibt?.decimals ?? 18;
+    const ptDec = opp.pt.decimals ?? 18;
+    const ibtAmt = Number(opp.pool.ibtAmount) / 10 ** ibtDec;
+    const ptAmt = Number(opp.pool.ptAmount) / 10 ** ptDec;
+    if (ibtAmt > 0 && ptAmt > 0) {
+      const ratio = ptAmt / ibtAmt;
+      lines.push(`    Pool Reserves: ${ibtAmt.toFixed(2)} IBT / ${ptAmt.toFixed(2)} PT (ratio ${ratio.toFixed(2)}:1)`);
+      if (ratio > 5) {
+        lines.push(`    ** Heavy PT side (${ratio.toFixed(1)}:1) — could mean high PT supply from minting, or LP withdrawal on IBT side **`);
+      } else if (ratio < 0.2) {
+        lines.push(`    ** Heavy IBT side (1:${(1/ratio).toFixed(1)}) — could mean strong PT demand (rate compression), or fresh pool with few mints **`);
+      }
+    }
+  }
+
+  // Full loop curve — agents need the shape, not just the peak
+  if (opp.looping && opp.looping.lltv > 0) {
+    const loopLines: string[] = [];
+    for (let i = 1; i <= 5; i++) {
+      const lev = cumulativeLeverageAtLoop(i, opp.looping.lltv);
+      const borrowed = lev - 1;
+      const grossApy = lev * opp.impliedApy;
+      const borrowCost = borrowed * opp.looping.borrowRatePct;
+      const netApy = grossApy - borrowCost;
+      loopLines.push(`${i}L: ${lev.toFixed(2)}x lev, ${formatPct(netApy)} net`);
+    }
+    lines.push(`    Loop Curve: ${loopLines.join(" | ")}`);
+  }
+
   // Addresses
   lines.push(`    PT Address: ${opp.ptAddress}`);
   if (opp.ibtAddress) {
@@ -3976,6 +4009,20 @@ export function formatCuratorOpportunity(opp: CuratorOpportunity, rank: number):
   if (opp.matchedWith) {
     const mProto = opp.matchedWith.protocol === "spectra" ? "Spectra" : "Pendle";
     lines.push(`    ↔ Matched with [${mProto}] ${opp.matchedWith.name}: Impl ${formatPct(opp.matchedWith.impliedApy)} | LP ${formatPct(opp.matchedWith.lpApy)} | ${opp.matchedWith.matchQuality} match (${opp.matchedWith.maturityGapDays}d gap)`);
+  }
+
+  // Full loop curve — agents need the shape to reason about leverage risk
+  if (opp.looping && opp.looping.lltv && opp.looping.lltv > 0) {
+    const loopLines: string[] = [];
+    for (let i = 1; i <= 5; i++) {
+      const lev = cumulativeLeverageAtLoop(i, opp.looping.lltv);
+      const borrowed = lev - 1;
+      const grossApy = lev * opp.impliedApy;
+      const borrowCost = borrowed * opp.looping.borrowRatePct;
+      const netApy = grossApy - borrowCost;
+      loopLines.push(`${i}L: ${lev.toFixed(2)}x, ${formatPct(netApy)} net`);
+    }
+    lines.push(`    Loop Curve: ${loopLines.join(" | ")}`);
   }
 
   // Addresses
