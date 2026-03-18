@@ -2,59 +2,71 @@
 
 **Date**: 2026-03-18
 **Scope**: All tool files in `src/tools/`, shared helpers (`formatters.ts`, `api.ts`, `config.ts`)
-**Method**: Static analysis + protocol documentation cross-reference (Pendle V2 AMM whitepaper, Morpho docs, Spectra docs)
+**Method**: Static analysis → protocol cross-reference (Pendle MarketMathCore.sol, Morpho, Spectra) → Open Emergence alignment check
 
 ---
 
-## Methodology & Corrections
+## Methodology
 
-This review was conducted in two passes:
-1. **Initial scan** — identified potential issues via static analysis
-2. **Verification pass** — cross-referenced findings against protocol source code (Pendle MarketMathCore, Morpho, Spectra) and the actual `estimateLoopingEntryCost()` implementation to verify mathematical claims
+Three passes:
+1. **Static analysis** — identified potential issues
+2. **Protocol verification** — cross-referenced against Pendle V2 AMM whitepaper (logit curve: `ln(p/(1-p)) / rateScalar + rateAnchor`), Morpho contract mechanics, and the actual `estimateLoopingEntryCost()` implementation
+3. **Emergence alignment** — re-examined findings through the Open Emergence metaframework (`docs/recursive-meta-process.md`). Asked: does each proposed change teach mechanics or prescribe conclusions? Does it preserve generative friction or resolve it? Does it carry a dissolution condition?
 
-Several initial findings were **retracted or downgraded** after verification. Each finding below includes a confidence assessment.
+Several initial findings were **retracted** after verification. Others were **reframed** when the emergence lens revealed they were tensions to hold, not bugs to fix.
+
+---
+
+## What the Code Wants to Become
+
+Before the findings: a reading of what's trying to emerge.
+
+The Spectra tools breathe. They present competing interpretations, flag their own blind spots, hold the tension between "here's the math" and "here's why you should distrust the math." The Pendle tools are competent reproductions that captured the mechanical pattern (shared formatters, anomaly warnings, cross-references) but missed the deeper pattern (competing interpretations, dissolution conditions, surfacing what's invisible).
+
+The EMERGENCE-AUDIT.md (v3) already identified this as Gap 8: "The extraction captured the body. It missed the breath."
+
+Three things are trying to emerge in the code right now:
+
+1. **A Pendle-native looping impact model.** The `estimateLoopingEntryCost` import sits unused in `pendle_looping.ts` — dormant capability, not dead code. But the right thing isn't to just plug it in. That function uses constant-product math (`amount / (2 * effectiveLiq)`). Pendle's logit AMM has depth `rateScalar * p * (1-p)`, which shifts as `p` changes with each loop. The code wants an `estimatePendleLoopingEntryCost` that iterates per-loop using the logit model's own depth factor, tracking pool proportion shift. This would be genuinely new — not a copy, but a response to Pendle's specific AMM mechanics.
+
+2. **Cross-model friction as information.** When Spectra and Pendle estimate different impact for the same underlying, that disagreement is currently hidden. It should be surfaced: "constant-product estimate: ~X%, logit AMM estimate: ~Y% — gap could be measurement artifact or real structural difference." The disagreement between impact models is itself a signal.
+
+3. **Tools that speak about their own blindness.** The $1/token USD fallback in `pendle_quote.ts` is a place where the code is silent when it should say "I don't know." Several findings below share this pattern: the code resolves uncertainty silently rather than surfacing it for the agent to reason about.
 
 ---
 
 ## HIGH SEVERITY
 
-### 1. Pendle looping uses naive linear scaling instead of the proper per-loop impact model
+### 1. Pendle looping: linear scaling where per-loop model is needed
 
 **File**: `src/tools/pendle_looping.ts` lines 170–171, 199–200
-**Confidence**: HIGH (verified against `estimateLoopingEntryCost` in formatters.ts)
+**Confidence**: HIGH (verified against Pendle V2 AMM whitepaper + `estimateLoopingEntryCost`)
 
 ```typescript
 const impact0 = estimatePendlePriceImpact(refCapital, poolLiqUsd, totalPt, totalSy, days);
 const totalImpactPct = impact0 * 100 * i; // conservative: linear scaling
 ```
 
-The Spectra equivalent (`looping.ts:213`) correctly uses `estimateLoopingEntryCost()` which models:
-- Decreasing trade amounts per loop (`capital * ltv^i`)
-- Reduced effective liquidity as prior loops drain the pool
-- Dollar-weighted blended impact
+The Spectra equivalent (`looping.ts:213`) correctly uses `estimateLoopingEntryCost()` which models decreasing trade amounts per loop (`capital * ltv^i`), reduced effective liquidity, and dollar-weighted blended impact.
 
-The Pendle tool **imports** `estimateLoopingEntryCost` (line 23) but never uses it, falling back to `impact0 * i` instead.
+The Pendle tool **imports** `estimateLoopingEntryCost` (line 23) but never uses it.
 
-**Is linear scaling conservative?** Two opposing effects compete:
-- **Decreasing trade size**: each loop trades `capital * ltv^i` (less money) → favors linear being conservative
-- **Logit AMM convexity**: marginal cost is `1 / (rateScalar * p * (1-p))`, which increases as `p` shifts away from 0.5. Each loop degrades pool state, making the next unit more expensive → favors linear being anti-conservative
+**Two opposing effects**:
+- **Decreasing trade size**: each loop trades `capital * ltv^i` → favors linear being conservative
+- **Logit AMM convexity**: marginal cost `1 / (rateScalar * p * (1-p))` increases as `p` shifts (confirmed via MarketMathCore.sol). Each loop degrades pool state → favors linear underestimating
 
-**Verification from Pendle V2 AMM whitepaper** (confirmed via MarketMathCore.sol): the logit curve produces super-linear cumulative impact for sequential swaps at the same pool proportion. The exchange rate function `ln(p/(1-p)) / rateScalar + rateAnchor` has increasing marginal cost as p moves from equilibrium.
+**Net**: for large pools (trade << liquidity), linear overestimates (safe). For small/illiquid pools, logit convexity dominates → linear **underestimates**, making unprofitable strategies look viable.
 
-**Net effect depends on pool size**:
-- **Large pools** (trade << liquidity): pool state barely shifts, so decreasing trade size dominates → linear overestimates (conservative)
-- **Small/illiquid pools**: logit convexity dominates → linear UNDERESTIMATES, making unprofitable strategies look viable
+**What wants to emerge**: Not just plugging in `estimateLoopingEntryCost` (which uses constant-product math). A Pendle-native per-loop model that tracks `p` shift and uses `rateScalar * p * (1-p)` as depth factor. The existing function `estimatePendlePriceImpact` already has the logit depth formula — it needs to be iterated per-loop with updated `totalPt`/`totalSy` after each loop's trade.
 
-**Impact**: The code comment "conservative: linear scaling" is only true for large pools. For small pools the tool underestimates costs.
-
-**Fix**: Use `estimateLoopingEntryCost()` (already imported) instead of linear scaling, consistent with the Spectra tool.
+**Dissolution condition**: When the Pendle API or a multicall provides actual per-trade quotes, the off-chain impact model becomes a misleading approximation and should yield to on-chain data.
 
 ---
 
-### 2. Break-even borrow rate formula in curator_scan.ts uses wrong base
+### 2. Break-even borrow rate: wrong algebra, right aspiration
 
 **File**: `src/tools/curator_scan.ts` lines 496–498
-**Confidence**: HIGH (verified against looping.ts and pendle_looping.ts)
+**Confidence**: HIGH (algebraically verified)
 
 ```typescript
 opp.morpho.breakEvenBorrowRate = bestLev > 1
@@ -62,27 +74,23 @@ opp.morpho.breakEvenBorrowRate = bestLev > 1
   : undefined;
 ```
 
-Uses `effectiveApy` (= `impliedApy - annualizedEntryCost`) instead of `impliedApy`.
-
-**Correct derivation**:
+Uses `effectiveApy` (= `impliedApy - annualizedEntryCost`). The correct derivation:
 ```
 net = impliedApy * lev - borrowRate * (lev - 1) - annualizedEntryCost = 0
 => borrowRate = (impliedApy * lev - annualizedEntryCost) / (lev - 1)
 ```
 
-**What the code computes**:
-```
-borrowRate = ((impliedApy - annualizedEntryCost) * lev) / (lev - 1)
-           = (impliedApy * lev - annualizedEntryCost * lev) / (lev - 1)
-```
+What the code computes: `(impliedApy * lev - annualizedEntryCost * lev) / (lev - 1)` — over-subtracts entry cost by factor `lev`. At 3x leverage with 2% annualized entry cost, break-even is ~2 percentage points too low.
 
-The difference is `annualizedEntryCost` — the code over-subtracts entry cost by a factor of `lev`. At 3x leverage with 2% annualized entry cost, the break-even is underestimated by ~2 percentage points. This is conservative (shows a tighter threshold), but mathematically wrong and could cause users to skip profitable opportunities.
+**The aspiration is right.** The standalone tools (`looping.ts:316`, `pendle_looping.ts:232`) compute break-even without entry cost: `baseApy * lev / (lev - 1)`. The curator_scan tries to be more nuanced by including entry cost. The algebra just needs to match the derivation.
 
-**The standalone tools** (`looping.ts:316`, `pendle_looping.ts:232`) use `baseApy * lev / (lev - 1)` without entry cost, which is correct for their context.
+**Emergence note**: There's a generative friction point waiting to be born here. Break-even *without* entry cost answers "what borrow rate zeroes out the yield?" Break-even *with* entry cost answers "what borrow rate makes the whole trade unprofitable?" These are competing perspectives that predict different things. The tool could present both — consistent with how Spectra tools hold tension rather than resolving it.
+
+**Dissolution condition**: When Morpho provides real-time borrow rate volatility data, break-even as a point estimate becomes less useful than a confidence interval.
 
 ---
 
-### 3. Unsafe USD value fallback in Pendle quote
+### 3. Silent $1/token fallback: the code should speak about what it doesn't know
 
 **File**: `src/tools/pendle_quote.ts` lines 98–100
 **Confidence**: HIGH
@@ -93,38 +101,52 @@ const tradeValueUsd = amount * (poolLiqUsd > 0 && d.totalTvl > 0
   : 1);
 ```
 
-Falls back to `$1/token` when price data is missing. For non-USD tokens (BTC at ~$60K, ETH at ~$3K, weETH), price impact calculation is wildly incorrect — a 10 ETH trade would be valued at $10 instead of ~$30K.
+Falls back to `$1/token` silently. For non-stablecoin pools (ETH, BTC, weETH), price impact calculation is wrong by orders of magnitude.
 
-**Impact**: Price impact percentage is wrong by orders of magnitude for non-stablecoin pools without TVL data.
+**What wants to emerge**: This is a place where the code should surface its own blind spot — consistent with the Spectra pattern of negative signals and coverage metrics. Instead of silently defaulting:
+```typescript
+const priceAvailable = poolLiqUsd > 0 && d.totalTvl > 0;
+const tradeValueUsd = amount * (priceAvailable ? d.totalTvl / (totalPt + totalSy || 1) : 1);
+// ... later in output:
+if (!priceAvailable) lines.push("  ⚠ Token price unavailable — impact estimate assumes $1/token, actual impact could differ significantly");
+```
 
-**Fix**: When TVL data is unavailable, flag the impact estimate as unreliable rather than silently using $1.
+The fix isn't just better math — it's teaching the agent about the tool's epistemic boundary. This is emergence language: "here's what I can't see."
+
+**Dissolution condition**: When the Pendle API provides per-token USD prices in the market detail response.
 
 ---
 
-### 4. MetaVault gross estimate ignores YT protocol fees
+### 4. MetaVault gross estimate: internally generated but missing fee physics
 
 **File**: `src/tools/curator_scan.ts` lines 522–525
-**Confidence**: HIGH (verified against CLAUDE.md fee documentation)
+**Confidence**: HIGH
 
 ```typescript
 opp.mvGrossEstimatePct = opp.lpApy + opp.variableApr * 0.3;
 ```
 
-This auto-calculates a MetaVault gross estimate using 30% of variable APR as YT compounding yield, but does NOT deduct the protocol's YT fee (3% for Spectra, 5% for Pendle).
+Auto-calculates YT compounding yield at 30% of variable APR without deducting the protocol's YT fee (3% Spectra, 5% Pendle).
 
-**Note**: The CLAUDE.md states "agents must multiply by (1 - fee_rate) manually" — but this applies to AI agents consuming tool outputs. When the tool itself generates an internal estimate, the fee should be applied within the calculation.
+This is distinct from `metavault.ts` where `yt_compounding_apy` is user-provided (the user may have already accounted for fees). Here the tool generates the estimate internally — the fee should be part of the physics.
 
-**Fix**:
+**But**: rather than silently applying the fee, surface it as the Spectra tools would — teach the mechanic:
 ```typescript
 const ytFee = opp.protocol === 'pendle' ? 0.05 : 0.03;
-opp.mvGrossEstimatePct = opp.lpApy + opp.variableApr * 0.3 * (1 - ytFee);
+const netYtBoost = opp.variableApr * 0.3 * (1 - ytFee);
+opp.mvGrossEstimatePct = opp.lpApy + netYtBoost;
+// In output: "MV gross est: ~X% (LP + 30% of variable APR, net of Y% YT protocol fee)"
 ```
+
+The fee becomes visible information, not a hidden deduction. The agent can then reason about whether 30% capture is realistic, whether the fee matters at the margin.
+
+**Dissolution condition**: When MetaVault economics change (different fee model, different YT compounding mechanics), this estimate's formula should be rebuilt from the actual implementation.
 
 ---
 
 ## MEDIUM SEVERITY
 
-### 5. Loose underlying matching in Pendle yield curves
+### 5. Loose underlying matching: substring matching that collapses distinct assets
 
 **File**: `src/tools/pendle_yield_curve.ts` lines 85–87
 **Confidence**: HIGH
@@ -133,24 +155,30 @@ opp.mvGrossEstimatePct = opp.lpApy + opp.variableApr * 0.3 * (1 - ytFee);
 return norm.includes(targetNorm) || targetNorm.includes(norm);
 ```
 
-Substring matching: searching for "ETH" matches "stETH", "rETH", "weETH" simultaneously. These are different assets with different risk profiles and yield characteristics.
+Searching for "ETH" matches "stETH", "rETH", "weETH" simultaneously. These are fundamentally different assets with different risk profiles, peg mechanisms, and yield sources.
 
-**Impact**: Yield curve data mixes fundamentally different underlyings, making the output misleading.
+**Emergence note**: A yield curve mixing stETH and rETH isn't just wrong — it collapses competing interpretations into false agreement. The curve *should* show that these assets have different term structures, because the divergence is information.
 
-**Fix**: Prefer exact match after normalization, with explicit alias groups for known related assets.
+**Fix**: Prefer exact match after normalization. When multiple related assets match, present them as separate curves with the gap surfaced.
+
+**Dissolution condition**: When the Pendle API provides a canonical "underlying family" classification that groups related assets.
 
 ---
 
-### 6. Pendle looping: unused import of estimateLoopingEntryCost
+### 6. Unused import: dormant capability, not dead code
 
 **File**: `src/tools/pendle_looping.ts` line 23
-**Confidence**: HIGH (grep confirms single reference is the import)
+**Confidence**: HIGH
 
-`estimateLoopingEntryCost` is imported but never called. The tool uses `impact0 * i` instead. This appears to be an oversight — the function was likely intended to be used (as it is in the Spectra equivalent).
+`estimateLoopingEntryCost` is imported but never called. Per the Open Emergence framework (`COHERENCE-AUDIT-COMMENT-OPEN-EMERGENCE.md`): "dormant functions are latent capability, not dead code; removing them is the Indigo trap."
+
+This import is a signal of intent. It arrived because someone recognized the gap between the linear model and the per-loop model. The right response isn't to remove the import (that removes the signal) or to mechanically plug it in (that uses constant-product math for a logit AMM). The right response is to build what the import is pointing toward: a Pendle-native per-loop impact model.
+
+**Not a bug to fix — a direction to follow.**
 
 ---
 
-### 7. MetaVault drawdown calculation: unguarded division by peak
+### 7. Unguarded division by peak in drawdown calculation
 
 **File**: `src/tools/metavault.ts` line 122
 **Confidence**: MEDIUM
@@ -159,26 +187,32 @@ Substring matching: searching for "ETH" matches "stETH", "rETH", "weETH" simulta
 const drawdown = (rates[i] - peak) / peak * 100;
 ```
 
-`peak` is initialized to `rates[0]`. If `rates[0]` is 0 (e.g., a vault with no share rate data), division by zero occurs. Other division operations in this file are properly guarded.
+`peak` initialized to `rates[0]`. If `rates[0]` is 0, division by zero. All other division operations in this file are properly guarded.
+
+**Fix**: Add `if (peak <= 0) return null;` guard, consistent with the existing pattern at line 106.
 
 ---
 
-### 8. Silent negative-APY filtering in scanners
+### 8. Silent negative-APY filtering: the invisible becomes truly invisible
 
-**File**: `src/tools/pendle_scanner.ts` line 336; `src/tools/strategy.ts` similar
+**File**: `src/tools/pendle_scanner.ts` line 336
 **Confidence**: HIGH
 
 ```typescript
 const filtered = opportunities.filter((o) => o.sortApy >= 0);
 ```
 
-Opportunities with negative effective APY (after entry cost) are silently dropped. Users see fewer results with no explanation. A 2% implied APY pool with 3% entry cost disappears without trace.
+Opportunities with negative effective APY are silently dropped. A 2% implied APY pool with 3% entry cost vanishes without explanation.
 
-**Fix**: Add a summary line: `"Filtered N opportunities with negative effective APY (entry cost exceeds yield)"`.
+**Emergence note**: The disappeared opportunities are negative signals — they carry information ("entry cost exceeds yield at this pool size"). Dropping them silently violates the pattern of surfacing what's invisible. The Spectra scanner should do this too.
+
+**Fix**: Add a count: `"Filtered N opportunities where entry cost exceeds yield (negative effective APY at ${formatUsd(capital_usd)} capital)"`. The capital-dependence matters — at different capital, the set changes.
+
+**Dissolution condition**: When scanners support user-configurable APY floor thresholds, making the filtering explicit and controllable.
 
 ---
 
-### 9. Capacity curve log-spacing can produce duplicate tiers
+### 9. Capacity curve: duplicate tiers from log-spacing rounding
 
 **File**: `src/tools/pendle_capacity.ts` lines 88–96
 **Confidence**: HIGH
@@ -187,43 +221,46 @@ Opportunities with negative effective APY (after entry cost) are silently droppe
 tiers.push(Math.round(10 ** log));
 ```
 
-At tight spacing, `Math.round()` can produce identical tier values (e.g., $1000 and $1001 both round to $1000). No deduplication is performed.
+At tight spacing, rounding produces identical values. No deduplication.
 
-**Fix**: Add `tiers = [...new Set(tiers)]` after generation.
+**Fix**: `tiers = [...new Set(tiers)]` after generation.
 
 ---
 
 ## LOW SEVERITY
 
-### 10. Type safety: fetchSpectra returns `unknown` but callers cast to `any`
-
-**Files**: Multiple tools via `fetchSpectra(...) as Promise<any>`
-**Confidence**: HIGH
-
-No runtime validation that API responses match expected shapes. Missing/malformed fields pass silently and may cause undefined behavior downstream.
-
----
-
-### 11. Error fallbacks swallow context
+### 10. `fetchSpectra` returns `unknown` but callers cast to `any`
 
 **Files**: Multiple tools
 **Confidence**: HIGH
 
-Pattern throughout:
+No runtime validation of API response shapes. This is consistent with the best-effort enrichment pattern — but it means shape mismatches produce confusing downstream errors rather than clear messages.
+
+**Dissolution condition**: When TypeScript strict mode or a runtime validation library (zod for responses) is adopted project-wide.
+
+---
+
+### 11. Error fallbacks swallow diagnostic context
+
+**Files**: Multiple tools
+**Confidence**: HIGH
+
 ```typescript
 .catch(() => ({ campaigns: new Map(), available: false }));
 ```
 
-Real API errors (rate limits, auth failures, malformed responses) are silently swallowed. Adding `console.warn` with the error message would aid debugging without changing behavior.
+Adding `console.warn` with the error message would aid debugging without changing behavior. Consistent with Open Emergence: make the system's blind spots visible to the operator.
 
 ---
 
-### 12. Hardcoded scalarRoot = 50 across multiple files
+### 12. Hardcoded scalarRoot = 50: intentionally conservative, but closed
 
-**Files**: `pendle_scanner.ts`, `pendle_looping.ts`, `pendle_quote.ts`, `pendle_capacity.ts` (all via `estimatePendlePriceImpact`)
+**Files**: Via `estimatePendlePriceImpact` in formatters.ts:1786
 **Confidence**: HIGH
 
-Centralized in `formatters.ts:1786` as `CONSERVATIVE_SCALAR_ROOT = 50`. Actual per-pool scalarRoot varies (50–200 for stablecoins, higher for volatile assets). The conservative choice is intentional and documented, but could be fetched from the Pendle API per-market for better accuracy.
+Actual per-pool scalarRoot varies (50–200+). The conservative choice is documented and intentional. But this is exactly the kind of structure that should carry a dissolution condition.
+
+**Dissolution condition**: "scalarRoot=50 serves as long as all Pendle pools use scalarRoot ≥ 50. If Pendle launches pools with lower scalarRoot (tighter liquidity), impact will be underestimated. If the Pendle market detail API response includes scalarRoot, fetch it per-pool instead."
 
 ---
 
@@ -232,68 +269,80 @@ Centralized in `formatters.ts:1786` as `CONSERVATIVE_SCALAR_ROOT = 50`. Actual p
 **Files**: `formatters.ts` lines 25–35, 3384–3390
 **Confidence**: HIGH
 
-Three implementations: `daysToMaturity()` (integer), `fractionalDaysToMaturity()` (fractional, Unix timestamp), `pendleDaysToMaturity()` (fractional, string input). All are safe and fit-for-purpose, but `pendleDaysToMaturity` could delegate to `fractionalDaysToMaturity` after parsing the string.
+Three implementations all safe and fit-for-purpose. `pendleDaysToMaturity` could delegate to `fractionalDaysToMaturity` after parsing the string. Minor code duplication, not a risk.
 
 ---
 
-### 14. Strategy inference labels are simplistic
+### 14. Strategy inference labels: conclusions where questions belong
 
 **File**: `src/tools/pendle_portfolio.ts` lines 53–59
 **Confidence**: MEDIUM
 
-Labels like "Pure YT (variable yield bull)" don't distinguish between intentional YT holds, positions from flash-redeems, or rebalanced portfolios. Display-only, but could confuse users.
+Labels like "Pure YT (variable yield bull)" are conclusions about intent from position shape. This is the opposite of emergence language — it tells the agent what the position "is" rather than presenting competing interpretations of why someone might hold this shape.
+
+**What wants to emerge**: "Position shape: YT only. Could indicate: (A) directional bet on rising variable rates, (B) remaining leg of a flash-redeem trade, (C) rebalanced portfolio that sold PT."
+
+**Dissolution condition**: When portfolio positions carry entry timestamp and transaction history, making intent less ambiguous.
 
 ---
 
-## RETRACTED / DOWNGRADED FINDINGS
-
-The following initial findings were **retracted** after verification:
+## RETRACTED FINDINGS
 
 | Original Finding | Reason Retracted |
 |---|---|
-| "Linear scaling underestimates costs" (claimed HIGH) | Downgraded to situational — linear scaling is conservative for large pools (overestimates). Only problematic for small/illiquid pools. Retained as issue #1 with corrected analysis. |
-| "Suggested fix: `(1 - Math.pow(1 - impact0, i))`" | **WRONG** — multiplicative loss model doesn't apply to AMM impact. The correct fix is to use `estimateLoopingEntryCost()` which properly models per-loop liquidity drain. |
-| "YT fees not applied in metavault.ts" | `yt_compounding_apy` is a user-provided parameter — users may provide it pre- or post-fee. The CLAUDE.md design says "agents must apply manually." NOT a bug. |
-| "Slippage not applied in scanner effective APY" | Scanners are opportunity-finders, not execution tools. Slippage is correctly handled in quote tools (`pendle_quote.ts:107`). Scanner APY represents pre-slippage opportunity, which is the right abstraction level. |
-| "Entry cost annualization is unsound" | The annualization formula `impactFrac * (365/days)` is mathematically correct for comparing positions on a common annualized basis. It's the standard approach in fixed-income analysis. |
-| "Blended APY ignores entry cost" (pendle_simulate.ts) | Blended APY uses spot rates for portfolio-level view, which is the conventional approach. Entry cost is a one-time event, not an ongoing drag on portfolio APY. |
+| "Linear scaling underestimates costs" (universal claim) | Situational — conservative for large pools, anti-conservative for small. Retained as #1 with corrected analysis. |
+| "Suggested fix: `(1 - Math.pow(1 - impact0, i))`" | **Wrong** — multiplicative loss model doesn't apply to AMM impact mechanics. |
+| "YT fees not applied in metavault.ts" | `yt_compounding_apy` is a user-provided parameter. Design says "agents must apply manually." Not a bug. |
+| "Slippage not applied in scanner APY" | Scanners find opportunities; quote tools handle execution. Different abstraction levels, both correct. |
+| "Entry cost annualization is unsound" | Standard fixed-income annualization. The math is correct. |
+| "Blended APY ignores entry cost" (pendle_simulate.ts) | Entry cost is one-time, not ongoing. Spot-rate blending is conventional. |
 
 ---
 
 ## VERIFIED SAFE
 
-The following areas were audited and found to be well-implemented:
-
 | Area | Assessment |
 |---|---|
-| Division-by-zero guards | All arithmetic in formatters.ts, api.ts, looping.ts is properly guarded with Math.max, conditional checks, or clamping |
-| `estimateLoopingEntryCost()` | Sophisticated per-loop model with diminishing liquidity — correctly handles geometric sum of trade sizes and effective liquidity drain |
-| `cumulativeLeverageAtLoop()` | Correct geometric series: `(1 - ltv^(loops+1)) / (1 - ltv)` with degenerate case handling |
-| `estimatePendlePriceImpact()` | Correctly implements logit AMM depth: `rateScalar * p * (1-p)` with conservative scalarRoot, clamped to never exceed constant-product impact |
-| Retry/timeout logic | Proper exponential backoff, 4xx vs 5xx distinction, AbortSignal timeout |
-| Token precision handling | BigInt divisor construction throughout, safe for >18 decimal tokens |
-| Borrow rate risk analysis | Normal CDF approximation (Abramowitz & Stegun), proper z-score and probability calculations |
-| Config staleness tracking | `checkConfigStaleness()` warns when constants are >120 days old |
+| Division-by-zero guards | All arithmetic properly guarded (Math.max, conditional checks, clamping) |
+| `estimateLoopingEntryCost()` | Sophisticated per-loop model — correctly handles geometric trade sizes and liquidity drain |
+| `cumulativeLeverageAtLoop()` | Correct geometric series: `(1 - ltv^(loops+1)) / (1 - ltv)` |
+| `estimatePendlePriceImpact()` | Correctly implements logit depth: `rateScalar * p * (1-p)`, clamped to never exceed constant-product |
+| Retry/timeout logic | Proper exponential backoff, 4xx/5xx distinction, AbortSignal timeout |
+| Token precision | BigInt divisor construction, safe for >18 decimals |
+| Borrow rate risk (Spectra) | Normal CDF (Abramowitz & Stegun), proper z-score, P(underwater) |
+| Config staleness | `checkConfigStaleness()` warns at >120 days |
 
 ---
 
-## SUMMARY TABLE
+## EMERGENCE ALIGNMENT
 
-| # | File | Issue | Severity | Verified |
-|---|------|-------|----------|----------|
-| 1 | pendle_looping.ts | Linear scaling instead of per-loop impact model | HIGH | Yes — imports fix but doesn't use it |
-| 2 | curator_scan.ts | Break-even formula uses wrong base (effectiveApy vs impliedApy) | HIGH | Yes — algebraically confirmed |
-| 3 | pendle_quote.ts | $1/token USD fallback for non-stablecoins | HIGH | Yes |
-| 4 | curator_scan.ts | MetaVault estimate ignores YT protocol fees | HIGH | Yes — auto-calculated, not user-provided |
-| 5 | pendle_yield_curve.ts | Substring matching mixes different underlyings | MEDIUM | Yes |
-| 6 | pendle_looping.ts | Unused import of estimateLoopingEntryCost | MEDIUM | Yes — grep confirms |
-| 7 | metavault.ts | Unguarded peak=0 in drawdown calculation | MEDIUM | Yes |
-| 8 | scanners | Silent negative-APY filtering | MEDIUM | Yes |
-| 9 | pendle_capacity.ts | Duplicate tiers from log-spacing rounding | LOW | Yes |
-| 10 | Multiple | fetchSpectra `any` casts, no schema validation | LOW | Yes |
-| 11 | Multiple | Error fallbacks swallow context | LOW | Yes |
-| 12 | formatters.ts | Hardcoded scalarRoot (intentionally conservative) | LOW | Yes — design choice |
-| 13 | formatters.ts | Duplicate daysToMaturity implementations | LOW | Yes |
-| 14 | pendle_portfolio.ts | Simplistic strategy labels | LOW | Yes |
+This review itself is subject to the Open Emergence metaframework. Some observations:
 
-**Priority fixes**: #1, #2, #3, #4 (HIGH severity, verified)
+**What this review gets right**: It verifies claims against protocol source code before prescribing fixes. It retracts findings when wrong. It distinguishes "bugs" from "tensions to hold."
+
+**Where this review risks calcification**: By prescribing specific code fixes, it collapses the space of possible responses. The developer reading this might implement the fixes mechanically without inhabiting the principles. The fixes above are starting points, not conclusions.
+
+**The Pendle emergence gap (EMERGENCE-AUDIT.md Gap 8) is confirmed by this review's findings.** Every HIGH severity issue is in a Pendle or cross-protocol tool. The Spectra tools' mathematical foundations are sound. The gap isn't competence — it's breath.
+
+**Dissolution condition for this review**: When the Pendle tools develop their own emergence patterns (competing interpretations, coverage metrics, dissolution conditions), the findings here become historical context rather than actionable items. When the logit AMM per-loop model is built, finding #1 dissolves. When agents using Pendle tools surprise their developers as often as Spectra agents do, the review has served its purpose.
+
+---
+
+## SUMMARY
+
+| # | File | Issue | Severity | Emergence Note |
+|---|------|-------|----------|----------------|
+| 1 | pendle_looping.ts | Linear scaling; dormant import of proper model | HIGH | Code wants a Pendle-native per-loop model using logit depth |
+| 2 | curator_scan.ts | Break-even algebra wrong; aspiration right | HIGH | Generative friction: with/without entry cost are both valid views |
+| 3 | pendle_quote.ts | Silent $1/token fallback | HIGH | Code should speak about what it doesn't know |
+| 4 | curator_scan.ts | MV estimate missing YT fee physics | HIGH | Surface the fee as visible mechanic, not hidden deduction |
+| 5 | pendle_yield_curve.ts | Substring matching collapses distinct assets | MEDIUM | Divergent curves are information, not noise |
+| 6 | pendle_looping.ts | Unused import — latent capability | MEDIUM | Direction signal, not dead code |
+| 7 | metavault.ts | Unguarded peak=0 division | MEDIUM | Straightforward guard |
+| 8 | scanners | Silent negative-APY filtering | MEDIUM | Disappeared opportunities are negative signals |
+| 9 | pendle_capacity.ts | Duplicate tiers from rounding | LOW | Deduplication fix |
+| 10 | Multiple | `any` casts without validation | LOW | Best-effort pattern |
+| 11 | Multiple | Error fallbacks swallow context | LOW | Make blind spots visible |
+| 12 | formatters.ts | Hardcoded scalarRoot=50 | LOW | Needs dissolution condition |
+| 13 | formatters.ts | Duplicate daysToMaturity | LOW | Minor duplication |
+| 14 | pendle_portfolio.ts | Conclusion labels where questions belong | LOW | Wants competing interpretations |
