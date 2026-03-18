@@ -91,6 +91,7 @@ const SUPPORTED_CHAINS_INTERNAL = {
   flare:     { name: "Flare",     id: 14 },
   bsc:       { name: "BSC",       id: 56 },
   monad:     { name: "Monad",     id: 143 },
+  hemi:      { name: "Hemi",      id: 43111 },
   // user-facing alias -- NOT sent to the API directly
   ethereum:  { name: "Ethereum (alias for mainnet)", id: 1 },
 } as const satisfies Record<string, { name: string; id: number }>;
@@ -214,6 +215,7 @@ export const CHAIN_RPC_URLS: Partial<Record<string, string>> = {
   bsc:       "https://bsc-dataseed1.binance.org",
   flare:     "https://flare-api.flare.network/ext/C/rpc",
   katana:    "https://rpc.katana.network",
+  hemi:      "https://rpc.hemi.network/rpc",
   // monad: no well-known public RPC; will return "unknown"
 };
 
@@ -279,6 +281,7 @@ export const CHAIN_GAS_ESTIMATES: Record<string, number> = {
   flare:     0.01,
   bsc:       0.10,
   monad:     0.01,
+  hemi:      0.01,
 };
 
 // =============================================================================
@@ -299,6 +302,7 @@ export const CHAIN_BLOCK_TIMES: Record<string, number> = {
   flare:     3,
   bsc:       3,
   monad:     1,     // estimate — adjust when known
+  hemi:      2,     // estimate — L2 on Bitcoin
 };
 
 // Maximum block range per eth_getLogs request (public RPCs rate-limit large ranges)

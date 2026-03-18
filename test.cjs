@@ -262,7 +262,7 @@ async function testToolRegistration(client) {
       "chain enum includes mainnet + ethereum alias",
       `got: ${JSON.stringify(chainEnum)}`
     );
-    assert(chainEnum && chainEnum.length === 11, "chain enum has 11 entries (10 chains + alias)", `got ${chainEnum && chainEnum.length}`);
+    assert(chainEnum && chainEnum.length === 12, "chain enum has 12 entries (11 chains + alias)", `got ${chainEnum && chainEnum.length}`);
   }
 
   // Spot-check: address fields have pattern validation

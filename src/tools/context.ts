@@ -646,30 +646,6 @@ async function fetchProtocolPulse(): Promise<string> {
     lines.push(`  Active Markets:   [fetch failed]`);
   }
 
-  // ── Protocol TVL Summary ──
-  lines.push(``);
-  lines.push(`SPECTRA PROTOCOL TVL`);
-  lines.push(`  TVL = Liquidity (AMM) + PTs held outside pools + YTs held + MetaVault deposits`);
-  const poolLiq = poolsResult.ok
-    ? poolsResult.value.opportunities.reduce((s, o) => s + (o.pool.liquidity?.usd || 0), 0)
-    : 0;
-  const ptTvl = poolsResult.ok
-    ? poolsResult.value.opportunities.reduce((s, o) => s + (o.pt.tvl?.usd || 0), 0)
-    : 0;
-  const mvTvlTotal = metavaultsResult.ok
-    ? metavaultsResult.value.metavaults.reduce((s, m) => s + (m.metavault.tvl?.usd || 0), 0)
-    : 0;
-  // PT TVL captures all underlying deposited (minted into PTs + YTs).
-  // Liquidity captures what's in pools (IBT + PT sides).
-  // Some PTs are in pools (overlap). Some are held outside. YTs are always outside.
-  // MetaVault TVL overlaps with Liquidity (MVs hold LP tokens).
-  // Best estimate: max(Liquidity, PT TVL) + MetaVault TVL (conservative, avoids double-count)
-  const estimatedTvl = Math.max(poolLiq, ptTvl) + mvTvlTotal;
-  lines.push(`  Liquidity (AMM):  ${formatUsd(poolLiq)}`);
-  lines.push(`  PT TVL (minted):  ${formatUsd(ptTvl)}`);
-  lines.push(`  MetaVault TVL:    ${formatUsd(mvTvlTotal)}`);
-  lines.push(`  Estimated Total:  ${formatUsd(estimatedTvl)} (conservative — overlaps exist)`);
-
   lines.push(``);
   lines.push(`${"─".repeat(52)}`);
   lines.push(`Dissolution: This topic exists because no single tool surfaces`);
