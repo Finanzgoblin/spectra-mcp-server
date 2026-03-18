@@ -3792,7 +3792,8 @@ export function formatCuratorOpportunity(opp: CuratorOpportunity, rank: number):
   }
 
   if (opp.mvGrossEstimatePct != null) {
-    lines.push(`      MV est:   ~${formatPct(opp.mvGrossEstimatePct)} gross (LP + 30% YT compound)`);
+    const ytFeeLabel = opp.protocol === "pendle" ? "5%" : "3%";
+    lines.push(`      MV est:   ~${formatPct(opp.mvGrossEstimatePct)} gross (LP + 30% variable APR, net of ${ytFeeLabel} YT fee)`);
   }
 
   lines.push(`      Variable: ${formatPct(opp.variableApr)} APR`);

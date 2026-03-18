@@ -166,10 +166,20 @@ Use morpho_list_markets to find available Morpho markets.`,
 
           let entryCostStr = "—";
           if (hasLiq && i > 0) {
-            // Use Pendle impact model for first loop, scale for subsequent
-            const impact0 = estimatePendlePriceImpact(refCapital, poolLiqUsd, totalPt, totalSy, days);
-            const totalImpactPct = impact0 * 100 * i; // conservative: linear scaling
-            entryCostStr = `~${formatPct(totalImpactPct)}`;
+            // Per-loop impact model: each loop trades capital * ltv^j,
+            // and prior loops drain liquidity, increasing subsequent impact
+            let weightedSum = 0;
+            let totalDeployed = 0;
+            for (let j = 0; j < i; j++) {
+              const loopAmount = refCapital * Math.pow(effectiveLtv, j);
+              const cumulativePrior = j === 0 ? 0 : refCapital * (1 - Math.pow(effectiveLtv, j)) / (1 - effectiveLtv);
+              const effectiveLiq = Math.max(poolLiqUsd - cumulativePrior / 2, poolLiqUsd * 0.01);
+              const loopImpact = estimatePendlePriceImpact(loopAmount, effectiveLiq, totalPt, totalSy, days);
+              weightedSum += loopAmount * loopImpact;
+              totalDeployed += loopAmount;
+            }
+            const blendedImpactPct = totalDeployed > 0 ? (weightedSum / totalDeployed) * 100 : 0;
+            entryCostStr = `~${formatPct(blendedImpactPct)}`;
           } else if (hasLiq) {
             entryCostStr = "0.00%";
           }
@@ -188,7 +198,7 @@ Use morpho_list_markets to find available Morpho markets.`,
           }
         }
 
-        // Find optimal loop
+        // Find optimal loop using per-loop impact model
         let bestNet = baseApy;
         let bestLoop = 0;
         for (let i = 1; i <= max_loops; i++) {
@@ -196,8 +206,18 @@ Use morpho_list_markets to find available Morpho markets.`,
           const net = baseApy * lev - effectiveBorrowRate * (lev - 1);
           let effectiveNet = net;
           if (hasLiq && days > 0) {
-            const impact0 = estimatePendlePriceImpact(refCapital, poolLiqUsd, totalPt, totalSy, days);
-            const annualizedDrag = impact0 * 100 * i * (365 / days);
+            let weightedSum = 0;
+            let totalDeployed = 0;
+            for (let j = 0; j < i; j++) {
+              const loopAmount = refCapital * Math.pow(effectiveLtv, j);
+              const cumulativePrior = j === 0 ? 0 : refCapital * (1 - Math.pow(effectiveLtv, j)) / (1 - effectiveLtv);
+              const effectiveLiq = Math.max(poolLiqUsd - cumulativePrior / 2, poolLiqUsd * 0.01);
+              const loopImpact = estimatePendlePriceImpact(loopAmount, effectiveLiq, totalPt, totalSy, days);
+              weightedSum += loopAmount * loopImpact;
+              totalDeployed += loopAmount;
+            }
+            const blendedImpactPct = totalDeployed > 0 ? (weightedSum / totalDeployed) * 100 : 0;
+            const annualizedDrag = blendedImpactPct * (365 / days);
             effectiveNet = net - annualizedDrag;
           }
           if (effectiveNet > bestNet) {

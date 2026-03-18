@@ -85,15 +85,16 @@ Use pendle_scan_opportunities for capital-aware ranking across all markets.`,
           };
         }
 
-        // Generate log-spaced capital tiers
+        // Generate log-spaced capital tiers (deduplicate after rounding)
         const MIN_TIER_USD = 1_000;
         const minLog = Math.log10(MIN_TIER_USD);
         const maxLog = Math.log10(max_capital_usd);
-        const tiers: number[] = [];
+        let tiers: number[] = [];
         for (let i = 0; i < steps; i++) {
           const log = steps === 1 ? maxLog : minLog + (maxLog - minLog) * i / (steps - 1);
           tiers.push(Math.round(10 ** log));
         }
+        tiers = [...new Set(tiers)];
 
         // Compute impact at each tier
         interface TierResult {

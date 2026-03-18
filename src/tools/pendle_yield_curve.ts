@@ -82,10 +82,17 @@ Use mv_compare_yield for Spectra vs Pendle comparison on the same underlying.`,
           .replace(/^W/, "")
           .replace(/\.E$/i, "");
 
-        const matched = allMarkets.filter(({ market }) => {
+        // Prefer exact match; fall back to substring only if no exact matches
+        let matched = allMarkets.filter(({ market }) => {
           const norm = normalizePendleUnderlying(market.name);
-          return norm.includes(targetNorm) || targetNorm.includes(norm);
+          return norm === targetNorm;
         });
+        if (matched.length === 0) {
+          matched = allMarkets.filter(({ market }) => {
+            const norm = normalizePendleUnderlying(market.name);
+            return norm.includes(targetNorm) || targetNorm.includes(norm);
+          });
+        }
 
         if (matched.length === 0) {
           const chainNote = chain ? ` on ${PENDLE_CHAIN_NAMES[chain] || chain}` : " across any Pendle chain";
