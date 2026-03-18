@@ -114,6 +114,8 @@ function computePerformanceMetrics(
   let drawdownEndIdx: number | null = null;
   let currentPeakIdx = 0;
 
+  if (peak <= 0) return null;
+
   for (let i = 1; i < rates.length; i++) {
     if (rates[i] > peak) {
       peak = rates[i];

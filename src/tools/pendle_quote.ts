@@ -95,9 +95,9 @@ Use pendle_get_market_details for full market information.`,
         }
 
         // Price impact estimate using Pendle logit AMM
-        const tradeValueUsd = amount * (poolLiqUsd > 0 && d.totalTvl > 0
-          ? d.totalTvl / (totalPt + totalSy || 1)
-          : 1); // rough USD value
+        const priceAvailable = poolLiqUsd > 0 && d.totalTvl > 0 && (totalPt + totalSy) > 0;
+        const tokenPriceUsd = priceAvailable ? d.totalTvl / (totalPt + totalSy) : 1;
+        const tradeValueUsd = amount * tokenPriceUsd;
         const impactFrac = estimatePendlePriceImpact(tradeValueUsd, poolLiqUsd, totalPt, totalSy, days);
         const impactPct = impactFrac * 100;
 
@@ -142,6 +142,9 @@ Use pendle_get_market_details for full market information.`,
         lines.push(``);
         lines.push(`  Pool Liquidity: ${formatUsd(poolLiqUsd)}`);
         lines.push(`  Method: Pendle logit AMM estimate (scalarRoot=50)`);
+        if (!priceAvailable) {
+          lines.push(`  ⚠ Token price unavailable — impact estimate assumes $1/token, actual impact could differ significantly for non-stablecoin assets`);
+        }
 
         if (impactPct > 5) {
           lines.push(``);
