@@ -333,6 +333,7 @@ For Spectra-only scanning, use spectra_scan_opportunities.`,
         }
 
         // Phase 5: Sort, filter, format
+        const negativeApyCount = opportunities.filter((o) => o.sortApy < 0).length;
         const filtered = opportunities.filter((o) => o.sortApy >= 0);
         filtered.sort((a, b) => b.sortApy - a.sortApy);
         const topOpps = filtered.slice(0, topN);
@@ -368,6 +369,11 @@ For Spectra-only scanning, use spectra_scan_opportunities.`,
         }
 
         lines.push(``);
+        if (negativeApyCount > 0) {
+          lines.push(`  Note: Filtered ${negativeApyCount} opportunit${negativeApyCount === 1 ? "y" : "ies"} where entry cost exceeds yield (negative effective APY at ${formatUsd(capital_usd)} capital)`);
+          lines.push(``);
+        }
+
         lines.push(`--- Methodology ---`);
         lines.push(`  Impact model: Pendle logit AMM (scalarRoot=50, conservative). Real impact is typically lower.`);
         lines.push(`  Effective APY = Implied APY - (annualized entry impact at your capital size)`);

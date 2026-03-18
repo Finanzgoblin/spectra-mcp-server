@@ -493,8 +493,11 @@ Use spectra_get_curator_dashboard for operational monitoring of an existing Meta
                   };
 
                   // Break-even borrow rate: max borrow before loop goes negative
+                  // net = impliedApy * lev - borrowRate * (lev - 1) - annualizedEntryCost = 0
+                  // => borrowRate = (impliedApy * lev - annualizedEntryCost) / (lev - 1)
+                  const annualizedEntry = opp.impliedApy - opp.effectiveApy; // recover entry cost
                   opp.morpho.breakEvenBorrowRate = bestLev > 1
-                    ? (opp.effectiveApy * bestLev) / (bestLev - 1)
+                    ? (opp.impliedApy * bestLev - annualizedEntry) / (bestLev - 1)
                     : undefined;
 
                   // Looping only becomes best strategy if it beats both LP and PT spot
@@ -519,10 +522,12 @@ Use spectra_get_curator_dashboard for operational monitoring of an existing Meta
         // ================================================================
         // PHASE 3.5: MetaVault gross estimate
         // ================================================================
-        // Conservative estimate: LP APY + 30% of variable APR (YT compounding)
+        // Conservative estimate: LP APY + 30% of variable APR (YT compounding, net of protocol YT fee)
         for (const opp of opportunities) {
           if (opp.lpApy > 0 && opp.variableApr > 0) {
-            opp.mvGrossEstimatePct = opp.lpApy + opp.variableApr * 0.3;
+            const ytFee = opp.protocol === "pendle" ? 0.05 : 0.03; // Pendle 5%, Spectra 3%
+            const netYtBoost = opp.variableApr * 0.3 * (1 - ytFee);
+            opp.mvGrossEstimatePct = opp.lpApy + netYtBoost;
           }
           // YT exposure signal: variable APR significantly exceeds implied fixed rate
           if (opp.variableApr > opp.impliedApy * 2 && opp.impliedApy > 0) {
@@ -623,6 +628,7 @@ Use spectra_get_curator_dashboard for operational monitoring of an existing Meta
         // ================================================================
 
         // Filter out negative-sortApy opportunities
+        const negativeApyCount = opportunities.filter(o => o.sortApy < 0).length;
         const filtered = opportunities.filter(o => o.sortApy >= 0);
         filtered.sort((a, b) => b.sortApy - a.sortApy);
         const topOpps = filtered.slice(0, topN);
@@ -654,6 +660,9 @@ Use spectra_get_curator_dashboard for operational monitoring of an existing Meta
           filtered.length,  // total opportunities before top_n truncation
         );
 
+        if (negativeApyCount > 0) {
+          text += `\nNote: Filtered ${negativeApyCount} opportunit${negativeApyCount === 1 ? "y" : "ies"} where entry cost exceeds yield (negative effective APY at ${formatUsd(capital_usd)} capital).\n`;
+        }
         if (!merklAvailable) {
           text += `\nNote: Merkl incentive data unavailable — external campaign APR may be missing from results above.\n`;
         }
