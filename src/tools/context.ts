@@ -588,11 +588,8 @@ async function fetchProtocolPulse(): Promise<string> {
     const expiringCount = opportunities.filter(o => daysToMaturity(o.pt.maturity) <= 14).length;
 
     lines.push(`  Active Pools:     ${activePools} across ${activeChains.size} chains`);
-    lines.push(`  Total TVL:        ${formatUsd(totalTvl)}`);
-    lines.push(`  Total Liquidity:  ${formatUsd(totalLiquidity)}`);
-    if (totalTvl > 0 && totalLiquidity > totalTvl * 1.3) {
-      lines.push(`  ⚡ Liquidity ${(totalLiquidity / totalTvl).toFixed(1)}x TVL — pools are deeper than TVL suggests`);
-    }
+    lines.push(`  Pool Liquidity:   ${formatUsd(totalLiquidity)} (AMM depth, IBT+PT both sides)`);
+    lines.push(`  Underlying TVL:   ${formatUsd(totalTvl)} (value of deposited underlying)`);
     lines.push(`  Expiring ≤14d:    ${expiringCount}`);
     if (failedChains.length > 0) {
       lines.push(`  [missed chains:   ${failedChains.join(", ")}]`);
