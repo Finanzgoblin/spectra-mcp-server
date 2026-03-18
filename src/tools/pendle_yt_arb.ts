@@ -253,6 +253,31 @@ Use mv_compare_yield for cross-protocol comparison on the same underlying.`,
           if (!compact) lines.push(``);
         }
 
+        // Spread interpretation context
+        const hasLargeSpread = topOpps.some(o => Math.abs(o.spreadPct) > 5);
+        const hasBreakEvenExceedingMat = topOpps.some(o => o.breakEvenDays > o.daysToMaturity);
+
+        if (hasLargeSpread) {
+          lines.push(`--- Spread Interpretation ---`);
+          lines.push(`  Large YT spreads (>5%) have competing explanations:`);
+          lines.push(`  (A) Genuine mispricing — the Pendle AMM hasn't adjusted to recent underlying`);
+          lines.push(`      rate changes. Because Pendle YT trades directly on the AMM, price updates`);
+          lines.push(`      depend on active traders arbitraging the difference.`);
+          lines.push(`  (B) Stale underlying APY — the reported variable rate may be smoothed or`);
+          lines.push(`      time-weighted. The "spread" exists against a lagged reference rate.`);
+          lines.push(`  (C) Structural risk premium — the market is pricing in rate volatility.`);
+          lines.push(`      Variable rates can collapse; YT holders bear that risk.`);
+          lines.push(`  Use pendle_get_market_details to check 24h volume — active markets are`);
+          lines.push(`  more likely to reflect current pricing.`);
+          lines.push(``);
+        }
+
+        if (hasBreakEvenExceedingMat) {
+          lines.push(`  Note: Some opportunities have break-even exceeding maturity — the entry cost`);
+          lines.push(`  consumes more than the spread can deliver before expiry at this capital size.`);
+          lines.push(``);
+        }
+
         lines.push(`--- Execution Notes ---`);
         lines.push(`  Pendle YT trades directly on the AMM (unlike Spectra's Router flash-mint/redeem).`);
         lines.push(`  Buy YT: swap SY → YT on Pendle. Sell YT: swap YT → SY on Pendle.`);

@@ -100,7 +100,10 @@ export function formatScanOpportunityCompact(opp: ScanOpportunity, rank: number)
   const points = opp.pt.multipliers && opp.pt.multipliers.length > 0
     ? ` | Points: ${opp.pt.multipliers.map(m => `${m.name} ${m.amount}x`).join(", ")}`
     : "";
-  return `#${rank} ${opp.pt.name} (${opp.chain}) | Eff ${formatPct(opp.effectiveApy)} | Impl ${formatPct(opp.impliedApy)} | Impact ${formatPct(opp.entryImpactPct)} | ${opp.daysToMaturity}d${loopTag} | PT: ${opp.ptAddress} | Pool: ${opp.poolAddress}${points}`;
+  // Use sortApy (the same metric used for ranking) to avoid showing wildly negative effectiveApy
+  // while sorting by a different field — agents anchor on the displayed number.
+  const displayApy = opp.sortApy ?? opp.effectiveApy;
+  return `#${rank} ${opp.pt.name} (${opp.chain}) | APY ${formatPct(displayApy)} | Impl ${formatPct(opp.impliedApy)} | Impact ${formatPct(opp.entryImpactPct)} | ${opp.daysToMaturity}d${loopTag} | PT: ${opp.ptAddress} | Pool: ${opp.poolAddress}${points}`;
 }
 
 /** One-line YT arb opportunity summary for compact output. */
@@ -444,6 +447,30 @@ export function formatPositionSummary(pos: SpectraPt, chain: string): PositionRe
     if (lpBal > 0) parts.push(`LP: ${lpBal.toLocaleString("en-US", { maximumFractionDigits: 2 })}`);
     lines.push(``);
     lines.push(`  Position Shape: ${parts.join(" | ")}`);
+
+    // Data-driven tensions: surface competing explanations only when position shape is genuinely ambiguous
+    if (ytBal > 0 && ptBal === 0 && lpBal === 0) {
+      lines.push(`    Competing explanations: (A) Sold PT to fund YT acquisition — directional bet on variable rate exceeding implied. ` +
+        `(B) Minted PT+YT and LPed the PT — but LP token shows zero, so either LP was withdrawn or it's in a different wallet. ` +
+        `(C) Received YT via transfer from another wallet (multi-wallet strategy). ` +
+        `spectra_get_pool_activity with this address resolves which.`);
+    } else if (ptBal > 0 && ytBal === 0 && lpBal === 0) {
+      lines.push(`    Competing explanations: (A) Bought PT on the AMM for fixed yield — straightforward. ` +
+        `(B) Minted PT+YT and sold the YT — effectively shorting variable rate. ` +
+        `(C) Received PT from LP withdrawal (pool returned IBT + PT, user kept PT). ` +
+        `These imply different exit strategies: (A) and (B) likely hold to maturity, ` +
+        `(C) may sell soon. spectra_get_pool_activity resolves.`);
+    } else if (lpBal > 0 && ytBal > 0 && ptBal === 0) {
+      lines.push(`    Competing explanations: (A) Router-batched mint+LP (minted PT+YT, PT went into LP, YT kept) — ` +
+        `yield farming strategy earning LP fees + YT variable yield. ` +
+        `(B) Separate LP entry + separate YT purchase — more expensive in gas, suggests deliberate sizing. ` +
+        `The strategy is similar either way, but cost basis differs.`);
+    } else if (ytBal > 0 && ptBal > 0 && ytBal > ptBal * 3) {
+      lines.push(`    YT-heavy ratio suggests net YT accumulation. Could be: (A) repeated mint+sell-PT loops, ` +
+        `or (B) direct YT acquisition via flash-mint. Either way, this is a leveraged bet that ` +
+        `variable yield will exceed the implied rate over the remaining ${maturityDays} days.`);
+    }
+
     // Navigational hint: surface the temporal blind spot
     if (totalValue > 100) {
       lines.push(`    Entry timing and cost basis unknown from portfolio alone. Use spectra_get_pool_activity with address parameter to reconstruct.`);
@@ -2126,6 +2153,20 @@ export function formatPortfolioHints(
         lines.push(`    Portfolio shape: PT-heavy (${(1 / ytPtRatio).toFixed(1)}:1 PT/YT). Could indicate aggregate fixed-rate accumulation.`);
       }
     }
+
+    // Data tension: contradicting strategies across positions
+    const ptHeavyPositions = positions.filter(p => p.ptBalance > 0 && (p.ytBalance === 0 || p.ptBalance > p.ytBalance * 3));
+    const ytHeavyPositions = positions.filter(p => p.ytBalance > 0 && (p.ptBalance === 0 || p.ytBalance > p.ptBalance * 3));
+    if (ptHeavyPositions.length > 0 && ytHeavyPositions.length > 0) {
+      lines.push(
+        `    Data tension: Portfolio holds PT-heavy positions (${ptHeavyPositions.map(p => p.name).join(", ")}) ` +
+        `AND YT-heavy positions (${ytHeavyPositions.map(p => p.name).join(", ")}). ` +
+        `This is either: (A) a deliberate hedge — fixed-rate on some underlyings, variable-rate bet on others, ` +
+        `(B) different strategies at different entry times that haven't been cleaned up, ` +
+        `or (C) different underlyings with different rate outlooks justifying opposite positions. ` +
+        `The aggregate YT/PT ratio masks this split.`
+      );
+    }
   }
 
   // --- Negative signals (valuable even for single positions) ---
@@ -2642,9 +2683,32 @@ export function formatMetavaultSummary(mv: SpectraMetavault, chain: string): str
   // Underlying
   lines.push(`  Underlying: ${mv.underlying?.symbol || "?"} (${mv.underlying?.address || "?"})`);
 
-  // TVL & APY
+  // TVL & APY — compute idle ratio for headline visibility
   const decimals = mv.underlying?.decimals || 6;
-  lines.push(`  TVL: ${formatUsd(mv.tvl?.usd || 0)} (${(mv.tvl?.underlying || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })} ${mv.underlying?.symbol || "tokens"})`);
+  const vaultTvlUsd = mv.tvl?.usd || 0;
+  // Pre-compute idle ratio so it appears in the headline, not buried in allocations
+  let headlineIdlePct: number | null = null;
+  let headlineIdleUsd = 0;
+  if (mv.positions && mv.positions.length > 0 && vaultTvlUsd > 0) {
+    let headlineAllocTotal = 0;
+    for (const pos of mv.positions) {
+      const pool = pos.pools?.[0];
+      const rawBalance = pool?.lpt?.balance || pos.balance;
+      if (rawBalance && pool?.lpt?.price?.usd) {
+        const dec = pool.lpt.decimals || 18;
+        const raw = BigInt(rawBalance);
+        const d = 10n ** BigInt(dec);
+        const lpBalance = Number(raw / d) + Number(raw % d) / Number(d);
+        headlineAllocTotal += lpBalance * pool.lpt.price.usd;
+      }
+    }
+    headlineIdleUsd = Math.max(0, vaultTvlUsd - headlineAllocTotal);
+    headlineIdlePct = (headlineIdleUsd / vaultTvlUsd) * 100;
+  }
+  const idleSuffix = headlineIdlePct !== null && headlineIdlePct > 5
+    ? ` — ${headlineIdlePct.toFixed(0)}% idle (${formatUsd(headlineIdleUsd)} undeployed)`
+    : "";
+  lines.push(`  TVL: ${formatUsd(vaultTvlUsd)} (${(mv.tvl?.underlying || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })} ${mv.underlying?.symbol || "tokens"})${idleSuffix}`);
   lines.push(`  Live APY: ${formatPct(mv.liveApy?.total || 0)}`);
 
   // APY breakdown — surface composition so agents can reason about yield sources
@@ -2857,11 +2921,30 @@ export function formatMetavaultSummary(mv: SpectraMetavault, chain: string): str
 /** One-line compact format for MetaVault listings. */
 export function formatMetavaultCompact(mv: SpectraMetavault, chain: string): string {
   const apy = formatPct(mv.liveApy?.total || 0);
-  const tvl = formatUsd(mv.tvl?.usd || 0);
+  const tvlUsd = mv.tvl?.usd || 0;
+  const tvl = formatUsd(tvlUsd);
   const posCount = mv.positions?.length || 0;
   const baseApy = mv.liveApy?.details?.base;
   const baseNote = baseApy != null ? ` (base ${formatPct(baseApy)})` : "";
-  return `${mv.metadata?.title || mv.name} (${chain}) | ${mv.underlying?.symbol || "?"} | APY ${apy}${baseNote} | TVL ${tvl} | ${posCount} position(s) | Curator: ${mv.curator?.name || "?"} | ${mv.address}`;
+  // Surface idle ratio in compact line — headline TVL alone masks deployment gaps
+  let idleNote = "";
+  if (mv.positions && mv.positions.length > 0 && tvlUsd > 0) {
+    let allocTotal = 0;
+    for (const pos of mv.positions) {
+      const pool = pos.pools?.[0];
+      const rawBalance = pool?.lpt?.balance || pos.balance;
+      if (rawBalance && pool?.lpt?.price?.usd) {
+        const dec = pool.lpt.decimals || 18;
+        const raw = BigInt(rawBalance);
+        const d = 10n ** BigInt(dec);
+        const lpBalance = Number(raw / d) + Number(raw % d) / Number(d);
+        allocTotal += lpBalance * pool.lpt.price.usd;
+      }
+    }
+    const idlePct = ((tvlUsd - allocTotal) / tvlUsd) * 100;
+    if (idlePct > 20) idleNote = ` (${idlePct.toFixed(0)}% idle)`;
+  }
+  return `${mv.metadata?.title || mv.name} (${chain}) | ${mv.underlying?.symbol || "?"} | APY ${apy}${baseNote} | TVL ${tvl}${idleNote} | ${posCount} position(s) | Curator: ${mv.curator?.name || "?"} | ${mv.address}`;
 }
 
 /** Concise per-MetaVault format for the spectra_scan_opportunities output section. */
@@ -2881,8 +2964,28 @@ export function formatMetavaultScanEntry(mv: SpectraMetavault, chain: string, ra
     if (lpApy > bestLpApy) bestLpApy = lpApy;
   }
 
+  // Compute idle ratio for scan entry headline
+  const tvlUsdVal = mv.tvl?.usd || 0;
+  let scanIdleNote = "";
+  if (mv.positions && mv.positions.length > 0 && tvlUsdVal > 0) {
+    let scanAllocTotal = 0;
+    for (const pos of mv.positions) {
+      const pool = pos.pools?.[0];
+      const rawBalance = pool?.lpt?.balance || pos.balance;
+      if (rawBalance && pool?.lpt?.price?.usd) {
+        const dec = pool.lpt.decimals || 18;
+        const raw = BigInt(rawBalance);
+        const d = 10n ** BigInt(dec);
+        const lpBalance = Number(raw / d) + Number(raw % d) / Number(d);
+        scanAllocTotal += lpBalance * pool.lpt.price.usd;
+      }
+    }
+    const scanIdlePct = ((tvlUsdVal - scanAllocTotal) / tvlUsdVal) * 100;
+    if (scanIdlePct > 20) scanIdleNote = ` (${scanIdlePct.toFixed(0)}% idle)`;
+  }
+
   lines.push(`  MV#${rank}  ${mv.metadata?.title || mv.name} (${mv.symbol}) -- ${chain}`);
-  lines.push(`        APY: ${apy} | TVL: ${tvl} | Underlying: ${underlying}`);
+  lines.push(`        APY: ${apy} | TVL: ${tvl}${scanIdleNote} | Underlying: ${underlying}`);
 
   // Surface yield composition — base vs incentive
   const apyDetails = mv.liveApy?.details;
@@ -3004,6 +3107,7 @@ export function formatMetavaultStrategy(opts: {
   grossVaultApy: number;
   morphoLtv: number;
   borrowRate: number;
+  borrowRateIsDefault?: boolean;
   daysToMaturity: number;
   rows: MetavaultLoopRow[];
   bestLoop: number;
@@ -3034,8 +3138,14 @@ export function formatMetavaultStrategy(opts: {
   lines.push(`  Net Vault APY:       ${formatPct(opts.netVaultApy)} (what depositors receive after curator fee)`);
   lines.push(``);
   lines.push(`  Morpho LTV:          ${formatPct(opts.morphoLtv * 100)}`);
-  lines.push(`  Borrow Rate:         ${formatPct(opts.borrowRate)}`);
+  lines.push(`  Borrow Rate:         ${formatPct(opts.borrowRate)}${opts.borrowRateIsDefault ? " [DEFAULT — not from a live Morpho market]" : ""}`);
   lines.push(`  Pool Cycle:          ${opts.daysToMaturity} days`);
+  if (opts.borrowRateIsDefault) {
+    lines.push(``);
+    lines.push(`  [!] Borrow rate is the default placeholder (${formatPct(opts.borrowRate)}), not sourced from a real Morpho market.`);
+    lines.push(`      All leverage projections below are hypothetical. Use morpho_list_markets() to find`);
+    lines.push(`      actual borrow rates, then re-run with borrow_rate=ACTUAL_RATE for meaningful projections.`);
+  }
 
   // ── Allocation Model (Spectra + Pendle blend) ──────────────
   if (opts.pendleAllocationPct && opts.pendleAllocationPct > 0 && opts.pendleLpApy !== undefined && opts.spectraBaseApy !== undefined) {
@@ -3224,7 +3334,16 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
 
   // ── Vault Health ────────────────────────────────────────────
   lines.push(`--- Vault Health ---`);
-  lines.push(`  TVL: ${formatUsd(opts.tvlUsd)} (${opts.tvlUnderlying.toLocaleString("en-US", { maximumFractionDigits: 2 })} ${opts.underlyingSymbol})`);
+  // Compute idle ratio for headline — agents anchor on TVL, so idle capital must be visible here
+  const knownAllocForHeadline = opts.positions
+    .filter(p => p.vaultAllocationUsd != null)
+    .reduce((sum, p) => sum + p.vaultAllocationUsd!, 0);
+  const idleForHeadline = opts.tvlUsd > 0 ? Math.max(0, opts.tvlUsd - knownAllocForHeadline) : 0;
+  const idlePctForHeadline = opts.tvlUsd > 0 ? (idleForHeadline / opts.tvlUsd) * 100 : 0;
+  const tvlIdleSuffix = idlePctForHeadline > 5
+    ? ` — ${idlePctForHeadline.toFixed(0)}% idle (${formatUsd(idleForHeadline)} undeployed)`
+    : "";
+  lines.push(`  TVL: ${formatUsd(opts.tvlUsd)} (${opts.tvlUnderlying.toLocaleString("en-US", { maximumFractionDigits: 2 })} ${opts.underlyingSymbol})${tvlIdleSuffix}`);
   lines.push(`  Live APY: ${formatPct(opts.liveApyTotal)}${opts.liveApyBoostedTotal && opts.liveApyBoostedTotal > opts.liveApyTotal ? ` (max boost: ${formatPct(opts.liveApyBoostedTotal)})` : ""}`);
   if (opts.liveApyBase != null) {
     const incentiveApy = opts.liveApyTotal - opts.liveApyBase;
@@ -3519,12 +3638,26 @@ export function formatPendleSpectraComparison(opts: {
 
   lines.push(``);
 
-  // Winner per metric
+  // Per-metric comparison with context
   const insights: string[] = [];
-  if (spectraImplied > pendleImplied) {
-    insights.push(`Spectra offers a higher fixed rate (+${formatPct(spectraImplied - pendleImplied)})`);
-  } else if (pendleImplied > spectraImplied) {
-    insights.push(`Pendle offers a higher fixed rate (+${formatPct(pendleImplied - spectraImplied)})`);
+  const impliedDelta = Math.abs(spectraImplied - pendleImplied);
+  if (impliedDelta > 0.5) {
+    const higher = spectraImplied > pendleImplied ? "Spectra" : "Pendle";
+    const lower = higher === "Spectra" ? "Pendle" : "Spectra";
+    insights.push(`${higher} offers a higher fixed rate (+${formatPct(impliedDelta)})`);
+    // When rate disagrees significantly AND liquidity also disagrees, flag the tension
+    const liqRatio = Math.max(spectraLiq, pendleLiq) / (Math.min(spectraLiq, pendleLiq) || 1);
+    const deeperLiqProtocol = spectraLiq > pendleLiq ? "Spectra" : "Pendle";
+    if (liqRatio > 3 && deeperLiqProtocol === lower) {
+      insights.push(`  ^ but ${lower} has ${formatPct((liqRatio - 1) * 100 / liqRatio)} more liquidity — the deeper`);
+      insights.push(`    pool's lower rate may reflect more informed price discovery, not worse yield`);
+    }
+  } else if (impliedDelta <= 0.5) {
+    if (spectraImplied > pendleImplied) {
+      insights.push(`Spectra offers a higher fixed rate (+${formatPct(impliedDelta)})`);
+    } else if (pendleImplied > spectraImplied) {
+      insights.push(`Pendle offers a higher fixed rate (+${formatPct(impliedDelta)})`);
+    }
   }
 
   if (spectraLp > pendleLp) {
@@ -4055,11 +4188,29 @@ export function formatCuratorRiskSummary(summary: CuratorRiskSummary): string {
     lines.push(`  All positions within safe parameters.`);
   }
 
+  // Observation boundary — what the risk monitor cannot see
+  lines.push(``);
+  lines.push(`--- Observation Boundary ---`);
+  lines.push(`  Health factor and distance-to-liquidation use Morpho's oracle price.`);
+  lines.push(`  This price may diverge from executable exit price under stress:`);
+  lines.push(`  - PT collateral: oracle tracks par trajectory, but pool liquidity determines`);
+  lines.push(`    actual exit price. A PT with 25% distance-to-liquidation but $10K pool`);
+  lines.push(`    liquidity cannot be exited at oracle price for large positions.`);
+  lines.push(`  - MetaVault share collateral: no secondary market may exist — the oracle`);
+  lines.push(`    reflects NAV, but redemptions take an epoch and may face withdrawal queues.`);
+  lines.push(`  - Multiple positions using the same collateral create cascade risk that`);
+  lines.push(`    individual health factors do not capture.`);
+  if (ok > 0 && critical === 0 && warning === 0 && watch === 0) {
+    lines.push(`  All positions show "ok" — but "ok" measures oracle-derived health, not`);
+    lines.push(`  the collateral's real-world liquidatability.`);
+  }
+
   lines.push(``);
   lines.push(`--- Next Steps ---`);
   lines.push(`  • Rate history: morpho_get_history(chain, market_key) — assess borrow rate stability`);
   lines.push(`  • Position details: morpho_get_positions(address) — full supply/vault/borrow view`);
   lines.push(`  • Deleverage modeling: spectra_get_looping_strategy(chain, pt_address) — sensitivity at different leverage`);
+  lines.push(`  • Collateral depth: spectra_get_pool_capacity(chain, pt_address) — verify exit liquidity at position size`);
   lines.push(`  • MetaVault status: spectra_get_curator_dashboard(chain, metavault_address) — operational overview`);
 
   return lines.join("\n");

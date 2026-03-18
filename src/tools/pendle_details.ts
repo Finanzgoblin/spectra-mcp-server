@@ -84,12 +84,22 @@ Use mv_compare_yield to compare this market with Spectra equivalents.`,
         const impliedPct = d.impliedApy * 100;
         const varPct = d.underlyingApy * 100;
         const spread = impliedPct - varPct;
-        if (spread > 0) {
-          lines.push(`  Fixed rate premium: +${formatPct(spread)} above variable — PT buyer locks in higher rate`);
-        } else if (spread < 0) {
-          lines.push(`  Variable rate premium: +${formatPct(-spread)} above fixed — YT exposure may outperform PT`);
+        if (Math.abs(spread) < 0.3) {
+          lines.push(`  Fixed ≈ Variable (spread ${formatPct(Math.abs(spread))}) — no directional edge`);
+        } else if (spread > 0) {
+          lines.push(`  Fixed rate premium: +${formatPct(spread)} above current variable rate`);
+          if (spread > 3) {
+            lines.push(`  Large premium — two readings:`);
+            lines.push(`    (A) Market expects variable rates to rise, making current fixed rate a relative bargain`);
+            lines.push(`    (B) PT liquidity is thin and the discount is a compensation for illiquidity, not a yield signal`);
+          }
         } else {
-          lines.push(`  Fixed ≈ Variable — no directional edge`);
+          lines.push(`  Variable rate premium: +${formatPct(-spread)} above fixed rate`);
+          if (-spread > 3) {
+            lines.push(`  Large variable premium — two readings:`);
+            lines.push(`    (A) Market expects variable rates to fall, so PT is priced near par (modest fixed rate)`);
+            lines.push(`    (B) Current variable rate is elevated by temporary incentives that will decay`);
+          }
         }
 
         // Maturity warning

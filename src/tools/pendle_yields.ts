@@ -110,6 +110,21 @@ Pendle chains: ${PENDLE_CHAIN_KEYS.map((k) => PENDLE_CHAIN_NAMES[k]).join(", ")}
           lines.push(``);
         }
 
+        // Flag when top result's liquidity is much lower than others (headline APY trap)
+        if (capped.length >= 3) {
+          const topLiq = capped[0].market.details.liquidity || 0;
+          const otherLiqs = capped.slice(1).map(c => c.market.details.liquidity || 0).filter(l => l > 0);
+          const medianOtherLiq = otherLiqs.length > 0
+            ? [...otherLiqs].sort((a, b) => a - b)[Math.floor(otherLiqs.length / 2)]
+            : 0;
+          if (topLiq > 0 && medianOtherLiq > 0 && topLiq < medianOtherLiq * 0.25) {
+            lines.push(`  Note: #1 result has ${formatUsd(topLiq)} liquidity vs ${formatUsd(medianOtherLiq)} median.`);
+            lines.push(`  High headline APY in thin pools often inverts once real capital enters.`);
+            lines.push(`  Use pendle_scan_opportunities(capital_usd=AMOUNT) to see effective APY at your size.`);
+            lines.push(``);
+          }
+        }
+
         if (scan.failedChains.length > 0) {
           lines.push(`  Failed chains: ${scan.failedChains.join(", ")}`);
         }

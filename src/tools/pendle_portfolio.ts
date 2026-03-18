@@ -180,6 +180,56 @@ Use spectra_get_portfolio for Spectra positions.`,
           }
         }
 
+        // Portfolio-level interpretation when multiple active positions exist
+        if (active.length >= 2) {
+          // Check for maturity spread pattern
+          const maturities = active
+            .filter(p => p.expiry && !p.isExpired)
+            .map(p => pendleDaysToMaturity(p.expiry!))
+            .filter(d => d > 0)
+            .sort((a, b) => a - b);
+
+          if (maturities.length >= 2) {
+            const spread = maturities[maturities.length - 1] - maturities[0];
+            const gaps = maturities.slice(1).map((d, i) => d - maturities[i]);
+            const avgGap = gaps.reduce((s, g) => s + g, 0) / gaps.length;
+            const gapVariance = gaps.reduce((s, g) => s + Math.pow(g - avgGap, 2), 0) / gaps.length;
+            const isRegular = gapVariance < avgGap * avgGap * 0.5; // roughly even spacing
+
+            lines.push(`--- Position Interpretation ---`);
+            if (maturities.length >= 3 && isRegular && spread > 30) {
+              lines.push(`  Maturity pattern: Ladder-like (${maturities.length} maturities, ~${Math.round(avgGap)}d spacing, ${spread}d total spread)`);
+              lines.push(`  This could indicate intentional duration management — rolling exposure across`);
+              lines.push(`  maturities to smooth rollover risk and capture the term structure.`);
+            } else if (spread < 14) {
+              lines.push(`  Maturity pattern: Clustered (all within ${spread}d of each other)`);
+              lines.push(`  Concentrated maturity exposure — all positions roll over simultaneously,`);
+              lines.push(`  creating a reinvestment cliff. This could be intentional (conviction trade)`);
+              lines.push(`  or accidental (entered all at once without maturity diversification).`);
+            } else {
+              lines.push(`  Maturity pattern: Scattered (${maturities.length} maturities, ${spread}d range, irregular spacing)`);
+              lines.push(`  Positions entered at different times rather than structured as a maturity ladder.`);
+            }
+            lines.push(``);
+          }
+
+          // Check for protocol-level concentration
+          const chainValues = new Map<string, number>();
+          for (const p of active) {
+            chainValues.set(p.chain, (chainValues.get(p.chain) || 0) + p.totalValueUsd);
+          }
+          const activeTotal = active.reduce((s, p) => s + p.totalValueUsd, 0);
+          if (chainValues.size >= 2 && activeTotal > 0) {
+            const maxChainValue = Math.max(...chainValues.values());
+            const maxChainPct = (maxChainValue / activeTotal) * 100;
+            if (maxChainPct > 80) {
+              const maxChain = [...chainValues.entries()].find(([, v]) => v === maxChainValue)?.[0] || "";
+              lines.push(`  Chain concentration: ${formatPct(maxChainPct)} on ${PENDLE_CHAIN_NAMES[maxChain] || maxChain}`);
+              lines.push(``);
+            }
+          }
+        }
+
         if (failedChains.length > 0) {
           lines.push(`  Note: Could not fetch positions from: ${failedChains.join(", ")}`);
           lines.push(``);

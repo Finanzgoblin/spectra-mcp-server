@@ -161,6 +161,45 @@ Use spectra_quote_trade to estimate price impact for a specific trade size.`,
           // Best-effort: swallow errors, don't block core output
         }
 
+        // Data-driven tensions: surface where THIS volume data creates ambiguity
+        const volTensions: string[] = [];
+
+        // Zero recent volume but pool has TVL -- is it dead or hibernating?
+        if (recentTotal === 0 && totalVolume > 0) {
+          volTensions.push(
+            `  Data tension: No volume in the last 7 days despite historical activity (${formatUsd(totalVolume)} total). ` +
+            `This could mean: (A) pool is approaching maturity and participants are waiting to redeem rather than trading, ` +
+            `(B) a better pool with similar underlying has attracted all flow, ` +
+            `or (C) a temporary lull before renewed activity. ` +
+            `Check spectra_get_pt_details for maturity date and spectra_list_pools for competing pools on ${chain}.`
+          );
+        }
+
+        // All volume on one side -- what does one-directional flow mean?
+        if (totalVolume > 1000) {
+          const buyShare = totalBuy / totalVolume;
+          if (buyShare > 0.85) {
+            volTensions.push(
+              `  Data tension: ${(buyShare * 100).toFixed(0)}% of all-time volume is BUY (PT acquisition). ` +
+              `But "BUY_PT" events also occur during YT flash-redeems (selling YT via Router). ` +
+              `Without checking spectra_get_pool_activity for specific addresses, ` +
+              `this could represent either systematic fixed-rate accumulation or systematic YT exits.`
+            );
+          } else if (buyShare < 0.15) {
+            volTensions.push(
+              `  Data tension: ${((1 - buyShare) * 100).toFixed(0)}% of all-time volume is SELL (PT distribution). ` +
+              `But "SELL_PT" events also occur during YT flash-mints (acquiring YT via Router). ` +
+              `Without checking spectra_get_pool_activity for specific addresses, ` +
+              `this could represent either PT liquidation or systematic YT accumulation.`
+            );
+          }
+        }
+
+        if (volTensions.length > 0) {
+          lines.push(``);
+          for (const t of volTensions) lines.push(t);
+        }
+
         // Next-step hints
         lines.push(``);
         lines.push(`--- Next Steps ---`);
