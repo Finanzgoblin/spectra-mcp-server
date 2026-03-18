@@ -212,12 +212,34 @@ Use mv_check_ibt_health to verify the underlying IBT before deploying.`,
         }
 
         lines.push("");
+        lines.push("── Capacity Framing ──");
+        lines.push("This analysis measures PT BUY impact (directional swap into the pool).");
+        lines.push("If deploying as LP (how MetaVaults and curators typically operate), the capacity");
+        lines.push("profile is fundamentally different — LP deposits ADD liquidity, so impact is near-zero");
+        lines.push("and the binding constraint is concentration risk, not price impact.");
+        lines.push("Run with mode='lp_add' for LP capacity analysis.");
+        lines.push("");
+        lines.push("The sweet spot and exhaustion point above apply to PT BUYERS ONLY.");
+        lines.push("An agent using these numbers for MetaVault sizing would over-constrain the allocation.");
+
+        lines.push("");
         lines.push("Note: Each tier is quoted independently (not cumulative). Real execution");
         lines.push("across multiple txns would face additional impact from pool state changes.");
         if (results.some(r => r.method === "on-chain")) {
           lines.push("On-chain quotes reflect the actual Curve StableSwap-NG amplification parameter.");
+          if (results.some(r => r.method === "math")) {
+            // Mixed methods — surface the tension
+            const onChainTiers = results.filter(r => r.method === "on-chain");
+            const mathTiers = results.filter(r => r.method === "math");
+            if (onChainTiers.length > 0 && mathTiers.length > 0) {
+              lines.push("Some tiers used on-chain quotes, others fell back to math estimates.");
+              lines.push("Where both exist, compare: math estimates are typically 30-60% more conservative");
+              lines.push("than on-chain. If the gap is larger, the pool may have unusual amplification.");
+            }
+          }
         } else {
           lines.push("Math estimates use conservative constant-product model. Real impact is likely lower.");
+          lines.push("The effective APY shown here is a LOWER BOUND — actual APY after entry cost is higher.");
         }
 
         const text = lines.join("\n");
@@ -386,10 +408,14 @@ async function buildLpCapacityCurve(
   }
 
   lines.push("");
-  lines.push("Key difference from PT buy mode: LP deposits ADD liquidity to the pool (deepening it),");
-  lines.push("while PT buys CONSUME liquidity (moving price). LP imbalance fees are near-zero for");
-  lines.push("balanced deposits. The primary risk is concentration (owning too much of one pool),");
-  lines.push("not price impact.");
+  lines.push("── LP vs PT Buy: Different Risks, Same Pool ──");
+  lines.push("LP deposits ADD liquidity (deepening the pool), while PT buys CONSUME it.");
+  lines.push("LP imbalance fees are near-zero for balanced deposits.");
+  lines.push("");
+  lines.push("The binding constraint for LP is concentration, not price impact. But concentration");
+  lines.push("creates a second-order risk this tool does not measure: if you own >50% of pool");
+  lines.push("liquidity, your EXIT impact is high even though your ENTRY impact was low.");
+  lines.push("Use spectra_stress_test_vault to model withdrawal scenarios at high pool share.");
   if (results.some(r => r.method === "on-chain")) {
     lines.push("On-chain quotes use Curve calc_token_amount() for exact imbalance fee estimation.");
   } else {

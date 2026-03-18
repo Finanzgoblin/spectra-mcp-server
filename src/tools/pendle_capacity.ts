@@ -166,9 +166,21 @@ Use pendle_scan_opportunities for capital-aware ranking across all markets.`,
         }
 
         lines.push("");
-        lines.push("Note: Uses Pendle logit AMM model with conservative scalarRoot=50.");
-        lines.push("Real impact is typically lower (stablecoin pools use scalarRoot 50-200).");
+        lines.push("── Impact Model Tension ──");
+        lines.push("This uses the Pendle logit AMM model with conservative scalarRoot=50.");
+        lines.push("Real stablecoin pools typically use scalarRoot 50-200, meaning actual impact");
+        lines.push("is often significantly lower than shown. The sweet spot and exhaustion point");
+        lines.push("above are conservative bounds — real capacity may be 2-4x higher.");
+        lines.push("");
+        lines.push("But: near maturity, the AMM becomes more capital-efficient (time-decay");
+        lines.push("tightens the curve), which this model DOES capture. So for pools expiring");
+        lines.push(`within weeks (this pool: ${days}d), the estimates are more accurate than`);
+        lines.push("for pools with months of remaining life.");
+        lines.push("");
         lines.push("Each tier is quoted independently (not cumulative).");
+        lines.push("This is PT buy impact only — LP deposits have near-zero impact on Pendle");
+        lines.push("(similar to Spectra). For LP capacity, the constraint is position concentration,");
+        lines.push("not price impact.");
 
         const text = lines.join("\n");
         return { content: [{ type: "text" as const, text }] };

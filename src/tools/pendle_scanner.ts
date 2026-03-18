@@ -346,7 +346,14 @@ For Spectra-only scanning, use spectra_scan_opportunities.`,
             asset_filter ? `Asset filter: ${asset_filter}` : "",
             `Markets scanned: ${rawMarkets.length}`,
             ``,
+            `--- Strategic Context ---`,
+            `No results at this capital size may indicate thin liquidity, not lack of markets.`,
+            ...(negativeApyCount > 0 ? [`${negativeApyCount} market(s) had negative effective APY (entry cost exceeds yield at your capital size).`] : []),
+            `Pool liquidity determines how much capital can be deployed without excessive slippage.`,
+            `Consider: deploying across multiple smaller positions, or providing LP instead of buying PT.`,
+            ``,
             `Try: lower min_tvl_usd, increase max_price_impact_pct, or reduce capital_usd.`,
+            `Use pendle_list_markets() for raw APY ranking without capital-aware sizing.`,
           ].filter(Boolean).join("\n");
           return { content: [{ type: "text" as const, text }] };
         }
@@ -384,6 +391,34 @@ For Spectra-only scanning, use spectra_scan_opportunities.`,
         lines.push(`  • Cross-protocol: mv_scan_curator_opportunities(capital_usd=${capital_usd}) for unified ranking`);
         lines.push(`  • Spectra scan: spectra_scan_opportunities(capital_usd=${capital_usd}) for Spectra-native ranking`);
         lines.push(`  • Compare: mv_compare_yield(chain=CHAIN, asset_filter="ASSET") for head-to-head`);
+        // Dynamic tensions based on what the data actually shows
+        const tensions: string[] = [];
+
+        const shortMaturity = topOpps.filter(o => o.daysToMaturity < 21);
+        if (shortMaturity.length > 0) {
+          tensions.push(`${shortMaturity.length} result(s) mature in <21 days — short lock period amplifies entry cost impact`);
+        }
+
+        const lpDominant = topOpps.filter(o => o.bestStrategy === "lp");
+        if (lpDominant.length > topOpps.length * 0.5) {
+          tensions.push(`${lpDominant.length} of ${topOpps.length} results favor LP over PT — PENDLE incentives may be driving this (incentives depend on governance votes)`);
+        }
+
+        const capacityConstrained = topOpps.filter(o => capital_usd > o.capacityUsd * 0.8);
+        if (capacityConstrained.length > 0) {
+          tensions.push(`${capacityConstrained.length} result(s) near capacity at your capital size`);
+        }
+
+        const placeholderLoops = topOpps.filter(o => o.looping && !o.looping.marketKey);
+        if (placeholderLoops.length > 0) {
+          tensions.push(`${placeholderLoops.length} looping result(s) use placeholder rates — no Morpho market exists (creation is permissionless)`);
+        }
+
+        if (tensions.length > 0) {
+          lines.push(``);
+          lines.push(`--- Tensions in This Data ---`);
+          tensions.forEach(t => lines.push(`  ⚡ ${t}`));
+        }
 
         const text = lines.join("\n");
         return { content: [{ type: "text" as const, text }] };

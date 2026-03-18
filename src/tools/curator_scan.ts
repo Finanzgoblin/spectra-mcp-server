@@ -673,6 +673,34 @@ Use spectra_get_curator_dashboard for operational monitoring of an existing Meta
           text += `\nNote: veSPECTRA totalSupply unavailable (Base RPC unreachable) — boost calculations defaulted to min APY range.\n`;
         }
 
+        // Dynamic tensions based on what the data actually shows
+        const tensions: string[] = [];
+
+        const spectraCount = topOpps.filter(o => o.protocol === "spectra").length;
+        const pendleCount = topOpps.filter(o => o.protocol === "pendle").length;
+        if (spectraCount > 0 && pendleCount > 0) {
+          tensions.push(`Cross-protocol mix: ${spectraCount} Spectra + ${pendleCount} Pendle — same underlying may appear on both with different rates and maturity`);
+        } else if (spectraCount === 0 && topOpps.length > 0) {
+          tensions.push(`All results are Pendle — Spectra pools may exist but didn't meet filters at this capital size`);
+        } else if (pendleCount === 0 && topOpps.length > 0) {
+          tensions.push(`All results are Spectra — Pendle markets may offer different rates for the same underlying`);
+        }
+
+        const loopable = topOpps.filter(o => o.looping);
+        const noLoop = topOpps.filter(o => !o.looping);
+        if (loopable.length > 0 && noLoop.length > 0) {
+          tensions.push(`${loopable.length} result(s) have Morpho looping, ${noLoop.length} do not — looping absence means no market exists yet (creation is permissionless, curators typically seed these)`);
+        }
+
+        const shortMat = topOpps.filter(o => o.daysToMaturity < 21);
+        if (shortMat.length > 0) {
+          tensions.push(`${shortMat.length} result(s) mature in <21 days — entry cost amplified, rollover planning needed`);
+        }
+
+        if (tensions.length > 0) {
+          text += `\n\n--- Tensions in This Data ---\n` + tensions.map(t => `⚡ ${t}`).join("\n");
+        }
+
         return { content: [{ type: "text" as const, text: text + warningsSuffix }] };
       } catch (e: any) {
         const text = `Error scanning curator opportunities: ${e.message}`;

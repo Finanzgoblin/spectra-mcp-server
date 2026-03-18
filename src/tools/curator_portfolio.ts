@@ -78,6 +78,7 @@ function summarizeVault(mv: SpectraMetavault, chain: string): CuratorVaultSummar
     tvlUsd,
     liveApyTotal,
     liveApyBase,
+    idlePct: tvlUsd > 0 ? idlePct : null,
     positionCount: positions.length,
     actionItems,
   };
@@ -180,7 +181,12 @@ function formatCuratorPortfolio(p: CuratorPortfolioSummary): string {
   lines.push(`  Vaults:`);
   for (let i = 0; i < p.vaults.length; i++) {
     const v = p.vaults[i];
-    lines.push(`    ${i + 1}. ${v.name} (${v.chain}) -- ${formatCompactUsd(v.tvlUsd)} | APY ${formatPct(v.liveApyTotal)} | ${v.positionCount} position${v.positionCount !== 1 ? "s" : ""}`);
+    // Surface idle ratio and incentive dependency inline — don't make agents dig for it
+    const idleTag = v.idlePct != null && v.idlePct > 20 ? ` (${v.idlePct.toFixed(0)}% idle)` : "";
+    const baseTag = v.liveApyBase != null && v.liveApyTotal > 0 && v.liveApyBase < v.liveApyTotal
+      ? ` (base ${formatPct(v.liveApyBase)})`
+      : "";
+    lines.push(`    ${i + 1}. ${v.name} (${v.chain}) -- ${formatCompactUsd(v.tvlUsd)}${idleTag} | APY ${formatPct(v.liveApyTotal)}${baseTag} | ${v.positionCount} position${v.positionCount !== 1 ? "s" : ""}`);
     for (const item of v.actionItems) {
       lines.push(`       ${item}`);
     }
@@ -193,6 +199,21 @@ function formatCuratorPortfolio(p: CuratorPortfolioSummary): string {
       lines.push(`    ${item}`);
     }
   }
+
+  // ── Observation Boundaries ──
+  // Declare what this aggregation cannot see
+  lines.push(``);
+  lines.push(`--- What This View Cannot See ---`);
+  lines.push(`  - Idle capital detail: per-vault idle % is only flagged if >20%. Some vaults may have`);
+  lines.push(`    significant undeployed capital below this threshold. Use spectra_get_curator_dashboard per vault.`);
+  lines.push(`  - Incentive dependency: Blended APY includes incentive programs that may end.`);
+  lines.push(`    A portfolio showing 12% blended APY where 80% is incentive-driven has ~2.4% base yield.`);
+  lines.push(`    Use spectra_get_curator_dashboard on individual vaults to see APY composition.`);
+  lines.push(`  - Cross-chain exposure: positions bridged to other chains are not separated here.`);
+  lines.push(`    Bridge latency risk is invisible at the portfolio level.`);
+  lines.push(`  - Morpho leverage: if any vault uses Morpho looping, this view shows gross TVL`);
+  lines.push(`    not net exposure. Use morpho_monitor_risk(address) for leverage health.`);
+  lines.push(`  - Fee revenue projection assumes current TVL and APY hold. Both are variable.`);
 
   lines.push(``);
   lines.push(`--- Next Steps ---`);

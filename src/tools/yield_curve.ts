@@ -150,6 +150,7 @@ Use spectra_compare_yield for fixed-vs-variable analysis on a specific PT.`,
         // Curve shape analysis
         if (matched.length >= 2) {
           lines.push("");
+          lines.push("--- Curve Shape Analysis ---");
           const first = matched[0];
           const last = matched[matched.length - 1];
           const firstApy = first.pool.impliedApy || 0;
@@ -157,11 +158,20 @@ Use spectra_compare_yield for fixed-vs-variable analysis on a specific PT.`,
           const diff = lastApy - firstApy;
 
           if (Math.abs(diff) < 0.1) {
-            lines.push("Curve shape: Flat (similar rates across maturities)");
+            lines.push("Shape: Flat (similar rates across maturities)");
           } else if (diff > 0) {
-            lines.push("Curve shape: Normal (upward sloping — longer maturities pay more)");
+            lines.push("Shape: Normal (upward sloping — longer maturities pay more)");
           } else {
-            lines.push("Curve shape: Inverted (shorter maturities pay more — unusual, investigate)");
+            lines.push("Shape: Inverted (shorter maturities pay more than longer ones)");
+            lines.push("");
+            lines.push("  An inverted yield curve has multiple valid readings:");
+            lines.push("  (A) Near-term liquidity crunch — short pools are thin, so fewer");
+            lines.push("      sellers of PT drive prices down and yields up mechanically");
+            lines.push("  (B) Market expects rate compression — participants believe current");
+            lines.push("      high variable rates won't persist, so longer PT is priced closer to par");
+            lines.push("  (C) Maturity premium inversion — short maturities carry rollover risk");
+            lines.push("      costs that the market is pricing into a higher annualized rate");
+            lines.push("  Check pool liquidity at each maturity to distinguish (A) from (B)/(C).");
           }
 
           // Find steepest segment
@@ -187,6 +197,26 @@ Use spectra_compare_yield for fixed-vs-variable analysis on a specific PT.`,
             lines.push(`Steepest segment: ${daysPrev}d→${daysCurr}d (${sign}${formatPct(apyDelta)} over ${daysCurr - daysPrev} days)`);
           }
 
+          // Detect liquidity-rate divergence: high APY but low liquidity suggests
+          // the rate is a mechanical artifact of thin pools, not genuine demand
+          const liqRatePairs = matched.map(o => ({
+            days: daysToMaturity(o.pt.maturity),
+            apy: o.pool.impliedApy || 0,
+            liq: o.pool.liquidity?.usd || 0,
+            chain: o.chain,
+          }));
+          const highApyLowLiq = liqRatePairs.filter(p => p.liq > 0).sort((a, b) => b.apy - a.apy);
+          if (highApyLowLiq.length >= 2) {
+            const top = highApyLowLiq[0];
+            const medianLiq = [...highApyLowLiq].sort((a, b) => a.liq - b.liq)[Math.floor(highApyLowLiq.length / 2)].liq;
+            if (top.liq < medianLiq * 0.3 && top.apy > highApyLowLiq[1].apy * 1.3) {
+              lines.push("");
+              lines.push(`  Note: Highest APY maturity (${top.days}d, ${formatPct(top.apy)}) has significantly`);
+              lines.push(`  less liquidity (${formatUsd(top.liq)}) than the median (${formatUsd(medianLiq)}).`);
+              lines.push(`  The elevated rate may reflect thin liquidity rather than genuine yield demand.`);
+            }
+          }
+
           // Flag near-maturity cross-chain pairs (within 7 days)
           for (let i = 1; i < matched.length; i++) {
             const prev = matched[i - 1];
@@ -195,7 +225,15 @@ Use spectra_compare_yield for fixed-vs-variable analysis on a specific PT.`,
             const dayGap = Math.abs(daysToMaturity(curr.pt.maturity) - daysToMaturity(prev.pt.maturity));
             if (dayGap <= 7) {
               const apyDelta = Math.abs((curr.pool.impliedApy || 0) - (prev.pool.impliedApy || 0));
-              lines.push(`Cross-chain pair: ${formatDate(prev.pt.maturity)} ${prev.chain} vs ${curr.chain} — APY delta ${formatPct(apyDelta)}${apyDelta < 0.1 ? " (negligible, choose by liquidity)" : ""}`);
+              if (apyDelta < 0.1) {
+                lines.push(`Cross-chain pair: ${formatDate(prev.pt.maturity)} ${prev.chain} vs ${curr.chain} — APY delta ${formatPct(apyDelta)} (negligible, choose by liquidity)`);
+              } else {
+                lines.push(`Cross-chain pair: ${formatDate(prev.pt.maturity)} ${prev.chain} vs ${curr.chain} — APY delta ${formatPct(apyDelta)}`);
+                lines.push(`  Rate divergence at similar maturity across chains could indicate:`);
+                lines.push(`  (A) Different IBT protocols with different risk profiles`);
+                lines.push(`  (B) Liquidity imbalance — one pool is deeper, compressing its rate`);
+                lines.push(`  (C) Chain-specific incentive programs (Merkl, gauge) inflating one side`);
+              }
             }
           }
         }

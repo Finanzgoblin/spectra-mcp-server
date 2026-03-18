@@ -331,6 +331,42 @@ Use spectra_get_pool_activity to monitor recent trading patterns in the target p
           text += `\nNote: veSPECTRA totalSupply unavailable (Base RPC unreachable) — boost calculations defaulted to min APY range.\n`;
         }
 
+        // Spread interpretation context
+        const hasLargeSpread = topOpps.some(o => Math.abs(o.spreadPct) > 5);
+        const hasBreakEvenExceedingMaturity = topOpps.some(o => o.breakEvenDays > o.daysToMaturity);
+        const contextLines: string[] = [];
+
+        if (hasLargeSpread) {
+          contextLines.push(``);
+          contextLines.push(`--- Spread Interpretation ---`);
+          contextLines.push(`  Large YT spreads (>5%) have competing explanations:`);
+          contextLines.push(`  (A) Genuine mispricing — the market hasn't adjusted to recent rate changes.`);
+          contextLines.push(`      If IBT rates moved in the last 24-48h, YT prices lag because`);
+          contextLines.push(`      pool trades are infrequent. This is the alpha scenario.`);
+          contextLines.push(`  (B) Stale data — the "current APR" reported by the IBT is itself lagged`);
+          contextLines.push(`      (many vaults report smoothed/time-weighted rates). The spread may`);
+          contextLines.push(`      not exist at the true instantaneous rate.`);
+          contextLines.push(`  (C) Structural premium — the market is pricing in rate volatility risk.`);
+          contextLines.push(`      Variable rates can drop suddenly; YT holders bear that risk and`);
+          contextLines.push(`      demand compensation via a persistent spread.`);
+          contextLines.push(`  Check spectra_get_pool_activity for recent trading — active pools are`);
+          contextLines.push(`  more likely to reflect current pricing (scenario A is more plausible).`);
+          contextLines.push(`  Dormant pools with large spreads lean toward scenario (B) or (C).`);
+        }
+
+        if (hasBreakEvenExceedingMaturity) {
+          if (contextLines.length === 0) {
+            contextLines.push(``);
+            contextLines.push(`--- Spread Interpretation ---`);
+          }
+          contextLines.push(`  Some opportunities have break-even exceeding maturity. This means the`);
+          contextLines.push(`  entry cost (price impact) consumes more yield than the spread can deliver`);
+          contextLines.push(`  before the position expires. These are informational, not actionable at`);
+          contextLines.push(`  your capital size — a smaller position might clear the break-even threshold.`);
+        }
+
+        text += contextLines.join("\n");
+
         // Next-step hints
         const nextSteps = [
           ``,
