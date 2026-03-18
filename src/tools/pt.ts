@@ -190,8 +190,8 @@ LP APY, pool liquidity, pool reserves (IBT/PT amounts with ratio), IBT APR break
 (organic vs incentive yield), maturity redemption value, points multipliers, and asset tags.
 
 Metric definitions used across all Spectra tools:
-- TVL = underlying deposited into the PT (total value locked in the protocol sense)
-- Pool Liquidity / Depth = AMM depth (IBT + PT both sides of the Curve pool)
+- PT TVL = value of underlying deposited to mint PTs (pt.tvl in API)
+- Liquidity = AMM pool depth (IBT + PT both sides of the Curve pool, pool.liquidity in API)
 - Implied APY = annualized fixed rate from buying PT at discount
 - IBT APR = variable rate on the underlying vault (labeled APR, not compounded)
 
@@ -591,7 +591,7 @@ check your current positions. Use spectra_scan_opportunities for multi-chain com
           `  PT Discount: ${formatPct((1 - (pool.ptPrice?.underlying || 1)) * 100)}`,
           ``,
           `  Entry Cost at ${formatUsd(capital_usd)}:`,
-          `    Pool Depth (AMM): ${formatUsd(poolLiqUsd)}`,
+          `    Liquidity: ${formatUsd(poolLiqUsd)}`,
           `    Est. Price Impact: ~${formatPct(impactPct)} (conservative upper bound)`,
           `    Effective Fixed APY: ${formatPct(effectiveFixedApy)} (after amortizing entry cost over ${maturityDays} days)`,
           ``,

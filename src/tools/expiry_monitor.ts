@@ -428,7 +428,7 @@ Use spectra_list_pools to check if a successor pool has already been created.`,
                 `${urgencyIcon(p.daysLeft)} ${p.ibtSymbol} on ${p.chain} — ${p.daysLeft}d to maturity (${p.maturityDate})`
               );
               lines.push(
-                `    Underlying TVL: ${formatUsd(p.tvlUsd)} | Pool Depth: ${formatUsd(p.liquidityUsd)} | APY: ${formatPct(p.impliedApy)}`
+                `    PT TVL: ${formatUsd(p.tvlUsd)} | Liquidity: ${formatUsd(p.liquidityUsd)} | APY: ${formatPct(p.impliedApy)}`
               );
               lines.push(
                 `    IBT: ${p.ibtAddress} (${p.ibtProtocol})`

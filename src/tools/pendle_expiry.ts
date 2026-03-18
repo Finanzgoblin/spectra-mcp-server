@@ -139,7 +139,7 @@ Use pendle_get_yield_curve to find replacement maturities.`,
           entryLines.push(`  #${rank} ${e.name} (${PENDLE_CHAIN_NAMES[e.chain] || e.chain})`);
           entryLines.push(`    Expiry: ${e.expiryDate} (${e.daysLeft} days)`);
           entryLines.push(`    Implied APY: ${formatPct(e.impliedApy)} | LP APY: ${formatPct(e.lpApy)}`);
-          entryLines.push(`    TVL: ${formatUsd(e.tvlUsd)} | Pool Depth: ${formatUsd(e.liquidityUsd)}`);
+          entryLines.push(`    TVL: ${formatUsd(e.tvlUsd)} | Liquidity: ${formatUsd(e.liquidityUsd)}`);
           entryLines.push(`    Market: ${e.marketAddress}`);
           return entryLines.join("\n");
         };
