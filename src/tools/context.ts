@@ -577,8 +577,9 @@ async function fetchProtocolPulse(): Promise<string> {
     const { opportunities, failedChains } = poolsResult.value;
     const activePools = opportunities.length;
 
-    // TVL across all pools
+    // TVL and Liquidity across all pools
     const totalTvl = opportunities.reduce((sum, o) => sum + (o.pt.tvl?.usd || 0), 0);
+    const totalLiquidity = opportunities.reduce((sum, o) => sum + (o.pool.liquidity?.usd || 0), 0);
 
     // Unique chains with active pools
     const activeChains = new Set(opportunities.map(o => o.chain));
@@ -586,11 +587,12 @@ async function fetchProtocolPulse(): Promise<string> {
     // Pools expiring within 14 days
     const expiringCount = opportunities.filter(o => daysToMaturity(o.pt.maturity) <= 14).length;
 
-    // Count pools with gauges (heuristic: pools with LP APY > 0 likely have gauges)
-    // Can't get exact gauge count without governance API call, so show pool count only
-
     lines.push(`  Active Pools:     ${activePools} across ${activeChains.size} chains`);
     lines.push(`  Total TVL:        ${formatUsd(totalTvl)}`);
+    lines.push(`  Total Liquidity:  ${formatUsd(totalLiquidity)}`);
+    if (totalTvl > 0 && totalLiquidity > totalTvl * 1.3) {
+      lines.push(`  ⚡ Liquidity ${(totalLiquidity / totalTvl).toFixed(1)}x TVL — pools are deeper than TVL suggests`);
+    }
     lines.push(`  Expiring ≤14d:    ${expiringCount}`);
     if (failedChains.length > 0) {
       lines.push(`  [missed chains:   ${failedChains.join(", ")}]`);
