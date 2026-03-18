@@ -1989,7 +1989,7 @@ describe("formatPendleMarketSummary", () => {
   it("includes TVL, liquidity, volume, fee rate", () => {
     const result = formatPendleMarketSummary(makePendleMarket(), "ethereum");
     assert.ok(result.includes("TVL:"), "Should include TVL");
-    assert.ok(result.includes("Pool Liquidity:"), "Should include liquidity");
+    assert.ok(result.includes("Pool Liquidity (AMM depth):"), "Should include liquidity");
     assert.ok(result.includes("24h Volume:"), "Should include volume");
     assert.ok(result.includes("Fee Rate:"), "Should include fee rate");
   });

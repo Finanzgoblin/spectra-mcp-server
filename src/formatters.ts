@@ -89,7 +89,7 @@ export function formatPoolCompact(pt: SpectraPt, pool: SpectraPool, chain: strin
   const points = pt.multipliers && pt.multipliers.length > 0
     ? ` | Points: ${pt.multipliers.map(m => `${m.name} ${m.amount}x`).join(", ")}`
     : "";
-  return `${pt.name} (${chain}) | APY ${apy} | TVL ${tvl} | Liq ${liq} | ${days}d${lpApy} | PT: ${pt.address} | Pool: ${pool.address || "?"}${ibtAddr}${tags}${points}`;
+  return `${pt.name} (${chain}) | APY ${apy} | Underlying ${tvl} | Depth ${liq} | ${days}d${lpApy} | PT: ${pt.address} | Pool: ${pool.address || "?"}${ibtAddr}${tags}${points}`;
 }
 
 /** One-line scan opportunity summary for compact output. */
@@ -183,12 +183,12 @@ export function formatPoolSummary(pt: SpectraPt, pool: SpectraPool, chain: strin
     `  PT Address: ${pt.address}`,
     `  Pool Address: ${pool.address || "unknown"}`,
     `  Maturity: ${formatDate(pt.maturity)} (${daysToMaturity(pt.maturity)} days)`,
-    `  TVL: ${formatUsd(pt.tvl?.usd || 0)}`,
+    `  TVL (underlying deposited): ${formatUsd(pt.tvl?.usd || 0)}`,
     `  Implied APY: ${formatPct(pool.impliedApy || 0)}`,
     `  PT Price: ${formatUsd(pool.ptPrice?.usd || 0)}${pool.ptPrice?.underlying != null ? ` (${pool.ptPrice.underlying.toFixed(6)} underlying)` : ""}`,
     `  YT Price: ${formatUsd(pool.ytPrice?.usd || 0)}`,
     `  YT Leverage: ${(pool.ytLeverage || 0).toFixed(1)}x`,
-    `  Pool Liquidity: ${formatUsd(pool.liquidity?.usd || 0)}`,
+    `  Pool Liquidity (AMM depth): ${formatUsd(pool.liquidity?.usd || 0)}`,
   ];
 
   // Pool reserves — surface IBT/PT composition for AMM imbalance analysis
@@ -2351,7 +2351,7 @@ export function formatScanOpportunity(opp: ScanOpportunity, rank: number, boostI
   lines.push(`    Maturity: ${formatDate(opp.maturityTimestamp)} (${opp.daysToMaturity} days)`);
 
   // Pool size
-  lines.push(`    TVL: ${formatUsd(opp.tvlUsd)} | Pool Liquidity: ${formatUsd(opp.poolLiquidityUsd)}`);
+  lines.push(`    Underlying TVL: ${formatUsd(opp.tvlUsd)} | Pool Depth: ${formatUsd(opp.poolLiquidityUsd)}`);
 
   // Capital-aware impact
   lines.push(`    Entry Impact: ~${formatPct(opp.entryImpactPct)} | Capacity: ~${formatUsd(opp.capacityUsd)} at <threshold`);
@@ -2572,7 +2572,7 @@ export function formatYtArbitrageOpportunity(opp: YtArbitrageOpportunity, rank: 
   lines.push(`    Maturity: ${formatDate(opp.maturityTimestamp)} (${opp.daysToMaturity} days)`);
 
   // Size
-  lines.push(`    TVL: ${formatUsd(opp.tvlUsd)} | Pool Liquidity: ${formatUsd(opp.poolLiquidityUsd)}`);
+  lines.push(`    Underlying TVL: ${formatUsd(opp.tvlUsd)} | Pool Depth: ${formatUsd(opp.poolLiquidityUsd)}`);
 
   // Capital-aware
   lines.push(`    Entry Impact: ~${formatPct(opp.entryImpactPct)} | Capacity: ~${formatUsd(opp.capacityUsd)}`);
@@ -3598,7 +3598,7 @@ export function formatPendleMarketSummary(m: PendleMarket, chain: string, merklC
 
   lines.push(``);
   lines.push(`  TVL: ${formatUsd(d.totalTvl)}`);
-  lines.push(`  Pool Liquidity: ${formatUsd(d.liquidity)}`);
+  lines.push(`  Pool Liquidity (AMM depth): ${formatUsd(d.liquidity)}`);
   lines.push(`  24h Volume: ${formatUsd(d.tradingVolume)}`);
   lines.push(`  Fee Rate: ${formatPct(d.feeRate * 100)}`);
   if (d.totalPt > 0 || d.totalSy > 0) {
@@ -3648,7 +3648,7 @@ export function formatPendleSpectraComparison(opts: {
   };
 
   row("Implied APY (Fixed)",  formatPct(spectraImplied), formatPct(pendleImplied), formatPct(spectraImplied - pendleImplied));
-  row("Variable APY",         formatPct(spectraVar),     formatPct(pendleVar),     formatPct(spectraVar - pendleVar));
+  row("Variable Rate",         formatPct(spectraVar),     formatPct(pendleVar),     formatPct(spectraVar - pendleVar));
   row("LP APY",               formatPct(spectraLp),      formatPct(pendleLp),      formatPct(spectraLp - pendleLp));
 
   // LP APY breakdown
@@ -3665,7 +3665,7 @@ export function formatPendleSpectraComparison(opts: {
     row("  Max Boosted LP",   formatPct(spectraBoosted), formatPct(pendleBoosted), formatPct(spectraBoosted - pendleBoosted));
   }
 
-  row("Pool Liquidity",       formatUsd(spectraLiq),     formatUsd(pendleLiq),     formatUsd(spectraLiq - pendleLiq));
+  row("Pool Depth (AMM)",      formatUsd(spectraLiq),     formatUsd(pendleLiq),     formatUsd(spectraLiq - pendleLiq));
   row("TVL",                  formatUsd(spectraTvl),     formatUsd(pendleTvl),     formatUsd(spectraTvl - pendleTvl));
   row("Days to Maturity",     `${spectraDays}d`,         `${pendleDays}d`,         `${spectraDays - pendleDays}d`);
 
@@ -3923,7 +3923,7 @@ export function formatCuratorOpportunity(opp: CuratorOpportunity, rank: number):
 
   lines.push(`  #${rank} [${proto}] ${opp.name} — ${opp.chain}`);
   lines.push(`    Underlying: ${opp.underlying} | Maturity: ${new Date(opp.maturityTimestamp * 1000).toISOString().slice(0, 10)} (${opp.daysToMaturity}d)`);
-  lines.push(`    TVL: ${formatUsd(opp.tvlUsd)} | Liquidity: ${formatUsd(opp.poolLiquidityUsd)} | Entry Impact: ${formatPct(opp.entryImpactPct)} | Capacity: ${formatUsd(opp.capacityUsd)}`);
+  lines.push(`    Underlying TVL: ${formatUsd(opp.tvlUsd)} | Pool Depth: ${formatUsd(opp.poolLiquidityUsd)} | Entry Impact: ${formatPct(opp.entryImpactPct)} | Capacity: ${formatUsd(opp.capacityUsd)}`);
 
   // Strategy Space — all building blocks, no single "best" collapsed
   lines.push(``);

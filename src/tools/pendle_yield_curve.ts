@@ -117,7 +117,7 @@ Use mv_compare_yield for Spectra vs Pendle comparison on the same underlying.`,
         lines.push("");
 
         if (compact) {
-          const hdr = "Maturity     | Days | Impl. APY |   LP APY |       TVL | Liquidity | Chain     | Market Address";
+          const hdr = "Maturity     | Days | Impl. APY |   LP APY |       TVL | Pool Depth | Chain     | Market Address";
           lines.push(hdr);
           lines.push("─".repeat(hdr.length));
 
@@ -143,7 +143,7 @@ Use mv_compare_yield for Spectra vs Pendle comparison on the same underlying.`,
             lines.push(`  Implied APY: ${formatPct(d.impliedApy * 100)}`);
             lines.push(`  LP APY: ${formatPct(d.aggregatedApy * 100)}`);
             lines.push(`  Underlying APY: ${formatPct(d.underlyingApy * 100)}`);
-            lines.push(`  TVL: ${formatUsd(d.totalTvl)} | Liquidity: ${formatUsd(d.liquidity)}`);
+            lines.push(`  TVL: ${formatUsd(d.totalTvl)} | Pool Depth: ${formatUsd(d.liquidity)}`);
             lines.push(`  Market: ${market.address}`);
             lines.push("");
           }

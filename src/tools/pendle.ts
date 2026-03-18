@@ -360,7 +360,7 @@ Use spectra_scan_opportunities for Spectra-native capital-aware ranking.`,
 
           lines.push(`--- Aggregate Stats ---`);
           lines.push(`  Avg Implied APY:  Spectra ${formatPct(avgSpectraImpl)} | Pendle ${formatPct(avgPendleImpl)}`);
-          lines.push(`  Total TVL:        Spectra ${formatUsd(totalSpectraTvl)} | Pendle ${formatUsd(totalPendleTvl)}`);
+          lines.push(`  Total TVL:        Spectra ${formatUsd(totalSpectraTvl)} | Pendle ${formatUsd(totalPendleTvl)}  (different APIs — not directly comparable)`);
 
           // Surface protocol-level disagreements as signals
           const implDiff = Math.abs(avgSpectraImpl - avgPendleImpl);

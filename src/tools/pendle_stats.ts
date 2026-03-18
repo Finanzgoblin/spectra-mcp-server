@@ -145,7 +145,7 @@ Use mv_scan_curator_opportunities for cross-protocol ranking.`,
 
         // Per-chain breakdown
         lines.push(`  Per-Chain Breakdown:`);
-        const hdr = "  Chain          | Markets |       TVL |  Liquidity |   24h Vol | Avg Impl | Avg LP | Spectra";
+        const hdr = "  Chain          | Markets |       TVL | Pool Depth |   24h Vol | Avg Impl | Avg LP | Spectra";
         lines.push(hdr);
         lines.push(`  ${"─".repeat(hdr.length - 2)}`);
 
