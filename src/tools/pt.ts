@@ -555,8 +555,9 @@ check your current positions. Use spectra_scan_opportunities for multi-chain com
         const lines = [
           `-- Yield Comparison: ${pt.underlying?.symbol || "?"} --`,
           ``,
-          `  Fixed (Spectra PT):   ${formatPct(fixedApy)} APY`,
-          `  Variable (${pt.ibt?.symbol || "IBT"}${pt.ibt?.address ? ` @ ${pt.ibt.address}` : ""}):   ${formatPct(variableApr)} APR`,
+          `  Fixed (Spectra PT):   ${formatPct(fixedApy)} APY (compounded)`,
+          `  Variable (${pt.ibt?.symbol || "IBT"}${pt.ibt?.address ? ` @ ${pt.ibt.address}` : ""}):   ${formatPct(variableApr)} APR (simple, not compounded)`,
+          `  Note: APR vs APY — at ${formatPct(variableApr)}, the difference is ~${formatPct(variableApr > 0 ? (Math.pow(1 + variableApr / 36500, 365) - 1) * 100 - variableApr : 0)}. Matters more at higher rates.`,
         ];
 
         // IBT APR breakdown — surface composition so agents can reason about variable rate sources
@@ -583,12 +584,12 @@ check your current positions. Use spectra_scan_opportunities for multi-chain com
           `  PT Discount: ${formatPct((1 - (pool.ptPrice?.underlying || 1)) * 100)}`,
           ``,
           `  Entry Cost at ${formatUsd(capital_usd)}:`,
-          `    Pool Liquidity: ${formatUsd(poolLiqUsd)}`,
+          `    Pool Depth (AMM): ${formatUsd(poolLiqUsd)}`,
           `    Est. Price Impact: ~${formatPct(impactPct)} (conservative upper bound)`,
           `    Effective Fixed APY: ${formatPct(effectiveFixedApy)} (after amortizing entry cost over ${maturityDays} days)`,
           ``,
-          `  Spread after entry cost: ${effectiveFixedApy > variableApr ? "+" : ""}${formatPct(effectiveFixedApy - variableApr)} (effective fixed minus variable)`,
-          `  Spread before entry cost: ${fixedApy > variableApr ? "+" : ""}${formatPct(fixedApy - variableApr)} (raw fixed minus variable)`,
+          `  Spread after entry cost: ${effectiveFixedApy > variableApr ? "+" : ""}${formatPct(effectiveFixedApy - variableApr)} (effective fixed APY minus variable APR)`,
+          `  Spread before entry cost: ${fixedApy > variableApr ? "+" : ""}${formatPct(fixedApy - variableApr)} (raw fixed APY minus variable APR)`,
           `  Entry cost narrows spread by ${formatPct(annualizedEntryCost)} annualized — scales with trade size relative to pool depth.`,
           ``,
           `  LP Alternative: ${formatPct(lpData.lpApy)} APY (${lpParts.join(" + ")})`,

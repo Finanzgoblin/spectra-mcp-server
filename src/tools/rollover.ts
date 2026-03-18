@@ -50,7 +50,7 @@ function formatRolloverCandidate(c: RolloverCandidate, rank: number): string {
   lines.push(`    Maturity: ${formatDate(c.maturityTimestamp)} (${c.daysToMaturity}d)`);
   lines.push(`    Implied APY: ${formatPct(c.impliedApy)}  |  LP APY: ${formatPct(c.lpApy)}`);
   lines.push(`    Entry Impact: ${formatPct(c.entryImpactPct)}  |  Effective APY: ${formatPct(c.effectiveApy)}`);
-  lines.push(`    Pool Liquidity: ${formatUsd(c.poolLiquidityUsd)}  |  TVL: ${formatUsd(c.tvlUsd)}`);
+  lines.push(`    Pool Depth: ${formatUsd(c.poolLiquidityUsd)}  |  Underlying TVL: ${formatUsd(c.tvlUsd)}`);
 
   if (c.yieldGapDays > 0) {
     lines.push(`    Yield Gap: ${c.yieldGapDays}d of zero yield during transition`);

@@ -104,8 +104,8 @@ Pendle chains: ${PENDLE_CHAIN_KEYS.map((k) => PENDLE_CHAIN_NAMES[k]).join(", ")}
           const liq = formatUsd(d.liquidity);
 
           lines.push(`  #${i + 1} ${market.name} (${PENDLE_CHAIN_NAMES[c] || c})`);
-          lines.push(`     Fixed: ${impliedPct}  |  Variable: ${varPct}  |  LP: ${lpPct}`);
-          lines.push(`     TVL: ${tvl}  |  Liquidity: ${liq}  |  Maturity: ${days}d`);
+          lines.push(`     Fixed (APY): ${impliedPct}  |  Variable (APY): ${varPct}  |  LP: ${lpPct}`);
+          lines.push(`     TVL: ${tvl}  |  Pool Depth: ${liq}  |  Maturity: ${days}d`);
           lines.push(`     Market: ${market.address}`);
           lines.push(``);
         }
