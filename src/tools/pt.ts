@@ -44,8 +44,11 @@ Protocol context:
 - IBT APR breakdown shows organic yield vs external incentive programs. High APR from
   incentives alone may not be sustainable.
 
-Includes external Merkl campaign APR when available (incentive programs beyond the
-native IBT yield). Merkl campaigns are fetched best-effort and shown alongside pool data.
+Includes external Merkl campaign APR when available.
+
+Output surfaces conditional competing interpretations when data is ambiguous — e.g.,
+PT above par, skewed reserves, high APY with thin liquidity, or incentive-dominated APR.
+These appear only when triggered by the specific data returned.
 
 Use spectra_compare_yield to compare fixed vs. variable rates. Use spectra_get_looping_strategy to
 calculate leveraged fixed yield via Morpho. Use spectra_get_portfolio to check wallet holdings.
@@ -186,15 +189,20 @@ Returns a summary of each pool including: asset name, maturity, TVL, implied APY
 LP APY, pool liquidity, pool reserves (IBT/PT amounts with ratio), IBT APR breakdown
 (organic vs incentive yield), maturity redemption value, points multipliers, and asset tags.
 
-Each pool is a Curve StableSwap-NG AMM pair of IBT (interest-bearing token) and PT
-(Principal Token). Implied APY is the fixed rate you lock in by buying PT at discount.
+Metric definitions used across all Spectra tools:
+- TVL = underlying deposited into the PT (total value locked in the protocol sense)
+- Pool Liquidity / Depth = AMM depth (IBT + PT both sides of the Curve pool)
+- Implied APY = annualized fixed rate from buying PT at discount
+- IBT APR = variable rate on the underlying vault (labeled APR, not compounded)
+
+Each pool is a Curve StableSwap-NG AMM pair of IBT and PT.
 LP APY is the yield from providing liquidity to the pool (fees + gauge emissions).
 
 Set include_expired=true to also show recently matured pools (if the API returns them).
 By default only active (non-expired) pools are shown.
 
-Includes external Merkl campaign APR when available (incentive programs like KAT rewards
-that supplement native pool yield). Merkl data is fetched best-effort per chain.
+Includes external Merkl campaign APR when available. Output surfaces conditional
+competing interpretations when data is ambiguous (e.g., high APY with thin liquidity).
 
 For multi-chain discovery, use spectra_get_best_fixed_yields (raw APY ranking) or
 spectra_scan_opportunities (capital-aware with price impact and looping analysis).
@@ -463,14 +471,13 @@ interest-bearing token. Helps users decide if locking in a fixed rate is worthwh
 versus staying in the variable-rate position.
 
 Protocol context:
-- The fixed rate comes from buying PT at a discount. Entry cost (price impact from the
-  AMM trade) is amortized over days to maturity — shorter maturity means higher annualized
-  entry cost, longer maturity spreads the cost thin.
-- Variable rate (IBT APR) fluctuates continuously. The fixed rate locks in at purchase.
-- LP alternative: providing liquidity to the Curve pool earns trading fees + SPECTRA
-  gauge emissions. This is a third option alongside fixed (PT) and variable (IBT).
+- Fixed rate is labeled "implied APY" (annualized, compounded). Variable rate is labeled
+  "IBT APR" (not compounded). LP yield is labeled "LP APY". Each is labeled at point of use.
+- Entry cost (price impact) is amortized over days to maturity.
+- LP alternative: providing liquidity earns trading fees + SPECTRA gauge emissions.
 
-Includes external Merkl campaign APR when available, shown alongside LP and IBT data.
+Output surfaces competing interpretations when the data is ambiguous — e.g., positive
+raw spread but negative effective spread after entry cost, or incentive-dominated variable rate.
 
 Use spectra_get_looping_strategy to lever up the fixed yield via Morpho. Use spectra_get_portfolio to
 check your current positions. Use spectra_scan_opportunities for multi-chain comparison.`,

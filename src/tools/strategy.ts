@@ -20,11 +20,12 @@ import {
   SUPPORTED_CHAINS,
   resolveNetwork,
 } from "../config.js";
-import type { ScanOpportunity, MerklCampaign } from "../types.js";
+import type { ScanOpportunity, SpectraMetavault, MerklCampaign } from "../types.js";
 import { scanAllChainPools, scanAllMetavaults, findMorphoMarketsForPts, fetchVeTotalSupply, fetchMerklCampaigns, lookupMerklCampaigns } from "../api.js";
 import {
   formatPct,
   formatUsd,
+  formatDate,
   daysToMaturity,
   estimatePriceImpact,
   estimateLpDepositImpact,
@@ -73,6 +74,9 @@ more opportunities, especially at smaller capital sizes.
 Effective APY is a conservative lower bound (constant-product impact model). Real Curve
 StableSwap-NG pools are more capital-efficient. Verify top picks with spectra_quote_trade().
 
+Output includes conditional competing interpretations when rankings are ambiguous —
+e.g., thin-liquidity pools dominating the ranking, or MetaVaults with high idle ratios.
+
 Use spectra_get_looping_strategy to drill into a specific opportunity's leverage details.
 Use spectra_get_pool_activity and spectra_get_portfolio to investigate trading patterns and positions.
 Use spectra_model_metavault to model MetaVault looping economics.`,
@@ -116,6 +120,10 @@ Use spectra_model_metavault to model MetaVault looping economics.`,
         .boolean()
         .default(false)
         .describe("If true, return one-line-per-opportunity output (much shorter). Omit for full details."),
+      envelope: z
+        .boolean()
+        .default(false)
+        .describe("If true, return structured two-block response: JSON data + narrative layer. Enables programmatic extraction while preserving interpretive content. Overridden by compact mode."),
       ve_spectra_balance: z
         .number()
         .min(0)
@@ -133,6 +141,7 @@ Use spectra_model_metavault to model MetaVault looping economics.`,
       include_metavaults,
       ve_spectra_balance,
       compact,
+      envelope,
     }) => {
       const topN = Math.min(Math.max(1, rawTopN), 50);
 
@@ -439,8 +448,75 @@ Use spectra_model_metavault to model MetaVault looping economics.`,
           return { content: [{ type: "text" as const, text: lines.join("\n") }] };
         }
 
+        // ================================================================
+        // PHASE 4b: Filter MetaVaults (shared by all output modes)
+        // ================================================================
+
+        let filteredMvs: Array<{ metavault: SpectraMetavault; chain: string }> = [];
+        if (include_metavaults && metavaultResult.metavaults.length > 0) {
+          filteredMvs = metavaultResult.metavaults;
+          if (asset_filter) {
+            const filterLower = asset_filter.toLowerCase();
+            filteredMvs = filteredMvs.filter(({ metavault }) =>
+              (metavault.underlying?.symbol || "").toLowerCase().includes(filterLower)
+            );
+          }
+          filteredMvs = filteredMvs.filter(({ metavault }) =>
+            (metavault.tvl?.usd || 0) >= min_tvl_usd
+          );
+        }
+
+        // ================================================================
+        // PHASE 4c: Build dynamic tensions (shared by all output modes)
+        // ================================================================
+
+        const tensions: string[] = [];
+
+        const gaugeDependent = topOpps.filter(o => {
+          const gaugeTotal = Object.values(o.lpApyBreakdown.boostedRewards).reduce((s, r) => s + (r.min || 0), 0);
+          return gaugeTotal > 0 && gaugeTotal > (o.lpApy * 0.5);
+        });
+        if (gaugeDependent.length > 0) {
+          tensions.push(`${gaugeDependent.length} of ${topOpps.length} results derive >50% of LP APY from gauge emissions — gauge votes reset weekly`);
+        }
+
+        const placeholderLoops = topOpps.filter(o => o.looping && o.warnings.some(w => w.toLowerCase().includes("placeholder") || w.toLowerCase().includes("not from a real")));
+        if (placeholderLoops.length > 0) {
+          tensions.push(`${placeholderLoops.length} result(s) show looping APY based on placeholder borrow rates — no Morpho market exists yet (market creation is permissionless)`);
+        }
+
+        const shortMaturity = topOpps.filter(o => o.daysToMaturity < 21);
+        if (shortMaturity.length > 0) {
+          tensions.push(`${shortMaturity.length} result(s) mature in <21 days — entry cost amortizes over a shorter period, amplifying impact on effective APY`);
+        }
+
+        const capacityConstrained = topOpps.filter(o => capital_usd > o.capacityUsd * 0.8);
+        if (capacityConstrained.length > 0) {
+          tensions.push(`${capacityConstrained.length} result(s) are near capacity at your capital size — actual entry impact may exceed estimates`);
+        }
+
+        const highEntryCost = topOpps.filter(o => o.impliedApy > 0 && (o.impliedApy - o.effectiveApy) / o.impliedApy > 0.25);
+        if (highEntryCost.length > 0) {
+          tensions.push(`${highEntryCost.length} result(s) lose >25% of implied APY to entry cost at your capital size`);
+        }
+
+        // ================================================================
+        // PHASE 5: Build output — envelope, compact, or full prose
+        // ================================================================
+
         const truncNote = indexed.length > topN ? ` (showing top ${topOpps.length} of ${indexed.length})` : "";
 
+        // ── Envelope mode: structured JSON + narrative layer ──
+        if (envelope && !compact) {
+          return buildEnvelopeResponse(
+            topOpps, topBoostInfos, filteredMvs, tensions,
+            capital_usd, max_price_impact_pct, asset_filter,
+            failedChains, include_looping, merklAvailable, veDataAvailable,
+            ve_spectra_balance, indexed.length,
+          );
+        }
+
+        // ── Compact mode or standard prose ──
         let text: string;
         if (compact) {
           const lines = [`== Opportunity Scan: ${formatUsd(capital_usd)} capital ==`];
@@ -463,7 +539,7 @@ Use spectra_model_metavault to model MetaVault looping economics.`,
           include_looping,
           ve_spectra_balance,
           topBoostInfos,
-          indexed.length,  // total before truncation
+          indexed.length,
         );
         }
 
@@ -474,27 +550,8 @@ Use spectra_model_metavault to model MetaVault looping economics.`,
           text += `\nNote: veSPECTRA totalSupply unavailable (Base RPC unreachable) — boost calculations defaulted to min APY range.\n`;
         }
 
-        // ================================================================
-        // PHASE 5: Append MetaVault alternatives
-        // ================================================================
-
-        if (include_metavaults && metavaultResult.metavaults.length > 0) {
-          // Filter by asset_filter (case-insensitive match on underlying symbol)
-          let filteredMvs = metavaultResult.metavaults;
-          if (asset_filter) {
-            const filterLower = asset_filter.toLowerCase();
-            filteredMvs = filteredMvs.filter(({ metavault }) =>
-              (metavault.underlying?.symbol || "").toLowerCase().includes(filterLower)
-            );
-          }
-          // Filter by min_tvl_usd
-          filteredMvs = filteredMvs.filter(({ metavault }) =>
-            (metavault.tvl?.usd || 0) >= min_tvl_usd
-          );
-
-          if (filteredMvs.length > 0) {
-            text += formatMetavaultScanSection(filteredMvs, compact);
-          }
+        if (filteredMvs.length > 0) {
+          text += formatMetavaultScanSection(filteredMvs, compact);
         }
 
         // Next-step hints referencing top opportunity
@@ -508,7 +565,6 @@ Use spectra_model_metavault to model MetaVault looping economics.`,
           `• Compare with YT arb: spectra_scan_yt_arbitrage(capital_usd=${capital_usd}) for spread-based opportunities`,
         ];
 
-        // Add MetaVault modeling hint if any were shown
         if (include_metavaults && metavaultResult.metavaults.length > 0) {
           const topMv = metavaultResult.metavaults
             .sort((a, b) => (b.metavault.liveApy?.total || 0) - (a.metavault.liveApy?.total || 0))[0];
@@ -517,46 +573,9 @@ Use spectra_model_metavault to model MetaVault looping economics.`,
           }
         }
 
-        // Cross-protocol pointer — Pendle markets may offer competitive yields
         nextStepLines.push(`• Cross-protocol: mv_scan_curator_opportunities(capital_usd=${capital_usd}) for unified Spectra + Pendle ranking`);
 
         text += nextStepLines.join("\n");
-
-        // Dynamic tensions — surface what the DATA shows, not static caveats
-        const tensions: string[] = [];
-
-        // How much of the top results' APY comes from gauge emissions vs organic yield?
-        const gaugeDependent = topOpps.filter(o => {
-          const gaugeTotal = Object.values(o.lpApyBreakdown.boostedRewards).reduce((s, r) => s + (r.min || 0), 0);
-          return gaugeTotal > 0 && gaugeTotal > (o.lpApy * 0.5);
-        });
-        if (gaugeDependent.length > 0) {
-          tensions.push(`${gaugeDependent.length} of ${topOpps.length} results derive >50% of LP APY from gauge emissions — gauge votes reset weekly`);
-        }
-
-        // Looping on placeholder assumptions?
-        const placeholderLoops = topOpps.filter(o => o.looping && o.warnings.some(w => w.toLowerCase().includes("placeholder") || w.toLowerCase().includes("not from a real")));
-        if (placeholderLoops.length > 0) {
-          tensions.push(`${placeholderLoops.length} result(s) show looping APY based on placeholder borrow rates — no Morpho market exists yet (market creation is permissionless)`);
-        }
-
-        // Very short maturity — entry cost dominates
-        const shortMaturity = topOpps.filter(o => o.daysToMaturity < 21);
-        if (shortMaturity.length > 0) {
-          tensions.push(`${shortMaturity.length} result(s) mature in <21 days — entry cost amortizes over a shorter period, amplifying impact on effective APY`);
-        }
-
-        // Capital size vs pool capacity
-        const capacityConstrained = topOpps.filter(o => capital_usd > o.capacityUsd * 0.8);
-        if (capacityConstrained.length > 0) {
-          tensions.push(`${capacityConstrained.length} result(s) are near capacity at your capital size — actual entry impact may exceed estimates`);
-        }
-
-        // Wide spread between effective APY and implied APY (entry cost eating yield)
-        const highEntryCost = topOpps.filter(o => o.impliedApy > 0 && (o.impliedApy - o.effectiveApy) / o.impliedApy > 0.25);
-        if (highEntryCost.length > 0) {
-          tensions.push(`${highEntryCost.length} result(s) lose >25% of implied APY to entry cost at your capital size`);
-        }
 
         if (tensions.length > 0) {
           text += `\n\n--- Tensions in This Data ---\n` + tensions.map(t => `⚡ ${t}`).join("\n");
@@ -569,4 +588,365 @@ Use spectra_model_metavault to model MetaVault looping economics.`,
       }
     }
   );
+}
+
+// =============================================================================
+// Envelope Builder — structured JSON + narrative layer
+// =============================================================================
+
+interface EnvelopeOpportunity {
+  rank: number;
+  name: string;
+  chain: string;
+  ptAddress: string;
+  poolAddress: string;
+  ibtAddress: string;
+  maturity: string;
+  daysToMaturity: number;
+  tvlUsd: number;
+  poolLiquidityUsd: number;
+  entryImpactPct: number;
+  capacityUsd: number;
+  impliedApy: number;
+  effectiveApy: number;
+  variableApr: number;
+  fixedVsVariableSpread: number;
+  sortApy: number;
+  lpApy: number;
+  lpApyMaxBoost: number;
+  lpBreakdown: {
+    fees: number;
+    pt: number;
+    ibt: number;
+    rewards: Record<string, number>;
+    spectraGauge: Record<string, { min: number; max: number }>;
+  };
+  ibtApr: {
+    total: number;
+    base: number | null;
+    rewards: Record<string, number>;
+  };
+  underlying: string;
+  ibtSymbol: string;
+  ibtProtocol: string;
+  looping: {
+    morphoMarketKey: string;
+    lltv: number;
+    borrowRatePct: number;
+    optimalLoops: number;
+    optimalLeverage: number;
+    optimalNetApy: number;
+    optimalEffectiveNetApy: number;
+    cumulativeEntryImpactPct: number;
+    morphoLiquidityUsd: number;
+    loopCurve: Array<{ loop: number; leverage: number; netApy: number }>;
+  } | null;
+  poolReserves: { ibt: number; pt: number; ratio: number } | null;
+  tags: string[];
+  points: Array<{ name: string; amount: number }>;
+  merklCampaigns: Array<{ name: string; apr: number; action: string; rewardTokens: string[] }>;
+  warnings: string[];
+}
+
+interface EnvelopeMetavault {
+  name: string;
+  symbol: string;
+  chain: string;
+  address: string;
+  underlying: string;
+  tvlUsd: number;
+  liveApyTotal: number;
+  liveApyBase: number | null;
+  curator: string;
+  activePositions: number;
+}
+
+interface EnvelopeData {
+  scan: {
+    capitalUsd: number;
+    maxImpactPct: number;
+    assetFilter: string | null;
+    loopingEnabled: boolean;
+    resultCount: number;
+    totalBeforeFilter: number;
+    failedChains: string[];
+    merklAvailable: boolean;
+    veDataAvailable: boolean;
+    veSpectraBalance: number | null;
+  };
+  opportunities: EnvelopeOpportunity[];
+  metavaults: EnvelopeMetavault[];
+}
+
+function serializeOpportunity(opp: ScanOpportunity, rank: number): EnvelopeOpportunity {
+  // Pool reserves
+  let poolReserves: EnvelopeOpportunity["poolReserves"] = null;
+  if (opp.pool.ibtAmount && opp.pool.ptAmount) {
+    const ibtDec = opp.pt.ibt?.decimals ?? 18;
+    const ptDec = opp.pt.decimals ?? 18;
+    const ibtAmt = Number(opp.pool.ibtAmount) / 10 ** ibtDec;
+    const ptAmt = Number(opp.pool.ptAmount) / 10 ** ptDec;
+    if (ibtAmt > 0 && ptAmt > 0) {
+      poolReserves = { ibt: round4(ibtAmt), pt: round4(ptAmt), ratio: round4(ptAmt / ibtAmt) };
+    }
+  }
+
+  // Loop curve
+  let loopingData: EnvelopeOpportunity["looping"] = null;
+  if (opp.looping && opp.looping.lltv > 0) {
+    const curve: Array<{ loop: number; leverage: number; netApy: number }> = [];
+    for (let i = 1; i <= 5; i++) {
+      const lev = cumulativeLeverageAtLoop(i, opp.looping.lltv);
+      const borrowed = lev - 1;
+      const grossApy = lev * opp.impliedApy;
+      const borrowCost = borrowed * opp.looping.borrowRatePct;
+      const netApy = grossApy - borrowCost;
+      curve.push({ loop: i, leverage: round4(lev), netApy: round4(netApy) });
+    }
+    loopingData = {
+      morphoMarketKey: opp.looping.morphoMarketKey,
+      lltv: opp.looping.lltv,
+      borrowRatePct: round4(opp.looping.borrowRatePct),
+      optimalLoops: opp.looping.optimalLoops,
+      optimalLeverage: round4(opp.looping.optimalLeverage),
+      optimalNetApy: round4(opp.looping.optimalNetApy),
+      optimalEffectiveNetApy: round4(opp.looping.optimalEffectiveNetApy),
+      cumulativeEntryImpactPct: round4(opp.looping.cumulativeEntryImpactPct),
+      morphoLiquidityUsd: round4(opp.looping.morphoLiquidityUsd),
+      loopCurve: curve,
+    };
+  }
+
+  // IBT APR details
+  const ibtDetails = opp.pt.ibt?.apr?.details;
+  const ibtApr = {
+    total: round4(opp.variableApr),
+    base: ibtDetails?.base != null ? round4(ibtDetails.base) : null,
+    rewards: {} as Record<string, number>,
+  };
+  if (ibtDetails?.rewards) {
+    for (const [token, apy] of Object.entries(ibtDetails.rewards)) {
+      ibtApr.rewards[token] = round4(apy);
+    }
+  }
+
+  return {
+    rank,
+    name: opp.pt.name,
+    chain: opp.chain,
+    ptAddress: opp.ptAddress,
+    poolAddress: opp.poolAddress,
+    ibtAddress: opp.ibtAddress,
+    maturity: formatDate(opp.maturityTimestamp),
+    daysToMaturity: opp.daysToMaturity,
+    tvlUsd: round4(opp.tvlUsd),
+    poolLiquidityUsd: round4(opp.poolLiquidityUsd),
+    entryImpactPct: round4(opp.entryImpactPct),
+    capacityUsd: round4(opp.capacityUsd),
+    impliedApy: round4(opp.impliedApy),
+    effectiveApy: round4(opp.effectiveApy),
+    variableApr: round4(opp.variableApr),
+    fixedVsVariableSpread: round4(opp.fixedVsVariableSpread),
+    sortApy: round4(opp.sortApy),
+    lpApy: round4(opp.lpApy),
+    lpApyMaxBoost: round4(opp.lpApyBoostedTotal),
+    lpBreakdown: {
+      fees: round4(opp.lpApyBreakdown.fees),
+      pt: round4(opp.lpApyBreakdown.pt),
+      ibt: round4(opp.lpApyBreakdown.ibt),
+      rewards: mapValues(opp.lpApyBreakdown.rewards, round4),
+      spectraGauge: mapValues(opp.lpApyBreakdown.boostedRewards, (v: { min: number; max: number }) => ({
+        min: round4(v.min),
+        max: round4(v.max),
+      })) as Record<string, { min: number; max: number }>,
+    },
+    ibtApr,
+    underlying: opp.underlying,
+    ibtSymbol: opp.ibtSymbol,
+    ibtProtocol: opp.ibtProtocol,
+    looping: loopingData,
+    poolReserves,
+    tags: opp.pt.tags || [],
+    points: (opp.pt.multipliers || []).map(m => ({ name: m.name, amount: m.amount })),
+    merklCampaigns: (opp.merklCampaigns || []).map(c => ({
+      name: c.name,
+      apr: round4(c.apr),
+      action: c.action,
+      rewardTokens: c.rewardTokens,
+    })),
+    warnings: opp.warnings,
+  };
+}
+
+function serializeMetavault(mv: any, chain: string): EnvelopeMetavault {
+  const activePositions = (mv.positions || []).filter((p: any) => p.maturity * 1000 > Date.now());
+  return {
+    name: mv.metadata?.title || mv.name,
+    symbol: mv.symbol,
+    chain,
+    address: mv.address,
+    underlying: mv.underlying?.symbol || "?",
+    tvlUsd: round4(mv.tvl?.usd || 0),
+    liveApyTotal: round4(mv.liveApy?.total || 0),
+    liveApyBase: mv.liveApy?.details?.base != null ? round4(mv.liveApy.details.base) : null,
+    curator: mv.curator?.name || "Unknown",
+    activePositions: activePositions.length,
+  };
+}
+
+function buildNarrativeLayer(
+  topOpps: ScanOpportunity[],
+  tensions: string[],
+  merklAvailable: boolean,
+  veDataAvailable: boolean,
+  veSpectraBalance: number | undefined,
+): string {
+  const lines: string[] = [];
+
+  // ── Impact accuracy framing (once, not per opportunity) ──
+  lines.push(`--- Impact Accuracy ---`);
+  lines.push(`Effective APY values are CONSERVATIVE LOWER BOUNDS. Entry impact uses a constant-product model; real Curve StableSwap-NG pools are more capital-efficient — actual effective APY is typically 30-60% higher. Verify top picks with spectra_quote_trade for exact on-chain quotes.`);
+  lines.push(``);
+  lines.push(`Rankings reflect one dimension of a multi-dimensional space. A lower-ranked pool could be better for a different strategy (YT accumulation, LP farming) or time horizon.`);
+  lines.push(``);
+
+  // ── Per-opportunity tensions (only when data triggers them) ──
+  const perOppTensions: string[] = [];
+
+  for (let i = 0; i < topOpps.length; i++) {
+    const opp = topOpps[i];
+    const oppLines: string[] = [];
+
+    // Strategy tension: YT vs looping
+    if (opp.variableApr > 0 && opp.looping) {
+      const ytExposure = opp.variableApr * (opp.pool.ytLeverage || 1);
+      if (ytExposure > opp.looping.optimalEffectiveNetApy * 0.7) {
+        oppLines.push(`YT accumulation at ${(opp.pool.ytLeverage || 0).toFixed(1)}x leverage could yield ~${formatPct(ytExposure)} if variable rates persist — competes with looping fixed ~${formatPct(opp.looping.optimalEffectiveNetApy)}. Choice depends on rate direction conviction.`);
+      }
+    }
+
+    // Combined LP + Loop strategy hint
+    if (opp.looping && opp.lpApy > 5) {
+      const bestLp = opp.lpApyBoostedTotal > opp.lpApy ? opp.lpApyBoostedTotal : opp.lpApy;
+      if (bestLp > opp.looping.optimalEffectiveNetApy * 0.5) {
+        oppLines.push(`Combined strategy viable: Mint PT+YT, LP a portion (${formatPct(bestLp)} LP APY) + loop remaining PT via Morpho (${formatPct(opp.looping.optimalEffectiveNetApy)} net). Split ratio depends on pool depth vs Morpho liquidity.`);
+      }
+    }
+
+    // Reserve interpretation
+    if (opp.pool.ibtAmount && opp.pool.ptAmount) {
+      const ibtDec = opp.pt.ibt?.decimals ?? 18;
+      const ptDec = opp.pt.decimals ?? 18;
+      const ibtAmt = Number(opp.pool.ibtAmount) / 10 ** ibtDec;
+      const ptAmt = Number(opp.pool.ptAmount) / 10 ** ptDec;
+      if (ibtAmt > 0 && ptAmt > 0) {
+        const ratio = ptAmt / ibtAmt;
+        if (ratio > 5) {
+          oppLines.push(`Heavy PT side (${ratio.toFixed(1)}:1) — could mean high PT supply from minting, or LP withdrawal on IBT side.`);
+        } else if (ratio < 0.2) {
+          oppLines.push(`Heavy IBT side (1:${(1/ratio).toFixed(1)}) — could mean strong PT demand (rate compression), or fresh pool with few mints.`);
+        }
+      }
+    }
+
+    // Incentive sustainability
+    const ibtDet = opp.pt.ibt?.apr?.details;
+    if (ibtDet) {
+      const ibtBase = ibtDet.base ?? 0;
+      if (opp.variableApr > 0 && ibtBase < opp.variableApr * 0.5) {
+        const incentivePct = ((opp.variableApr - ibtBase) / opp.variableApr * 100).toFixed(0);
+        oppLines.push(`${incentivePct}% of IBT APR is incentive-driven. Base alone: ${formatPct(ibtBase)}. Sustainability depends on incentive program continuity.`);
+      }
+    }
+
+    if (oppLines.length > 0) {
+      perOppTensions.push(`#${i + 1} ${opp.pt.name}:\n` + oppLines.map(l => `  - ${l}`).join("\n"));
+    }
+  }
+
+  if (perOppTensions.length > 0) {
+    lines.push(`--- Per-Opportunity Tensions ---`);
+    lines.push(perOppTensions.join("\n"));
+    lines.push(``);
+  }
+
+  // ── Global tensions (aggregate across result set) ──
+  if (tensions.length > 0) {
+    lines.push(`--- Global Tensions ---`);
+    for (const t of tensions) lines.push(`- ${t}`);
+    lines.push(``);
+  }
+
+  // ── Observation boundaries ──
+  lines.push(`--- Observation Boundaries ---`);
+  lines.push(`- This scan covers Spectra pools only. Pendle markets may offer competitive yields — use mv_scan_curator_opportunities for cross-protocol coverage.`);
+  lines.push(`- Entry impact is a conservative upper bound. On-chain quotes (spectra_quote_trade) give exact figures.`);
+  lines.push(`- Looping projections assume static borrow rates. Variable rates can spike, turning profitable loops negative.`);
+  if (!merklAvailable) {
+    lines.push(`- Merkl incentive data was unavailable — external campaign APR may be missing.`);
+  }
+  if (!veDataAvailable && veSpectraBalance !== undefined && veSpectraBalance > 0) {
+    lines.push(`- veSPECTRA totalSupply unavailable (Base RPC unreachable) — boost calculations defaulted to min APY range.`);
+  }
+
+  return lines.join("\n");
+}
+
+function buildEnvelopeResponse(
+  topOpps: ScanOpportunity[],
+  topBoostInfos: (import("../formatters.js").BoostInfo | undefined)[],
+  filteredMvs: Array<{ metavault: any; chain: string }>,
+  tensions: string[],
+  capitalUsd: number,
+  maxImpactPct: number,
+  assetFilter: string | undefined,
+  failedChains: string[],
+  includeLooping: boolean,
+  merklAvailable: boolean,
+  veDataAvailable: boolean,
+  veSpectraBalance: number | undefined,
+  totalBeforeFilter: number,
+): { content: Array<{ type: "text"; text: string }> } {
+  // Build structured data
+  const structuredData: EnvelopeData = {
+    scan: {
+      capitalUsd,
+      maxImpactPct,
+      assetFilter: assetFilter || null,
+      loopingEnabled: includeLooping,
+      resultCount: topOpps.length,
+      totalBeforeFilter,
+      failedChains,
+      merklAvailable,
+      veDataAvailable,
+      veSpectraBalance: veSpectraBalance ?? null,
+    },
+    opportunities: topOpps.map((opp, i) => serializeOpportunity(opp, i + 1)),
+    metavaults: filteredMvs.map(({ metavault, chain }) => serializeMetavault(metavault, chain)),
+  };
+
+  // Build narrative layer
+  const narrativeLayer = buildNarrativeLayer(
+    topOpps, tensions, merklAvailable, veDataAvailable, veSpectraBalance,
+  );
+
+  return {
+    content: [
+      { type: "text" as const, text: JSON.stringify(structuredData, null, 2) },
+      { type: "text" as const, text: narrativeLayer },
+    ],
+  };
+}
+
+// Helpers
+function round4(n: number): number {
+  return Math.round(n * 10000) / 10000;
+}
+
+function mapValues<V, R>(obj: Record<string, V>, fn: (v: V) => R): Record<string, R> {
+  const result: Record<string, R> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    result[k] = fn(v);
+  }
+  return result;
 }

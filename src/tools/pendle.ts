@@ -41,7 +41,8 @@ export function register(server: McpServer): void {
   server.tool(
     "pendle_list_markets",
     `List active Pendle markets on a given chain, or scan all Pendle-supported chains.
-Returns: market name, implied APY (fixed rate), LP APY, TVL, liquidity, maturity, and token addresses.
+Returns: market name, implied APY (fixed rate), LP APY, TVL (underlying deposited),
+liquidity (AMM depth), maturity, and token addresses.
 
 Pendle is a competing/complementary yield tokenization protocol. Like Spectra, it splits
 yield-bearing tokens into PT (principal) and YT (yield). Key differences:

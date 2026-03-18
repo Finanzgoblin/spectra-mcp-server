@@ -33,6 +33,10 @@ Two modes:
 Each tier is quoted independently (not cumulative). Real execution across
 multiple txns would face additional impact from pool state changes.
 
+Output surfaces a capacity framing note: pt_buy mode measures directional swap impact,
+but MetaVault curators deploy as LP where entry impact is near-zero and the constraint
+is pool share concentration. Use lp_add mode for curator capacity analysis.
+
 On-chain quotes use the actual Curve StableSwap-NG amplification parameter.
 Set use_on_chain=false for math-only estimates (faster, more conservative).
 
