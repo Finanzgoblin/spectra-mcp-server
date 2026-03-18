@@ -9,7 +9,18 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { API_NETWORKS, SUPPORTED_CHAINS, PENDLE_CHAIN_IDS, PENDLE_CHAIN_NAMES } from "../config.js";
+import { API_NETWORKS, SUPPORTED_CHAINS, PENDLE_CHAIN_IDS, PENDLE_CHAIN_NAMES, MORPHO_CHAIN_IDS, PROTOCOL_CONSTANTS } from "../config.js";
+import {
+  fetchSpectraAppNumber,
+  fetchVeTotalSupply,
+  scanAllChainPools,
+  scanAllMetavaults,
+  fetchPendleMarkets,
+  fetchMorpho,
+  sanitizeGraphQL,
+  fetchSpectraPtAddresses,
+} from "../api.js";
+import { formatUsd, formatPct, daysToMaturity } from "../formatters.js";
 
 const TOPICS: Record<string, string> = {
 
@@ -481,7 +492,260 @@ Example high-context prompts that trigger deep multi-tool workflows:
   Quote pool capacity at $200K for the top 3 mispricings."`,
 };
 
-const ALL_TOPIC_NAMES = Object.keys(TOPICS);
+// "protocol_pulse" is a live-fetching topic — not stored in TOPICS.
+// It fetches real-time vital signs from multiple APIs when requested.
+const LIVE_TOPICS = ["protocol_pulse"] as const;
+const ALL_TOPIC_NAMES = [...Object.keys(TOPICS), ...LIVE_TOPICS];
+
+// ─── Protocol Pulse: live vital signs ───────────────────────────────────────
+
+/** Fetch live protocol vital signs. Parallel fetches, best-effort per source. */
+async function fetchProtocolPulse(): Promise<string> {
+  const timestamp = new Date().toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC");
+
+  // Compute current weekly SPECTRA emissions from config constants
+  const { emissions } = PROTOCOL_CONSTANTS;
+  const epochStart = new Date(emissions.epochStart).getTime();
+  const weeksSinceStart = Math.floor((Date.now() - epochStart) / (7 * 24 * 60 * 60 * 1000));
+  const weeklyEmissions = emissions.base * Math.pow(emissions.decay, emissions.offset + weeksSinceStart);
+
+  // Fire all fetches in parallel with individual timeouts
+  const PULSE_TIMEOUT = 12_000; // 12s per source — fail fast
+  function withTimeout<T>(p: Promise<T>, label: string): Promise<{ ok: true; value: T } | { ok: false; label: string }> {
+    return Promise.race([
+      p.then((value): { ok: true; value: T } => ({ ok: true, value })),
+      new Promise<{ ok: false; label: string }>((resolve) =>
+        setTimeout(() => resolve({ ok: false, label }), PULSE_TIMEOUT)
+      ),
+    ]);
+  }
+
+  const [
+    spectraSupplyResult,
+    veResult,
+    poolsResult,
+    metavaultsResult,
+    morphoResult,
+    pendleResults,
+  ] = await Promise.all([
+    // Spectra token supply
+    withTimeout(
+      Promise.all([
+        fetchSpectraAppNumber("/spectra/circulating-supply"),
+        fetchSpectraAppNumber("/spectra/total-supply"),
+      ]),
+      "spectra_supply"
+    ),
+    // veSPECTRA total supply
+    withTimeout(fetchVeTotalSupply(), "ve_spectra"),
+    // All Spectra pools (for pool count, TVL, expiry)
+    withTimeout(scanAllChainPools({ min_tvl_usd: 0, min_liquidity_usd: 0 }), "spectra_pools"),
+    // MetaVaults
+    withTimeout(scanAllMetavaults(), "metavaults"),
+    // Morpho PT markets — count across all chains
+    withTimeout(fetchMorphoPtMarketCount(), "morpho"),
+    // Pendle stats — all chains in parallel
+    withTimeout(fetchPendleAggregate(), "pendle"),
+  ]);
+
+  const lines: string[] = [];
+  lines.push(`PROTOCOL PULSE — ${timestamp}`);
+  lines.push(`${"═".repeat(52)}`);
+  lines.push(``);
+
+  // ── Spectra ──
+  lines.push(`SPECTRA`);
+  if (spectraSupplyResult.ok) {
+    const [circulating, total] = spectraSupplyResult.value;
+    const lockRate = total > 0 ? ((total - circulating) / total * 100) : 0;
+    lines.push(`  Token Supply:     ${total.toLocaleString("en-US", { maximumFractionDigits: 0 })}`);
+    lines.push(`  Circulating:      ${circulating.toLocaleString("en-US", { maximumFractionDigits: 0 })}`);
+    lines.push(`  Lock Rate:        ${formatPct(lockRate)}`);
+  } else {
+    lines.push(`  Token Supply:     [fetch failed]`);
+  }
+
+  lines.push(`  Weekly Emissions: ${weeklyEmissions.toLocaleString("en-US", { maximumFractionDigits: 0 })} SPECTRA (week #${weeksSinceStart})`);
+
+  if (veResult.ok) {
+    lines.push(`  veSPECTRA Supply: ${veResult.value.toLocaleString("en-US", { maximumFractionDigits: 0 })}`);
+  } else {
+    lines.push(`  veSPECTRA Supply: [fetch failed]`);
+  }
+
+  if (poolsResult.ok) {
+    const { opportunities, failedChains } = poolsResult.value;
+    const activePools = opportunities.length;
+
+    // TVL across all pools
+    const totalTvl = opportunities.reduce((sum, o) => sum + (o.pt.tvl?.usd || 0), 0);
+
+    // Unique chains with active pools
+    const activeChains = new Set(opportunities.map(o => o.chain));
+
+    // Pools expiring within 14 days
+    const expiringCount = opportunities.filter(o => daysToMaturity(o.pt.maturity) <= 14).length;
+
+    // Count pools with gauges (heuristic: pools with LP APY > 0 likely have gauges)
+    // Can't get exact gauge count without governance API call, so show pool count only
+
+    lines.push(`  Active Pools:     ${activePools} across ${activeChains.size} chains`);
+    lines.push(`  Total TVL:        ${formatUsd(totalTvl)}`);
+    lines.push(`  Expiring ≤14d:    ${expiringCount}`);
+    if (failedChains.length > 0) {
+      lines.push(`  [missed chains:   ${failedChains.join(", ")}]`);
+    }
+  } else {
+    lines.push(`  Active Pools:     [fetch failed]`);
+  }
+
+  lines.push(``);
+
+  // ── MetaVaults ──
+  lines.push(`METAVAULTS`);
+  if (metavaultsResult.ok) {
+    const mvs = metavaultsResult.value.metavaults;
+    const mvCount = mvs.length;
+    const mvTvl = mvs.reduce((sum, m) => sum + (m.metavault.tvl?.usd || 0), 0);
+    const mvChains = new Set(mvs.map(m => m.chain));
+    lines.push(`  Count:            ${mvCount} across ${mvChains.size} chain${mvChains.size === 1 ? "" : "s"}`);
+    lines.push(`  Total TVL:        ${formatUsd(mvTvl)}`);
+  } else {
+    lines.push(`  Count:            [fetch failed]`);
+  }
+
+  lines.push(``);
+
+  // ── Morpho ──
+  lines.push(`MORPHO PT MARKETS`);
+  if (morphoResult.ok) {
+    const { totalMarkets, perChain } = morphoResult.value;
+    lines.push(`  PT Markets:       ${totalMarkets} total`);
+    const chainParts = Object.entries(perChain)
+      .filter(([, count]) => count > 0)
+      .map(([ch, count]) => `${ch}: ${count}`)
+      .join(", ");
+    if (chainParts) {
+      lines.push(`  By Chain:         ${chainParts}`);
+    }
+  } else {
+    lines.push(`  PT Markets:       [fetch failed]`);
+  }
+
+  lines.push(``);
+
+  // ── Pendle ──
+  lines.push(`PENDLE`);
+  if (pendleResults.ok) {
+    const { totalMarkets, totalTvl, activeChains, failedChains: pFailed } = pendleResults.value;
+    lines.push(`  Active Markets:   ${totalMarkets} across ${activeChains} chains`);
+    lines.push(`  Total TVL:        ${formatUsd(totalTvl)}`);
+    if (pFailed.length > 0) {
+      lines.push(`  [missed chains:   ${pFailed.join(", ")}]`);
+    }
+  } else {
+    lines.push(`  Active Markets:   [fetch failed]`);
+  }
+
+  lines.push(``);
+  lines.push(`${"─".repeat(52)}`);
+  lines.push(`Dissolution: This topic exists because no single tool surfaces`);
+  lines.push(`cross-protocol vital signs. When individual tools embed protocol`);
+  lines.push(`context in their outputs, this becomes redundant. Remove it then.`);
+
+  return lines.join("\n");
+}
+
+/** Count Morpho markets that accept Spectra PT tokens as collateral, per chain. */
+async function fetchMorphoPtMarketCount(): Promise<{ totalMarkets: number; perChain: Record<string, number> }> {
+  const ptAddresses = await fetchSpectraPtAddresses();
+  const perChain: Record<string, number> = {};
+  let totalMarkets = 0;
+
+  // Query each Morpho chain
+  const morphoChains = Object.entries(MORPHO_CHAIN_IDS);
+  const results = await Promise.allSettled(
+    morphoChains.map(async ([chain, chainId]) => {
+      // Count markets where collateral is a known Spectra PT
+      const query = `{
+        markets(
+          where: { chainId_in: [${chainId}] }
+          first: 500
+          orderBy: SupplyAssetsUsd
+          orderDirection: Desc
+        ) {
+          items {
+            collateralAsset { address }
+            state { supplyAssetsUsd }
+          }
+        }
+      }`;
+      const data = await fetchMorpho(query) as any;
+      const items: any[] = data?.markets?.items || [];
+
+      // Filter to markets where collateral is a Spectra PT
+      let count = 0;
+      for (const item of items) {
+        const addr = item.collateralAsset?.address?.toLowerCase();
+        if (addr && ptAddresses.has(addr)) {
+          count++;
+        }
+      }
+      return { chain, count };
+    })
+  );
+
+  for (const r of results) {
+    if (r.status === "fulfilled") {
+      perChain[r.value.chain] = r.value.count;
+      totalMarkets += r.value.count;
+    }
+  }
+
+  return { totalMarkets, perChain };
+}
+
+/** Aggregate Pendle stats across all chains. */
+async function fetchPendleAggregate(): Promise<{
+  totalMarkets: number;
+  totalTvl: number;
+  activeChains: number;
+  failedChains: string[];
+}> {
+  const pendleChains = Object.keys(PENDLE_CHAIN_IDS);
+  const now = Date.now();
+  let totalMarkets = 0;
+  let totalTvl = 0;
+  let activeChains = 0;
+  const failedChains: string[] = [];
+
+  const results = await Promise.allSettled(
+    pendleChains.map(async (chain) => {
+      const result = await fetchPendleMarkets(chain);
+      return { chain, result };
+    })
+  );
+
+  for (const r of results) {
+    if (r.status !== "fulfilled") continue;
+    const { chain, result } = r.value;
+    if (!result.ok) {
+      failedChains.push(chain);
+      continue;
+    }
+
+    const active = result.markets.filter((m) => new Date(m.expiry).getTime() > now);
+    if (active.length === 0) continue;
+
+    activeChains++;
+    totalMarkets += active.length;
+    for (const m of active) {
+      totalTvl += m.details.totalTvl || 0;
+    }
+  }
+
+  return { totalMarkets, totalTvl, activeChains, failedChains };
+}
 
 export function register(server: McpServer): void {
   server.tool(
@@ -504,6 +768,7 @@ Use topic "router_batching" for how Spectra Router affects pool activity interpr
 Use topic "deposit_path" for step-by-step entry mechanics (how to buy PT, mint YT, LP, loop).
 Use topic "glossary" for key term definitions (IBT, sw-prefix, LLTV, gauge, maturity value, APR vs APY, underlying, LP, ERC-4626, Curve StableSwap-NG, boost formula).
 Use topic "fees_and_costs" for protocol YT fees (Spectra 3%, Pendle 5%), reward basis (held vs notional), Merkl campaign types, and external points programs.
+Use topic "protocol_pulse" for LIVE cross-protocol vital signs (TVL, emissions, pool counts, expiring pools). Fetches real-time data — takes 5-15 seconds.
 
 Available topics: ${ALL_TOPIC_NAMES.join(", ")}
 Omit the topic parameter to get all topics at once.`,
@@ -514,12 +779,23 @@ Omit the topic parameter to get all topics at once.`,
         .describe(`Specific topic to retrieve. Options: ${ALL_TOPIC_NAMES.join(", ")}. Omit for all.`),
     },
     async ({ topic }) => {
+      // Live topic: protocol_pulse fetches real-time data
+      if (topic === "protocol_pulse") {
+        try {
+          const text = await fetchProtocolPulse();
+          return { content: [{ type: "text" as const, text }] };
+        } catch (e: any) {
+          const text = `Error fetching protocol pulse: ${e.message}`;
+          return { content: [{ type: "text" as const, text }], isError: true };
+        }
+      }
+
       if (topic) {
         const text = TOPICS[topic];
         return { content: [{ type: "text" as const, text }] };
       }
 
-      // Return all topics
+      // Return all static topics (protocol_pulse excluded — it requires live fetching)
       const text = Object.entries(TOPICS).map(([, v]) => v).join("\n\n---\n\n");
       return { content: [{ type: "text" as const, text }] };
     }
