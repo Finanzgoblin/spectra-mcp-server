@@ -113,7 +113,7 @@ Use spectra_compare_yield for fixed-vs-variable analysis on a specific PT.`,
         lines.push("");
 
         if (compact) {
-          const hdr = "Maturity     | Days | Impl. APY |       TVL | Pool Depth | Chain    | PT Address";
+          const hdr = "Maturity     | Days | Impl. APY |       TVL | Liquidity | Chain    | PT Address";
           lines.push(hdr);
           lines.push("─".repeat(hdr.length));
 

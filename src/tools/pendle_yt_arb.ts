@@ -59,7 +59,7 @@ function formatYtArb(arb: PendleYtArb, rank: number, compact: boolean): string {
   lines.push(`    Underlying APY: ${formatPct(arb.underlyingApy)} | Implied APY: ${formatPct(arb.impliedApy)}`);
   lines.push(`    Maturity: ${arb.expiryDate} (${arb.daysToMaturity}d)`);
   lines.push(`    Entry Impact: ${formatPct(arb.entryImpactPct)} | LP APY: ${formatPct(arb.lpApy)}`);
-  lines.push(`    TVL: ${formatUsd(arb.tvlUsd)} | Pool Depth: ${formatUsd(arb.liquidityUsd)}`);
+  lines.push(`    TVL: ${formatUsd(arb.tvlUsd)} | Liquidity: ${formatUsd(arb.liquidityUsd)}`);
 
   if (arb.breakEvenDays < Infinity) {
     lines.push(`    Break-even: ${Math.ceil(arb.breakEvenDays)}d (if spread persists)`);

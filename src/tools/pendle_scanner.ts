@@ -77,7 +77,7 @@ function formatOpportunity(opp: PendleOpportunity, rank: number, compact: boolea
   lines.push(`    Implied APY: ${formatPct(opp.impliedApy)}  |  Effective APY: ${formatPct(opp.effectiveApy)}`);
   lines.push(`    LP APY: ${formatPct(opp.lpApy)}  |  Variable APR: ${formatPct(opp.variableApr)}`);
   lines.push(`    Entry Impact: ${formatPct(opp.entryImpactPct)}  |  Capacity: ${formatUsd(opp.capacityUsd)}`);
-  lines.push(`    TVL: ${formatUsd(opp.tvlUsd)}  |  Pool Depth: ${formatUsd(opp.poolLiquidityUsd)}`);
+  lines.push(`    TVL: ${formatUsd(opp.tvlUsd)}  |  Liquidity: ${formatUsd(opp.poolLiquidityUsd)}`);
   lines.push(`    Best Strategy: ${opp.bestStrategy === "lp" ? "LP" : opp.bestStrategy === "pt_loop" ? "PT + Morpho Loop" : "PT Spot"}`);
 
   if (opp.looping) {
