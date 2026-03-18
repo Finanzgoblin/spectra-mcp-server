@@ -588,8 +588,8 @@ async function fetchProtocolPulse(): Promise<string> {
     const expiringCount = opportunities.filter(o => daysToMaturity(o.pt.maturity) <= 14).length;
 
     lines.push(`  Active Pools:     ${activePools} across ${activeChains.size} chains`);
-    lines.push(`  Liquidity:         ${formatUsd(totalLiquidity)} (AMM pool depth)`);
-    lines.push(`  PT TVL:            ${formatUsd(totalTvl)} (value minted into PTs)`);
+    lines.push(`  Liquidity:        ${formatUsd(totalLiquidity)} (AMM pool depth — IBT+PT in pools)`);
+    lines.push(`  PT TVL:           ${formatUsd(totalTvl)} (underlying deposited to mint PTs — covers PTs + YTs)`);
     lines.push(`  Expiring ≤14d:    ${expiringCount}`);
     if (failedChains.length > 0) {
       lines.push(`  [missed chains:   ${failedChains.join(", ")}]`);
@@ -645,6 +645,30 @@ async function fetchProtocolPulse(): Promise<string> {
   } else {
     lines.push(`  Active Markets:   [fetch failed]`);
   }
+
+  // ── Protocol TVL Summary ──
+  lines.push(``);
+  lines.push(`SPECTRA PROTOCOL TVL`);
+  lines.push(`  TVL = Liquidity (AMM) + PTs held outside pools + YTs held + MetaVault deposits`);
+  const poolLiq = poolsResult.ok
+    ? poolsResult.value.opportunities.reduce((s, o) => s + (o.pool.liquidity?.usd || 0), 0)
+    : 0;
+  const ptTvl = poolsResult.ok
+    ? poolsResult.value.opportunities.reduce((s, o) => s + (o.pt.tvl?.usd || 0), 0)
+    : 0;
+  const mvTvlTotal = metavaultsResult.ok
+    ? metavaultsResult.value.metavaults.reduce((s, m) => s + (m.metavault.tvl?.usd || 0), 0)
+    : 0;
+  // PT TVL captures all underlying deposited (minted into PTs + YTs).
+  // Liquidity captures what's in pools (IBT + PT sides).
+  // Some PTs are in pools (overlap). Some are held outside. YTs are always outside.
+  // MetaVault TVL overlaps with Liquidity (MVs hold LP tokens).
+  // Best estimate: max(Liquidity, PT TVL) + MetaVault TVL (conservative, avoids double-count)
+  const estimatedTvl = Math.max(poolLiq, ptTvl) + mvTvlTotal;
+  lines.push(`  Liquidity (AMM):  ${formatUsd(poolLiq)}`);
+  lines.push(`  PT TVL (minted):  ${formatUsd(ptTvl)}`);
+  lines.push(`  MetaVault TVL:    ${formatUsd(mvTvlTotal)}`);
+  lines.push(`  Estimated Total:  ${formatUsd(estimatedTvl)} (conservative — overlaps exist)`);
 
   lines.push(``);
   lines.push(`${"─".repeat(52)}`);
