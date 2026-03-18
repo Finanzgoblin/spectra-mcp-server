@@ -97,13 +97,17 @@ function assessReadiness(
   const messages: string[] = [];
   let level: "OK" | "CAUTION" | "WARNING" = "OK";
 
-  // No successor
+  // No successor — but absence is ambiguous
   if (succs.length === 0) {
     level = p.daysLeft <= 7 ? "WARNING" : "CAUTION";
     messages.push(`No successor pool deployed for IBT ${p.ibtSymbol}`);
     if (p.daysLeft <= 7) {
       messages.push("Pool expires within 7 days — LPs need migration path");
     }
+    // Surface competing readings of absence
+    messages.push(
+      `Absence could mean: (A) successor not yet created — action needed, or (B) IBT has moved to a different venue (Pendle, direct lending) — no Spectra successor intended`
+    );
     return { level, messages };
   }
 
@@ -545,6 +549,17 @@ Use spectra_list_pools to check if a successor pool has already been created.`,
             `Note: Failed to fetch from: ${failedChains.join(", ")}`
           );
         }
+
+        lines.push("");
+        lines.push("── Observation Boundary ──");
+        lines.push("This scan covers Spectra pools only. Expiring positions on Pendle are invisible here.");
+        lines.push("Use pendle_list_expiring_markets for Pendle-side expiry monitoring.");
+        if (needsPool.length > 0) {
+          lines.push(`"No successor" pools (${needsPool.length}): the absence of a successor is a fact, not a diagnosis.`);
+          lines.push("Some IBTs deliberately migrate between protocols or venues — verify with the IBT");
+          lines.push("protocol team whether a Spectra successor is intended before deploying one.");
+        }
+        lines.push("Gauge status is point-in-time — a proposal may be pending that this scan cannot see.");
 
         lines.push("");
         lines.push("── Next Steps ──");

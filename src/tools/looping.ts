@@ -163,14 +163,17 @@ discover the best looping opportunities across all chains with capital-aware siz
           lines.push(`  Morpho LTV: ${formatPct(effectiveLtv * 100)}${morpho_ltv !== undefined ? " (user provided)" : " (default estimate -- NOT from a real market)"}`);
           lines.push(`  Borrow Rate: ${formatPct(effectiveBorrowRate)}${borrow_rate !== undefined ? " (user provided)" : " (default estimate -- NOT from a real market)"}`);
           if (morpho_ltv === undefined || borrow_rate === undefined) {
-            lines.push(`  ** WARNING: No Morpho market found. Numbers below use placeholder assumptions.`);
-            lines.push(`     Looping is likely NOT possible for this PT on ${chain}. **`);
+            lines.push(`  ** WARNING: No Morpho market found. Numbers below use placeholder assumptions. **`);
             lines.push(``);
-            lines.push(`  Alternative strategies for this PT:`);
-            lines.push(`    • Unleveraged fixed yield: spectra_compare_yield(chain="${chain}", pt_address="${pt_address}") to evaluate the raw spread`);
-            lines.push(`    • Find loopable alternatives: spectra_scan_opportunities(capital_usd=YOUR_AMOUNT, include_looping=true)`);
-            lines.push(`    • Check other chains: morpho_list_markets(pt_symbol_filter="${pt.underlying?.symbol || ""}") to find Morpho markets for similar PTs`);
-            lines.push(`    • YT arbitrage: spectra_scan_yt_arbitrage(capital_usd=YOUR_AMOUNT) for spread-based opportunities`);
+            lines.push(`  ⚡ TENSION: Looping is not currently possible for this PT — but Morpho market`);
+            lines.push(`    creation is permissionless (~$50 gas). This could mean:`);
+            lines.push(`    (A) No curator has identified the opportunity → first-mover advantage`);
+            lines.push(`    (B) The PT is too new/illiquid for comfortable collateralization → wait for liquidity`);
+            lines.push(`    (C) Demand exists but supply-side hasn't formed → curators seed these markets`);
+            lines.push(``);
+            lines.push(`  Without leverage, this PT's fixed yield stands on its own:`);
+            lines.push(`    • spectra_compare_yield(chain="${chain}", pt_address="${pt_address}") — evaluate the raw spread`);
+            lines.push(`    • spectra_scan_opportunities(capital_usd=YOUR_AMOUNT) — find alternatives with existing Morpho markets`);
           }
           lines.push(`  Tip: Use morpho_list_markets to find which PTs have Morpho markets.`);
         }

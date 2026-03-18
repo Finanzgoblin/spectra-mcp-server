@@ -530,6 +530,7 @@ blended base APY and warns about manual Pendle rollover requirements.`,
           grossVaultApy,
           morphoLtv: morpho_ltv,
           borrowRate: borrow_rate,
+          borrowRateIsDefault: borrow_rate === 5, // default(5) — flag when using placeholder rate
           daysToMaturity: days_to_maturity,
           rows,
           bestLoop: optimal.loop,

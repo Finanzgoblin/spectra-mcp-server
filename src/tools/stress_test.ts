@@ -314,6 +314,21 @@ Use morpho_monitor_risk for Morpho position risk.`,
           }
         }
 
+        // ── Incentive dependency context ──
+        const apyBase = mv.liveApy?.details?.base || 0;
+        const liveApyTotal = mv.liveApy?.total || 0;
+        const incentiveDependencyPct = liveApyTotal > 0 && apyBase < liveApyTotal
+          ? ((liveApyTotal - apyBase) / liveApyTotal) * 100
+          : 0;
+
+        // ── Maturity timing analysis ──
+        // If coverage depends on Tier 2 (maturing positions), surface the timing dependency
+        const maturingCoverageUsd = waterfall.length >= 2 ? waterfall[1].availableUsd : 0;
+        const maturingCoveragePct = redemptionUsd > 0 ? (maturingCoverageUsd / redemptionUsd) * 100 : 0;
+        const nearestMaturityDays = maturingSameChain.length > 0
+          ? Math.min(...maturingSameChain.map(p => p.maturityDays))
+          : null;
+
         const result: StressTestResult = {
           vaultName: mv.name || mv.symbol || metavault_address,
           chain,
@@ -331,6 +346,10 @@ Use morpho_monitor_risk for Morpho position risk.`,
           crossChainPositions,
           crossChainTotalUsd,
           bridgePendingUsd,
+          incentiveDependencyPct,
+          maturingCoveragePct,
+          nearestMaturityDays,
+          idlePct: vaultTvl > 0 ? (idleCapitalUsd / vaultTvl) * 100 : 0,
         };
 
         const text = formatStressTestResult(result);
@@ -379,6 +398,44 @@ function formatStressTestResult(r: StressTestResult): string {
 
   lines.push(``);
   lines.push(`  Maximum Safe Redemption (< 1% loss): ${r.maxSafeRedemptionPct}% of TVL (${formatUsd(r.maxSafeRedemptionUsd)})`);
+
+  // ── Coverage quality assessment ──
+  // "COVERED" alone collapses genuine ambiguity about WHY coverage exists
+  if (r.totalCovered) {
+    const qualityWarnings: string[] = [];
+
+    // Timing dependency: if maturing positions provide >30% of coverage
+    if (r.maturingCoveragePct > 30 && r.nearestMaturityDays !== null) {
+      qualityWarnings.push(
+        `Coverage depends ${r.maturingCoveragePct.toFixed(0)}% on maturing positions (nearest: ${r.nearestMaturityDays}d). ` +
+        `If redemption arrives before maturity, coverage drops to Tier 3+ (LP removal with impact cost).`
+      );
+    }
+
+    // Idle capital dependency: if Tier 1 covers most of it
+    if (r.idlePct > 50) {
+      qualityWarnings.push(
+        `${r.idlePct.toFixed(0)}% of TVL is idle — coverage is easy but yield is being sacrificed. ` +
+        `High idle ratio means the vault is not deploying capital.`
+      );
+    }
+
+    // Incentive dependency: coverage is meaningless if TVL evaporates
+    if (r.incentiveDependencyPct > 70) {
+      qualityWarnings.push(
+        `${r.incentiveDependencyPct.toFixed(0)}% of vault APY comes from incentive programs. ` +
+        `If incentives end, depositors may redeem en masse — this stress test assumes current TVL holds.`
+      );
+    }
+
+    if (qualityWarnings.length > 0) {
+      lines.push(``);
+      lines.push(`  Coverage Quality:`);
+      for (const w of qualityWarnings) {
+        lines.push(`    [!] ${w}`);
+      }
+    }
+  }
 
   if (!r.totalCovered) {
     lines.push(``);

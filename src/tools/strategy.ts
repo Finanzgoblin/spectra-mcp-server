@@ -522,6 +522,46 @@ Use spectra_model_metavault to model MetaVault looping economics.`,
 
         text += nextStepLines.join("\n");
 
+        // Dynamic tensions — surface what the DATA shows, not static caveats
+        const tensions: string[] = [];
+
+        // How much of the top results' APY comes from gauge emissions vs organic yield?
+        const gaugeDependent = topOpps.filter(o => {
+          const gaugeTotal = Object.values(o.lpApyBreakdown.boostedRewards).reduce((s, r) => s + (r.min || 0), 0);
+          return gaugeTotal > 0 && gaugeTotal > (o.lpApy * 0.5);
+        });
+        if (gaugeDependent.length > 0) {
+          tensions.push(`${gaugeDependent.length} of ${topOpps.length} results derive >50% of LP APY from gauge emissions — gauge votes reset weekly`);
+        }
+
+        // Looping on placeholder assumptions?
+        const placeholderLoops = topOpps.filter(o => o.looping && o.warnings.some(w => w.toLowerCase().includes("placeholder") || w.toLowerCase().includes("not from a real")));
+        if (placeholderLoops.length > 0) {
+          tensions.push(`${placeholderLoops.length} result(s) show looping APY based on placeholder borrow rates — no Morpho market exists yet (market creation is permissionless)`);
+        }
+
+        // Very short maturity — entry cost dominates
+        const shortMaturity = topOpps.filter(o => o.daysToMaturity < 21);
+        if (shortMaturity.length > 0) {
+          tensions.push(`${shortMaturity.length} result(s) mature in <21 days — entry cost amortizes over a shorter period, amplifying impact on effective APY`);
+        }
+
+        // Capital size vs pool capacity
+        const capacityConstrained = topOpps.filter(o => capital_usd > o.capacityUsd * 0.8);
+        if (capacityConstrained.length > 0) {
+          tensions.push(`${capacityConstrained.length} result(s) are near capacity at your capital size — actual entry impact may exceed estimates`);
+        }
+
+        // Wide spread between effective APY and implied APY (entry cost eating yield)
+        const highEntryCost = topOpps.filter(o => o.impliedApy > 0 && (o.impliedApy - o.effectiveApy) / o.impliedApy > 0.25);
+        if (highEntryCost.length > 0) {
+          tensions.push(`${highEntryCost.length} result(s) lose >25% of implied APY to entry cost at your capital size`);
+        }
+
+        if (tensions.length > 0) {
+          text += `\n\n--- Tensions in This Data ---\n` + tensions.map(t => `⚡ ${t}`).join("\n");
+        }
+
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
         const text = `Error scanning opportunities: ${e.message}`;

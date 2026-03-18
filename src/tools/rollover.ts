@@ -369,7 +369,12 @@ Use spectra_get_pool_capacity to assess depth at your capital size for specific 
 
             const warnings: string[] = [];
             if (impactPct > 0.5) warnings.push(`LP deposit imbalance fee ${formatPct(impactPct)} may be significant at ${formatUsd(capitalForImpact)}`);
-            if (poolLiqUsd < capitalForImpact * 0.5) warnings.push(`Pool liquidity (${formatUsd(poolLiqUsd)}) — your LP share would exceed 50%`);
+            if (poolLiqUsd > 0 && capitalForImpact / poolLiqUsd > 0.3) {
+              const shareEst = ((capitalForImpact / (poolLiqUsd + capitalForImpact)) * 100).toFixed(0);
+              warnings.push(`Your allocation would be ~${shareEst}% of pool — concentration risk. Check spectra_get_pool_activity for existing LP concentration.`);
+            } else if (poolLiqUsd < capitalForImpact * 0.5) {
+              warnings.push(`Pool liquidity (${formatUsd(poolLiqUsd)}) — your LP share would exceed 50%`);
+            }
             if (candChain !== chain) warnings.push(`Cross-chain rollover (${chain} → ${candChain}) requires bridge transfer`);
 
             candidates.push({
@@ -469,12 +474,24 @@ Use spectra_get_pool_capacity to assess depth at your capital size for specific 
           outputSections.push(``);
         }
 
+        // ── Observation Boundaries ─────────────────────────────────
+        outputSections.push(`--- What This Ranking Cannot See ---`);
+        outputSections.push(`  - Liquidity concentration: pool TVL may be dominated by 1-3 addresses. A high-liquidity pool`);
+        outputSections.push(`    where 80% comes from one whale is fragile — they withdraw, your LP share becomes illiquid.`);
+        outputSections.push(`    Use spectra_get_pool_activity(chain, pool_address) on top candidates to check address concentration.`);
+        outputSections.push(`  - Rate stability: the implied APY shown is a snapshot. Pools with volatile APY histories may`);
+        outputSections.push(`    offer different rates by the time you enter. Use spectra_get_pool_volume for trading pattern stability.`);
+        outputSections.push(`  - Gauge vote timing: LP APY includes gauge emissions which reset at each gauge vote.`);
+        outputSections.push(`    A candidate ranked #1 on gauge-boosted APY may drop to #3 after the next vote cycle.`);
+        outputSections.push(`  - This ranking is sorted by effective APY. A candidate with 0.5% lower APY but 10x deeper`);
+        outputSections.push(`    liquidity may be structurally safer for a large MetaVault allocation.`);
+        outputSections.push(``);
+
         // ── Considerations ────────────────────────────────────────
         outputSections.push(`--- Considerations ---`);
         outputSections.push(`  - Entry impact uses LP deposit imbalance model (not swap impact) — MetaVault rollovers are balanced LP deposits`);
         outputSections.push(`  - Yield gap assumes instantaneous redemption + re-entry. Real transitions involve bridge latency and gas costs`);
         outputSections.push(`  - Overlap window shows double capital requirement — relevant if entering new position before old matures`);
-        outputSections.push(`  - LP APY includes gauge emissions which may change at next gauge vote`);
         outputSections.push(`  - Looping availability does not guarantee sufficient Morpho liquidity at your capital size`);
 
         // ── Next Steps ────────────────────────────────────────────

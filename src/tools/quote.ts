@@ -156,6 +156,29 @@ makes sense relative to variable rates.`,
 
         const quoteText = formatTradeQuote(quote);
 
+        // Quote method divergence: when both math and on-chain exist, the gap is a signal
+        const divergenceLines: string[] = [];
+        if (quote.onChain && mathQuote) {
+          const mathImpact = mathQuote.priceImpactPct;
+          const onChainImpact = quote.priceImpactPct;
+          const impactRatio = mathImpact > 0 ? onChainImpact / mathImpact : 0;
+          // Surface meaningful divergence — the gap between math and on-chain reveals pool shape
+          if (impactRatio > 0 && Math.abs(1 - impactRatio) > 0.3) {
+            divergenceLines.push("");
+            divergenceLines.push("--- Quote Method Divergence ---");
+            divergenceLines.push(`  Math estimate: ${formatPct(mathImpact)} impact | On-chain: ${formatPct(onChainImpact)} impact`);
+            if (onChainImpact < mathImpact * 0.7) {
+              divergenceLines.push(`  On-chain impact is ${Math.round((1 - impactRatio) * 100)}% lower than math estimate.`);
+              divergenceLines.push(`  The pool's StableSwap amplification is significantly reducing slippage.`);
+              divergenceLines.push(`  Scanner rankings (which use math estimates) understate this pool's capacity.`);
+            } else if (onChainImpact > mathImpact * 1.3) {
+              divergenceLines.push(`  On-chain impact is ${Math.round((impactRatio - 1) * 100)}% higher than math estimate.`);
+              divergenceLines.push(`  Unusual — the pool may be in a stressed state, near imbalance limits,`);
+              divergenceLines.push(`  or have low amplification. The math estimate was optimistic here.`);
+            }
+          }
+        }
+
         // Pool context: reserves + IBT APR composition (helps agents assess pool health)
         const contextLines: string[] = [];
         if (pool.ibtAmount && pool.ptAmount) {
@@ -194,7 +217,8 @@ makes sense relative to variable rates.`,
         }
 
         const contextStr = contextLines.length > 0 ? "\n\n--- Pool Context ---\n" + contextLines.join("\n") : "";
-        const text = quoteText + contextStr + nextLines.join("\n");
+        const divergenceStr = divergenceLines.length > 0 ? "\n" + divergenceLines.join("\n") : "";
+        const text = quoteText + contextStr + divergenceStr + "\n" + nextLines.join("\n");
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
         const text = `Error quoting trade: ${e.message}`;

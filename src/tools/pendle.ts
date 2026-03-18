@@ -361,6 +361,33 @@ Use spectra_scan_opportunities for Spectra-native capital-aware ranking.`,
           lines.push(`--- Aggregate Stats ---`);
           lines.push(`  Avg Implied APY:  Spectra ${formatPct(avgSpectraImpl)} | Pendle ${formatPct(avgPendleImpl)}`);
           lines.push(`  Total TVL:        Spectra ${formatUsd(totalSpectraTvl)} | Pendle ${formatUsd(totalPendleTvl)}`);
+
+          // Surface protocol-level disagreements as signals
+          const implDiff = Math.abs(avgSpectraImpl - avgPendleImpl);
+          if (implDiff > 0.5 && pairedMatches.length > 0) {
+            const higher = avgSpectraImpl > avgPendleImpl ? "Spectra" : "Pendle";
+            const lower = higher === "Spectra" ? "Pendle" : "Spectra";
+            lines.push(``);
+            lines.push(`  The protocols disagree on average fixed rate by ${formatPct(implDiff)}.`);
+            lines.push(`  Neither is "right" — the disagreement itself is the signal:`);
+            lines.push(`  (A) ${higher}'s higher rate reflects thinner liquidity — the rate is`);
+            lines.push(`      mechanically elevated because fewer participants set the price`);
+            lines.push(`  (B) ${lower}'s lower rate reflects deeper markets with more informed`);
+            lines.push(`      participants who have bid the discount tighter`);
+            lines.push(`  (C) Different AMM designs (Curve StableSwap vs Pendle logit) produce`);
+            lines.push(`      different equilibrium prices for the same underlying risk`);
+            lines.push(`  Compare pool liquidity in the matched pairs above to distinguish.`);
+          }
+
+          // TVL divergence can also be meaningful
+          if (totalSpectraTvl > 0 && totalPendleTvl > 0) {
+            const tvlRatio = Math.max(totalSpectraTvl, totalPendleTvl) / Math.min(totalSpectraTvl, totalPendleTvl);
+            if (tvlRatio > 5) {
+              const dominant = totalSpectraTvl > totalPendleTvl ? "Pendle" : "Spectra";
+              lines.push(`  Note: TVL is heavily concentrated on ${dominant === "Spectra" ? "Pendle" : "Spectra"} (${formatPct((tvlRatio - 1) * 100 / tvlRatio)} of combined TVL).`);
+              lines.push(`  The ${dominant} side's rates are set by a much smaller pool of capital.`);
+            }
+          }
           lines.push(``);
         }
 

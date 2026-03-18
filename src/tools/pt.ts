@@ -20,6 +20,7 @@ import {
   computeSpectraBoost,
   estimatePriceImpact,
   formatMerklCampaignLines,
+  formatBalance,
 } from "../formatters.js";
 
 export function register(server: McpServer): void {
@@ -79,10 +80,80 @@ Use spectra_get_pool_activity to see trading patterns on this pool.`,
 
         const summary = formatPtSummary(pt, chain, campaigns);
 
+        // Data-driven tensions: surface ambiguity where THIS data creates it
+        const pool = pt.pools?.[0];
+        const tensions: string[] = [];
+        if (pool) {
+          const ptPriceUnderlying = pool.ptPrice?.underlying ?? 0;
+          const impliedApy = pool.impliedApy ?? 0;
+          const poolLiqUsd = pool.liquidity?.usd ?? 0;
+          const tvlUsd = pt.tvl?.usd ?? 0;
+
+          // PT trading above underlying = negative implied APY or pricing anomaly
+          if (ptPriceUnderlying > 1.001) {
+            tensions.push(
+              `  Data tension: PT trades ABOVE underlying (${ptPriceUnderlying.toFixed(6)}). ` +
+              `Buying PT here means paying a premium, not locking in a discount. ` +
+              `This could indicate: (A) temporary AMM imbalance from a large trade, ` +
+              `(B) market pricing in expected IBT rate increase that hasn't materialized in APR yet, ` +
+              `or (C) stale oracle/pricing data. Check spectra_get_pool_activity for recent large swaps.`
+            );
+          }
+
+          // Pool reserves heavily skewed = slippage risk that APY doesn't show
+          if (pool.ibtAmount && pool.ptAmount) {
+            const ibtDec = pt.ibt?.decimals ?? pt.decimals ?? 18;
+            const ptDec = pt.decimals ?? 18;
+            const ibtReserve = formatBalance(pool.ibtAmount, ibtDec);
+            const ptReserve = formatBalance(pool.ptAmount, ptDec);
+            if (ibtReserve > 0 && ptReserve > 0) {
+              const ptIbtRatio = ptReserve / ibtReserve;
+              if (ptIbtRatio > 5) {
+                tensions.push(
+                  `  Data tension: Pool is ${ptIbtRatio.toFixed(1)}:1 PT/IBT. ` +
+                  `Selling PT into this pool will face elevated slippage. ` +
+                  `This skew could mean: (A) persistent net selling pressure on PT (bearish signal), ` +
+                  `or (B) heavy YT minting via Router (which deposits IBT, mints PT+YT, and the PT stays in the pool) -- ` +
+                  `a bullish variable-rate bet that manifests as pool imbalance. ` +
+                  `spectra_get_pool_activity shows which.`
+                );
+              } else if (ptIbtRatio < 0.2) {
+                tensions.push(
+                  `  Data tension: Pool is ${(1/ptIbtRatio).toFixed(1)}:1 IBT/PT -- almost no PT in reserves. ` +
+                  `Buying PT will face elevated slippage. Heavy PT buying or redemptions have drained PT side.`
+                );
+              }
+            }
+          }
+
+          // High APY with thin liquidity = headline rate you can't actually capture
+          if (impliedApy > 10 && poolLiqUsd > 0 && poolLiqUsd < 50000) {
+            tensions.push(
+              `  Data tension: ${formatPct(impliedApy)} implied APY but only ${formatUsd(poolLiqUsd)} liquidity. ` +
+              `Any meaningful position ($10K+) would face significant price impact, reducing effective yield well below the headline. ` +
+              `Use spectra_scan_opportunities with your capital size to see effective APY after entry cost.`
+            );
+          }
+
+          // IBT APR dominated by incentives -- the "fixed rate" is locking in against a potentially unsustainable variable rate
+          const ibtTotal = pt.ibt?.apr?.total ?? 0;
+          const ibtBase = pt.ibt?.apr?.details?.base ?? 0;
+          if (ibtTotal > 5 && ibtBase >= 0 && ibtBase < ibtTotal * 0.3 && impliedApy > 0) {
+            tensions.push(
+              `  Data tension: IBT variable APR (${formatPct(ibtTotal)}) is ${((1 - ibtBase / ibtTotal) * 100).toFixed(0)}% incentive-driven (base: ${formatPct(ibtBase)}). ` +
+              `If incentives end, the variable rate drops to ~${formatPct(ibtBase)} and the fixed rate lock ` +
+              `(${formatPct(impliedApy)}) looks increasingly attractive in hindsight. ` +
+              `But if incentives persist, the variable rate continues to outperform. ` +
+              `The fixed-vs-variable decision here is really a bet on incentive duration.`
+            );
+          }
+        }
+
         // Next-step hints: guide agent to logical follow-up tools
         const ptAddr = pt.address || pt_address;
         const nextSteps = [
           ``,
+          ...(tensions.length > 0 ? [``, ...tensions, ``] : []),
           `--- Next Steps ---`,
           `• Compare fixed vs variable yield: spectra_compare_yield(chain="${chain}", pt_address="${ptAddr}")`,
           `• Check leverage potential: spectra_get_looping_strategy(chain="${chain}", pt_address="${ptAddr}")`,
@@ -209,8 +280,39 @@ Use spectra_get_pool_activity on a specific pool to see recent trading patterns.
           }).join("\n\n");
         }
 
+        // Data-driven tensions: surface only when THIS result set creates ambiguity
+        const tensionLines: string[] = [];
+        if (sort_by === "implied_apy" && expanded.length >= 2) {
+          const topPool = expanded[0].pool;
+          const topLiq = topPool.liquidity?.usd ?? 0;
+          const topApy = topPool.impliedApy ?? 0;
+          // Check if the #1 pool by APY has significantly less liquidity than lower-ranked pools
+          const medianLiq = [...expanded]
+            .map(e => e.pool.liquidity?.usd ?? 0)
+            .sort((a, b) => a - b)[Math.floor(expanded.length / 2)];
+          if (topApy > 5 && topLiq > 0 && medianLiq > 0 && topLiq < medianLiq * 0.3) {
+            tensionLines.push(
+              `  Data tension: #1 by APY (${formatPct(topApy)}) has ${formatUsd(topLiq)} liquidity -- ` +
+              `less than 30% of the median pool (${formatUsd(medianLiq)}). ` +
+              `The headline rate may not survive a real entry. ` +
+              `Use spectra_scan_opportunities(capital_usd=YOUR_AMOUNT) to rank by what you can actually capture.`
+            );
+          }
+        }
+
+        // Check for negative implied APY pools in the result set
+        const negApyPools = expanded.filter(e => (e.pool.impliedApy ?? 0) < 0);
+        if (negApyPools.length > 0) {
+          tensionLines.push(
+            `  Data tension: ${negApyPools.length} pool(s) show negative implied APY -- ` +
+            `PT trades above its underlying. Buying PT there means paying a premium, not earning yield. ` +
+            `This can happen when pool reserves are skewed from heavy selling or stale pricing.`
+          );
+        }
+
         const footer = [
           ``,
+          ...(tensionLines.length > 0 ? [...tensionLines, ``] : []),
           `--- Next Steps ---`,
           `• Drill into a pool: spectra_get_pt_details(chain="${chain}", pt_address=PT_ADDRESS) for full details`,
           `• Compare yield: spectra_compare_yield(chain="${chain}", pt_address=PT_ADDRESS) for fixed vs variable`,
@@ -299,8 +401,41 @@ develop conviction about which pools genuinely serve your strategy.`,
           body = top.map((opp, i) => `#${i + 1}\n${formatPoolSummary(opp.pt, opp.pool, opp.chain)}`).join("\n\n");
         }
 
+        // Data-driven tensions: surface when THIS ranking has deceptive properties
+        const yieldTensions: string[] = [];
+        if (top.length >= 2) {
+          // Check if top results have very different liquidity depths
+          const topLiq = top[0].pool.liquidity?.usd ?? 0;
+          const secondLiq = top[1].pool.liquidity?.usd ?? 0;
+          const topApy = top[0].pool.impliedApy ?? 0;
+          const secondApy = top[1].pool.impliedApy ?? 0;
+          if (topLiq > 0 && topLiq < 50000 && secondLiq > topLiq * 3 && topApy > secondApy) {
+            yieldTensions.push(
+              `  Data tension: #1 (${formatPct(topApy)}) has ${formatUsd(topLiq)} liquidity while #2 (${formatPct(secondApy)}) ` +
+              `has ${formatUsd(secondLiq)}. At any meaningful capital size, #2 likely delivers more actual yield than #1. ` +
+              `This ranking reflects headline rates, not deployable returns.`
+            );
+          }
+
+          // Check if results span very different maturities -- short maturity = higher annualized entry cost
+          const shortestDays = Math.min(...top.map(o => daysToMaturity(o.pt.maturity)));
+          const longestDays = Math.max(...top.map(o => daysToMaturity(o.pt.maturity)));
+          if (shortestDays > 0 && longestDays > 0 && longestDays > shortestDays * 4) {
+            const shortOpp = top.find(o => daysToMaturity(o.pt.maturity) === shortestDays);
+            if (shortOpp && (shortOpp.pool.impliedApy ?? 0) > secondApy) {
+              yieldTensions.push(
+                `  Data tension: Results span ${shortestDays}d to ${longestDays}d maturities. ` +
+                `Short-maturity pools show higher annualized APY but entry cost gets ` +
+                `annualized over fewer days, potentially inverting the effective yield. ` +
+                `spectra_scan_opportunities accounts for this.`
+              );
+            }
+          }
+        }
+
         const footer = [
           ``,
+          ...(yieldTensions.length > 0 ? [...yieldTensions, ``] : []),
           `--- Next Steps ---`,
           `• Capital-aware re-ranking: spectra_scan_opportunities(capital_usd=YOUR_AMOUNT) — ranks by effective APY after price impact (these rankings intentionally disagree with raw APY)`,
           `• Drill into a pool: spectra_get_pt_details(chain=CHAIN, pt_address=PT_ADDRESS) for full details`,
@@ -485,6 +620,46 @@ check your current positions. Use spectra_scan_opportunities for multi-chain com
             const merklLines = formatMerklCampaignLines(campaigns, existingTokens);
             for (const ml of merklLines) lines.push(ml);
           }
+        }
+
+        // Data-driven tensions: surface where THIS comparison creates genuine ambiguity
+        const compareTensions: string[] = [];
+
+        // Spread positive on raw, negative after entry cost = the entry cost IS the decision
+        if (spread > 0 && effectiveFixedApy < variableApr) {
+          compareTensions.push(
+            `  Data tension: Raw spread is positive (${formatPct(spread)}) but effective spread after entry cost ` +
+            `is negative (${formatPct(effectiveFixedApy - variableApr)}). At ${formatUsd(capital_usd)}, ` +
+            `the AMM impact erases the fixed-rate advantage. Either reduce position size to reduce impact, ` +
+            `or accept the variable rate. A smaller entry (or DCA across multiple transactions) would preserve more of the spread.`
+          );
+        }
+
+        // Variable rate dominated by incentives = the comparison is really "fixed rate vs incentive duration"
+        const ibtTotalApr = pt.ibt?.apr?.total || 0;
+        const ibtBaseApr = pt.ibt?.apr?.details?.base ?? ibtTotalApr;
+        if (ibtTotalApr > 3 && ibtBaseApr >= 0 && ibtBaseApr < ibtTotalApr * 0.3) {
+          compareTensions.push(
+            `  Data tension: Variable APR (${formatPct(ibtTotalApr)}) is ${((1 - ibtBaseApr / ibtTotalApr) * 100).toFixed(0)}% incentive-driven. ` +
+            `Base organic yield is only ${formatPct(ibtBaseApr)}. If incentives expire, ` +
+            `the variable rate collapses to ~${formatPct(ibtBaseApr)} and the fixed rate (${formatPct(fixedApy)}) ` +
+            `would have been the better choice. This comparison is implicitly a bet on incentive program longevity.`
+          );
+        }
+
+        // LP APY exceeds both fixed and variable = there's a third option the binary comparison hides
+        if (lpData.lpApy > fixedApy && lpData.lpApy > variableApr && lpData.lpApy > 1) {
+          compareTensions.push(
+            `  Data tension: LP APY (${formatPct(lpData.lpApy)}) exceeds both fixed (${formatPct(fixedApy)}) and variable (${formatPct(variableApr)}). ` +
+            `The fixed-vs-variable framing may be misleading when a third option dominates. ` +
+            `But LP APY includes gauge emissions that require veSPECTRA for full boost and ` +
+            `is not truly "fixed" — it fluctuates with pool trading volume and emission rates.`
+          );
+        }
+
+        if (compareTensions.length > 0) {
+          lines.push(``);
+          for (const t of compareTensions) lines.push(t);
         }
 
         // Next-step hints

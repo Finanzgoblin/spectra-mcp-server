@@ -861,6 +861,14 @@ export interface StressTestResult {
   crossChainTotalUsd: number;
   /** USD currently in-flight via bridge (from MetaVault bridge data). */
   bridgePendingUsd: number;
+  /** % of APY from incentive programs (0-100). High values mean TVL may flee when incentives end. */
+  incentiveDependencyPct: number;
+  /** % of redemption covered by Tier 2 (maturing positions). High values mean coverage is timing-dependent. */
+  maturingCoveragePct: number;
+  /** Days until nearest maturing position (null if no maturing positions in Tier 2). */
+  nearestMaturityDays: number | null;
+  /** % of vault TVL sitting idle (undeployed). */
+  idlePct: number;
 }
 
 // =============================================================================
@@ -877,6 +885,8 @@ export interface CuratorVaultSummary {
   tvlUsd: number;
   liveApyTotal: number;
   liveApyBase: number | null;
+  /** % of vault TVL sitting idle (undeployed). Null if unknown. */
+  idlePct: number | null;
   positionCount: number;
   actionItems: string[];    // expiring positions, idle capital, etc.
 }
