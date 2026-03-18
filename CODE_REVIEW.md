@@ -35,11 +35,17 @@ The Spectra equivalent (`looping.ts:213`) correctly uses `estimateLoopingEntryCo
 
 The Pendle tool **imports** `estimateLoopingEntryCost` (line 23) but never uses it, falling back to `impact0 * i` instead.
 
-**Is linear scaling conservative?** It depends on pool size:
-- **Large pools** (trade << liquidity): linear overestimates because each loop trades less (`ltv^i`), so it IS conservative
-- **Small pools** (trade significant vs liquidity): Pendle's logit AMM has increasing convexity for sequential swaps (confirmed by Pendle docs: "larger or sequential trades pushing the pool toward extremes encounter increasing convexity"). Linear scaling can UNDERESTIMATE here
+**Is linear scaling conservative?** Two opposing effects compete:
+- **Decreasing trade size**: each loop trades `capital * ltv^i` (less money) → favors linear being conservative
+- **Logit AMM convexity**: marginal cost is `1 / (rateScalar * p * (1-p))`, which increases as `p` shifts away from 0.5. Each loop degrades pool state, making the next unit more expensive → favors linear being anti-conservative
 
-**Impact**: For large pools, the approximation is safe. For small/illiquid pools, the tool may underestimate entry costs and make unprofitable strategies look viable.
+**Verification from Pendle V2 AMM whitepaper** (confirmed via MarketMathCore.sol): the logit curve produces super-linear cumulative impact for sequential swaps at the same pool proportion. The exchange rate function `ln(p/(1-p)) / rateScalar + rateAnchor` has increasing marginal cost as p moves from equilibrium.
+
+**Net effect depends on pool size**:
+- **Large pools** (trade << liquidity): pool state barely shifts, so decreasing trade size dominates → linear overestimates (conservative)
+- **Small/illiquid pools**: logit convexity dominates → linear UNDERESTIMATES, making unprofitable strategies look viable
+
+**Impact**: The code comment "conservative: linear scaling" is only true for large pools. For small pools the tool underestimates costs.
 
 **Fix**: Use `estimateLoopingEntryCost()` (already imported) instead of linear scaling, consistent with the Spectra tool.
 
