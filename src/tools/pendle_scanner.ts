@@ -53,6 +53,8 @@ interface PendleOpportunity {
     optimalNetApy: number;
     morphoLiquidityUsd: number;
   };
+  totalPt?: number;
+  totalSy?: number;
   merklCampaigns?: MerklCampaign[];
   warnings: string[];
 }
@@ -88,6 +90,26 @@ function formatOpportunity(opp: PendleOpportunity, rank: number, compact: boolea
     if (totalMerklApr > 0) {
       lines.push(`    Merkl Incentives: +${formatPct(totalMerklApr)} (${opp.merklCampaigns.length} campaign(s))`);
     }
+  }
+
+  // Pool reserves — data the scanner already fetched for impact calc
+  if (opp.totalPt && opp.totalSy && opp.totalPt > 0 && opp.totalSy > 0) {
+    const ratio = opp.totalPt / opp.totalSy;
+    lines.push(`    Pool Reserves: ${opp.totalSy.toFixed(2)} SY / ${opp.totalPt.toFixed(2)} PT (ratio ${ratio.toFixed(2)}:1)`);
+  }
+
+  // Full loop curve when looping exists
+  if (opp.looping && opp.looping.lltv > 0) {
+    const loopLines: string[] = [];
+    for (let i = 1; i <= 5; i++) {
+      const lev = cumulativeLeverageAtLoop(i, opp.looping.lltv);
+      const borrowed = lev - 1;
+      const grossApy = lev * opp.impliedApy;
+      const borrowCost = borrowed * opp.looping.borrowRatePct;
+      const netApy = grossApy - borrowCost;
+      loopLines.push(`${i}L: ${lev.toFixed(2)}x, ${formatPct(netApy)} net`);
+    }
+    lines.push(`    Loop Curve: ${loopLines.join(" | ")}`);
   }
 
   if (opp.warnings.length > 0) {
@@ -227,6 +249,8 @@ For Spectra-only scanning, use spectra_scan_opportunities.`,
             capacityUsd,
             sortApy: Math.max(effectiveApy, lpApy),
             bestStrategy: bestIsLp ? "lp" : "pt_spot",
+            totalPt: totalPt || undefined,
+            totalSy: totalSy || undefined,
             warnings,
           });
         }
