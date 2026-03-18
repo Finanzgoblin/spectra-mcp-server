@@ -169,7 +169,7 @@ discover the best looping opportunities across all chains with capital-aware siz
             lines.push(`    creation is permissionless (~$50 gas). This could mean:`);
             lines.push(`    (A) No curator has identified the opportunity → first-mover advantage`);
             lines.push(`    (B) The PT is too new/illiquid for comfortable collateralization → wait for liquidity`);
-            lines.push(`    (C) Demand exists but supply-side hasn't formed → curators seed these markets`);
+            lines.push(`    (C) Demand exists but supply-side hasn't formed → curators, asset issuers, or LPs seed these markets`);
             lines.push(``);
             lines.push(`  Without leverage, this PT's fixed yield stands on its own:`);
             lines.push(`    • spectra_compare_yield(chain="${chain}", pt_address="${pt_address}") — evaluate the raw spread`);
