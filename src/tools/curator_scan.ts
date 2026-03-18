@@ -689,7 +689,7 @@ Use spectra_get_curator_dashboard for operational monitoring of an existing Meta
         const loopable = topOpps.filter(o => o.looping);
         const noLoop = topOpps.filter(o => !o.looping);
         if (loopable.length > 0 && noLoop.length > 0) {
-          tensions.push(`${loopable.length} result(s) have Morpho looping, ${noLoop.length} do not — looping absence means no market exists yet (creation is permissionless, curators typically seed these)`);
+          tensions.push(`${loopable.length} result(s) have Morpho looping, ${noLoop.length} do not — looping absence means no market exists yet (creation is permissionless — curators, asset issuers, or LPs can create and seed)`);
         }
 
         const shortMat = topOpps.filter(o => o.daysToMaturity < 21);

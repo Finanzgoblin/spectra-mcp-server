@@ -137,7 +137,7 @@ Use morpho_list_markets to find available Morpho markets.`,
             lines.push(`    permissionless (~$50 gas). This could mean:`);
             lines.push(`    (A) No curator has identified the opportunity → first-mover advantage`);
             lines.push(`    (B) The PT is too new/illiquid for comfortable collateralization → wait`);
-            lines.push(`    (C) Demand exists but supply-side hasn't formed → curators seed these markets`);
+            lines.push(`    (C) Demand exists but supply-side hasn't formed → curators, asset issuers, or LPs seed these markets`);
             lines.push(``);
             lines.push(`  Without leverage:`);
             lines.push(`    • pendle_get_market_details(chain="${chain}", market_address="${market_address}") — evaluate unleveraged`);
