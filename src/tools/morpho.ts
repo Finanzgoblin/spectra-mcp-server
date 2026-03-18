@@ -31,6 +31,9 @@ Protocol context:
 - Not all Spectra chains have Morpho markets. Current Morpho PT coverage: mainnet, base,
   arbitrum, katana.
 
+When no markets match, output surfaces why (chain coverage, symbol mismatch, or
+genuinely no market exists for that collateral type).
+
 Use spectra_get_looping_strategy to calculate leveraged yield for a specific PT + Morpho market.
 Use morpho_get_rate to fetch live borrow APY for a specific market key.
 Use spectra_scan_opportunities for automated cross-chain looping discovery.`,

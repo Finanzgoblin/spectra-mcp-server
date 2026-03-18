@@ -225,12 +225,11 @@ YT yield back into LP positions. They are managed by curators who earn
 performance fees on depositor yield.
 
 Returns all MetaVaults with:
-  - Curator info, TVL, live APY with full breakdown (base vs external incentives)
+  - Curator info, TVL (with idle ratio when >5% undeployed), live APY breakdown
   - Active positions (PT markets the vault is deployed in)
   - Underlying asset details
-  - Vault flows: epoch-by-epoch deposit/withdrawal analysis (net inflows vs outflows
-    derived from asset snapshots, with yield accrual separated out)
-  - Bridge transactions: cross-chain CCTP transfers with amounts, directions, and status
+  - Vault flows: epoch-by-epoch deposit/withdrawal analysis
+  - Bridge transactions: cross-chain CCTP transfers
   - Epoch history (rate snapshots)
 
 Use this tool to discover which MetaVaults are live, then pass the address to
@@ -576,13 +575,12 @@ and actionable alerts into a single view. Designed for curators managing live
 MetaVaults who need a quick operational overview.
 
 Returns:
-  - Vault health: TVL, live APY with composition (base vs incentives), share price
+  - Vault health: TVL with idle ratio (undeployed capital shown inline when >5%),
+    live APY with composition (base vs incentives), share price
   - Position status: each active PT position with maturity countdown, APY, and size.
     Positions approaching maturity are flagged (!!!=14d, !!=30d)
   - Depositor flows: epoch-by-epoch net inflows/outflows with trend analysis
-  - Fee revenue: estimated annual curator fee revenue (at current rates — both TVL
-    and APY are variable, so this is a snapshot projection, not a guarantee)
-  - Bridge activity: cross-chain CCTP transfer summary
+  - Fee revenue: estimated annual curator fee revenue (snapshot projection)
   - Action items: auto-generated alerts for expiring positions, outflow trends,
     pending bridges, high incentive dependency, Pendle rollover warnings, and missing positions
 

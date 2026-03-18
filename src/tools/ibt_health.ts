@@ -32,9 +32,10 @@ pool balance ratio, APR magnitude, protocol recognition, and liquidity level.
 
 Returns HEALTHY / CAUTION / WARNING verdict with per-check details.
 
-A CAUTION flag means "proceed with awareness" — the IBT may be fine but has
-characteristics that warrant attention. A WARNING flag means "investigate before
-deploying" — something looks anomalous.
+A CAUTION flag means "proceed with awareness." A WARNING flag means "investigate before
+deploying." Output includes observation boundaries declaring what the snapshot cannot
+detect (rate trajectory, underlying governance, whether imbalance is transient).
+Pool imbalance checks surface competing explanations (demand vs withdrawal vs maturity).
 
 Two modes:
   1. Spectra mode (pt_address): Full analysis using Spectra API + on-chain checks.
