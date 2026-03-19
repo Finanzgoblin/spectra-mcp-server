@@ -205,10 +205,16 @@ Pendle Entry Paths (differences from Spectra):
   Impact estimates use pendle_quote_trade or pendle_get_market_capacity.
 - vePENDLE: Vote-escrowed PENDLE token. Boosts LP APY on Pendle markets (separate system
   from veSPECTRA). Shown as "Max Boosted LP APY" in pendle_list_markets output.
-- MetaVault: Spectra-specific ERC-7540 curated vault. Automates LP rollover (re-entering new
-  pools at maturity) and compounds YT yield back into LP. Managed by curators who earn
-  performance fees. Depositors get hands-off yield exposure. Use spectra_list_metavaults
-  to discover, spectra_get_curator_dashboard for operations, spectra_model_metavault for modeling.
+- MetaVault: ERC-7540 curated vault — a programmable yield container where the curator defines
+  the strategy space. The allocation universe is wide: Spectra LP positions, Pendle LP positions,
+  PT holdings, lending deposits (Morpho, Aave), staked assets, RWA tokens, yield aggregator
+  shares — anything ERC-20 compatible that Spectra governance has whitelisted for MetaVault
+  allocation. Current live vaults primarily hold Spectra LP positions, but the ERC-7540 standard
+  and the whitelisting process allow the strategy space to expand as new assets are approved.
+  Curators earn performance fees on depositor yield. Auto-rollover at maturity is built in for
+  Spectra positions; Pendle and other positions require manual rollover by the curator.
+  Use spectra_list_metavaults to discover what exists, spectra_get_curator_dashboard for
+  operations, spectra_model_metavault for strategy modeling.
 - Health Factor: Morpho risk metric = (collateralUsd × LLTV) / borrowUsd. Below 1.0 =
   liquidatable. Below 1.3 = danger zone. Morpho has NO close factor — when health hits 1.0,
   the ENTIRE position can be liquidated in one transaction. Use morpho_monitor_risk to track.`,
@@ -293,8 +299,10 @@ CROSS-PROTOCOL (6 tools, mv_* prefix):
 - mv_plan_rollover: Cross-protocol rollover planning for expiring positions.
 - mv_get_curator_portfolio: Multi-vault aggregation across protocols.
 
-METAVAULTS (Spectra-specific, spectra_* prefix):
-- ERC-7540 curated vaults that automate LP rollover and compound YT yield.
+METAVAULTS (spectra_* prefix):
+- ERC-7540 curated vaults. Strategy space is curator-defined — can hold Spectra LP, Pendle LP,
+  PT positions, lending deposits, or any whitelisted ERC-20 asset. Whitelisting is required by
+  Spectra governance before an asset can be allocated inside a MetaVault.
 - spectra_list_metavaults: Discover live MetaVaults across all chains.
 - spectra_model_metavault: "Double loop" strategy modeling (vault + Morpho leverage).
 - spectra_get_curator_dashboard: Operational health monitoring for curators.
