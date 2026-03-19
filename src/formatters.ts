@@ -89,7 +89,11 @@ export function formatPoolCompact(pt: SpectraPt, pool: SpectraPool, chain: strin
   const points = pt.multipliers && pt.multipliers.length > 0
     ? ` | Points: ${pt.multipliers.map(m => `${m.name} ${m.amount}x`).join(", ")}`
     : "";
-  return `${pt.name} (${chain}) | APY ${apy} | Underlying ${tvl} | Depth ${liq} | ${days}d${lpApy} | PT: ${pt.address} | Pool: ${pool.address || "?"}${ibtAddr}${tags}${points}`;
+  const priceFeedWarn = (pt.tvl?.usd || 0) === 0 && (pool.liquidity?.usd || 0) === 0
+    && pool.ibtAmount && pool.ptAmount && (Number(pool.ibtAmount) > 0 || Number(pool.ptAmount) > 0)
+    ? " | ⚡ $0 USD — likely price feed outage, not empty pool"
+    : "";
+  return `${pt.name} (${chain}) | APY ${apy} | Underlying ${tvl} | Depth ${liq} | ${days}d${lpApy} | PT: ${pt.address} | Pool: ${pool.address || "?"}${ibtAddr}${tags}${points}${priceFeedWarn}`;
 }
 
 /** One-line scan opportunity summary for compact output. */
@@ -190,6 +194,15 @@ export function formatPoolSummary(pt: SpectraPt, pool: SpectraPool, chain: strin
     `  YT Leverage: ${(pool.ytLeverage || 0).toFixed(1)}x`,
     `  Liquidity: ${formatUsd(pool.liquidity?.usd || 0)}`,
   ];
+
+  // Price feed awareness: when USD values are $0 but on-chain reserves exist,
+  // the likely cause is a price feed outage (e.g. DeFiLlama), not an empty pool.
+  const hasReserves = pool.ibtAmount && pool.ptAmount &&
+    (Number(pool.ibtAmount) > 0 || Number(pool.ptAmount) > 0);
+  const zeroUsd = (pt.tvl?.usd || 0) === 0 && (pool.liquidity?.usd || 0) === 0;
+  if (zeroUsd && hasReserves) {
+    lines.push(`  ⚡ $0 USD values but pool has on-chain reserves — likely a price feed outage (DeFiLlama or similar), not an empty pool. Verify on-chain before concluding this pool is dead.`);
+  }
 
   // Pool reserves — surface IBT/PT composition for AMM imbalance analysis
   if (pool.ibtAmount && pool.ptAmount) {
@@ -2352,6 +2365,9 @@ export function formatScanOpportunity(opp: ScanOpportunity, rank: number, boostI
 
   // Pool size
   lines.push(`    PT TVL: ${formatUsd(opp.tvlUsd)} | Liquidity: ${formatUsd(opp.poolLiquidityUsd)}`);
+  if (opp.tvlUsd === 0 && opp.poolLiquidityUsd === 0) {
+    lines.push(`    ⚡ $0 USD values — likely price feed outage (DeFiLlama or similar), not an empty pool. Check on-chain reserves before skipping.`);
+  }
 
   // Capital-aware impact
   lines.push(`    Entry Impact: ~${formatPct(opp.entryImpactPct)} | Capacity: ~${formatUsd(opp.capacityUsd)} at <threshold`);
