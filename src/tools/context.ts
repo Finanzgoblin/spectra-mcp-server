@@ -208,7 +208,7 @@ Pendle Entry Paths (differences from Spectra):
 - MetaVault: ERC-7540 curated vault — a programmable yield container where the curator defines
   the strategy space. The allocation universe is wide: Spectra LP positions, Pendle LP positions,
   PT holdings, lending deposits (Morpho, Aave), staked assets, RWA tokens, yield aggregator
-  shares — anything ERC-20 compatible that Spectra governance has whitelisted for MetaVault
+  shares — anything ERC-20 compatible that the Spectra team has whitelisted for MetaVault
   allocation. Current live vaults primarily hold Spectra LP positions, but the ERC-7540 standard
   and the whitelisting process allow the strategy space to expand as new assets are approved.
   Curators earn performance fees on depositor yield. Auto-rollover at maturity is built in for
@@ -302,7 +302,7 @@ CROSS-PROTOCOL (6 tools, mv_* prefix):
 METAVAULTS (spectra_* prefix):
 - ERC-7540 curated vaults. Strategy space is curator-defined — can hold Spectra LP, Pendle LP,
   PT positions, lending deposits, or any whitelisted ERC-20 asset. Whitelisting is required by
-  Spectra governance before an asset can be allocated inside a MetaVault.
+  the Spectra team before an asset can be allocated inside a MetaVault.
 - spectra_list_metavaults: Discover live MetaVaults across all chains.
 - spectra_model_metavault: "Double loop" strategy modeling (vault + Morpho leverage).
 - spectra_get_curator_dashboard: Operational health monitoring for curators.
