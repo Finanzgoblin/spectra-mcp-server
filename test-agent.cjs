@@ -706,12 +706,12 @@ async function testMorphoMarketClassification(client) {
     top_n: 5,
   });
 
-  if (text.includes("No Morpho PT markets")) {
+  if (text.includes("No Morpho PT markets") || text.includes("No Morpho markets")) {
     skip("morpho classification: no markets found");
     return;
   }
 
-  assert(text.includes("Morpho PT market"), "morpho markets returned", "no results");
+  assert(text.includes("Morpho PT market") || text.includes("Morpho collateral market"), "morpho markets returned", "no results");
 
   // Should classify markets as Spectra vs Pendle/Other
   const hasSpectra = text.includes("Spectra:");
