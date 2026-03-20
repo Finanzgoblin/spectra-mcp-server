@@ -34,7 +34,7 @@
  *   - spectra_stress_test_vault       -> Withdrawal stress test for MetaVaults
  *
  *   Morpho:
- *   - morpho_list_markets             -> Find Morpho markets accepting Spectra PTs as collateral
+ *   - morpho_list_markets             -> Find Morpho markets by collateral (PT or any asset)
  *   - morpho_get_rate                 -> Get live borrow rate for a specific Morpho market
  *   - morpho_get_market_suppliers     -> Who supplies lending liquidity to a Morpho market
  *   - morpho_list_vaults              -> List Morpho vaults on a chain
@@ -56,6 +56,9 @@
  *   - pendle_get_looping_strategy    -> Leveraged PT + Morpho looping calculator
  *   - pendle_quote_trade             -> PT trade quote with impact estimation
  *   - pendle_simulate_trade          -> Portfolio impact simulation for PT trades
+ *
+ *   Merkl:
+ *   - merkl_list_campaigns            -> Discover live Merkl incentive campaigns by chain
  *
  *   Cross-protocol (mv_):
  *   - mv_compare_yield                -> Side-by-side Pendle vs Spectra yield comparison
@@ -108,8 +111,12 @@ This server covers THREE protocols with 50 tools. Always consider all three:
     time-decay logit AMM, vePENDLE governance. Full feature parity with Spectra tools.
     Includes Pendle-only chains: Mantle, Berachain, HyperEVM, Corn.
 
-  Morpho (7 tools, morpho_* prefix): Lending markets — PT as collateral for leveraged
-    looping strategies. Supply-side analysis, vault allocations, risk monitoring.
+  Morpho (7 tools, morpho_* prefix): Lending markets — PT or any asset as collateral
+    for leveraged looping strategies. Supply-side analysis, vault allocations, risk monitoring.
+    Now enriched with Merkl campaign data (subsidized borrow/supply rates).
+
+  Merkl (1 tool, merkl_* prefix): Incentive campaign discovery — find subsidized rates,
+    borrow rewards, LP incentives across chains.
 
   Cross-protocol (6 tools, mv_* prefix): Unified analysis across protocols.
     mv_scan_curator_opportunities — scans BOTH Spectra + Pendle with capital-aware metrics.

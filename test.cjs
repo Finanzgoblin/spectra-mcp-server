@@ -205,6 +205,7 @@ async function testToolRegistration(client) {
     "morpho_list_vaults",
     "morpho_get_positions",
     "morpho_get_history",
+    "merkl_list_campaigns",
     "spectra_quote_trade",
     "spectra_simulate_trade",
     "spectra_scan_opportunities",
@@ -1152,6 +1153,40 @@ async function testGetMorphoMarkets(client) {
     obscureSearch.includes("OBSERVATION BOUNDARY") || obscureSearch.includes("collateral_filter"),
     "failed PT search suggests broadening to collateral_filter",
     `unexpected: ${obscureSearch.slice(0, 150)}`
+  );
+}
+
+async function testMerklListCampaigns(client) {
+  console.log("\n--- merkl_list_campaigns ---");
+
+  // Default: list campaigns on mainnet
+  const { text } = await client.callTool("merkl_list_campaigns", {
+    chain: "mainnet",
+    top_n: 5,
+  });
+
+  assert(
+    text.includes("Merkl campaign") || text.includes("No live Merkl") || text.includes("unavailable"),
+    "returns campaigns or empty message",
+    `unexpected: ${text.slice(0, 100)}`
+  );
+
+  if (text.includes("Merkl campaign")) {
+    assert(text.includes("APR"), "shows APR", "missing");
+    assert(text.includes("Action") || text.includes("action"), "shows action type", "missing");
+  }
+
+  // Filter by asset
+  const { text: filtered } = await client.callTool("merkl_list_campaigns", {
+    chain: "mainnet",
+    asset_filter: "USDC",
+    top_n: 3,
+  });
+
+  assert(
+    filtered.includes("USDC") || filtered.includes("No live Merkl"),
+    "asset_filter works",
+    `unexpected: ${filtered.slice(0, 100)}`
   );
 }
 
@@ -2453,6 +2488,7 @@ async function main() {
 
       // Morpho integration
       await testGetMorphoMarkets(client);
+      await testMerklListCampaigns(client);
       await testGetMorphoRate(client);
       await testGetMorphoMarketSuppliers(client);
       await testGetMorphoVaults(client);
