@@ -19,7 +19,7 @@
 - `src/tools/onchain.ts` — `spectra_get_onchain_activity` (direct RPC/eth_getLogs)
 - `src/tools/strategy.ts` — `spectra_scan_opportunities` (capital-aware, batch Morpho, negative-APY filtering)
 - `src/tools/yt_arb.ts` — `spectra_scan_yt_arbitrage` (YT execution mechanics, flash-mint/flash-redeem)
-- `src/tools/morpho.ts` — `morpho_list_markets`, `morpho_get_rate`, `morpho_get_market_suppliers`, `morpho_list_vaults`
+- `src/tools/morpho.ts` — `morpho_list_markets` (broadened: collateral_filter for ANY asset, Merkl enrichment), `morpho_get_rate`, `morpho_get_market_suppliers`, `morpho_list_vaults`
 - `src/tools/looping.ts` — `spectra_get_looping_strategy` (borrow rate sensitivity, break-even period, failure scenarios)
 - `src/tools/quote.ts` — `spectra_quote_trade` (on-chain Curve get_dy() with math fallback), exports `tryOnChainQuote` shared by simulate.ts
 - `src/tools/simulate.ts` — `spectra_simulate_trade` (imports tryOnChainQuote from quote.ts)
@@ -49,6 +49,7 @@
 - `src/tools/rollover.ts` — `mv_plan_rollover` (expiring position rollover planner with cross-protocol candidates)
 - `src/tools/curator_portfolio.ts` — `mv_get_curator_portfolio` (multi-vault aggregation, AUM, blended APY, concentration)
 - `src/tools/expiry_monitor.ts` — `spectra_list_expiring_pools` (scan all chains for pools approaching maturity, urgency grouping, successor pool cross-reference, gauge status via governance API, readiness assessment)
+- `src/tools/merkl.ts` — `merkl_list_campaigns` (standalone Merkl campaign discovery by chain, asset filter, subsidized rate surfacing)
 
 ## Router-Mediated Transactions & eth_getLogs
 Most user interactions go through the **Spectra Router** (flash-mints, flash-redeems, batched mint+LP). The Router is `msg.sender` on underlying contracts, so event `topics[1]` stores the Router address, NOT the user. This is a fundamental EVM constraint, not a bug.

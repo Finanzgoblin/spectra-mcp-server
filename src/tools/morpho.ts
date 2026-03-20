@@ -6,10 +6,9 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, MORPHO_CHAIN_IDS, resolveNetwork } from "../config.js";
-import type { MorphoMarket, MorphoVault, MorphoUserPositions, MorphoUserMarketPosition, MorphoUserVaultPosition, MorphoHistoricalAnalysis, MorphoHistoricalDataPoint, MorphoRateStats } from "../types.js";
-import { fetchMorpho, sanitizeGraphQL, MORPHO_MARKET_FIELDS, fetchSpectraPtAddresses, fetchMorphoMarketSuppliers, fetchMorphoVaults, fetchMorphoMarketRates, fetchMorphoUserPositions, fetchMorphoMarketHistory } from "../api.js";
+import type { MorphoMarket, MorphoVault, MorphoUserPositions, MorphoUserMarketPosition, MorphoUserVaultPosition, MorphoHistoricalAnalysis, MorphoHistoricalDataPoint, MorphoRateStats, MerklCampaign } from "../types.js";
+import { fetchMorpho, sanitizeGraphQL, MORPHO_MARKET_FIELDS, fetchSpectraPtAddresses, fetchMorphoMarketSuppliers, fetchMorphoVaults, fetchMorphoMarketRates, fetchMorphoUserPositions, fetchMorphoMarketHistory, fetchMerklCampaigns, lookupMerklCampaigns, fetchSpectra } from "../api.js";
 import { formatPct, formatUsd, formatMorphoLltv, formatMorphoMarketSummary, formatMorphoMarketHints, formatMorphoSupplierAnalysis, formatMorphoVaultSummary, formatMorphoVaultSummaryEnriched, formatMorphoUserPositions, formatMorphoHistoricalAnalysis, formatMorphoHistoryHints, parsePtResponse } from "../formatters.js";
-import { fetchSpectra } from "../api.js";
 
 export function register(server: McpServer): void {
   // ===========================================================================
@@ -18,34 +17,46 @@ export function register(server: McpServer): void {
 
   server.tool(
     "morpho_list_markets",
-    `Find Morpho lending markets that accept Spectra PT tokens as collateral.
-Returns market details including LLTV, borrow/supply APY, utilization, and liquidity.
-Essential for looping strategies: borrow against PT to lever up fixed yield.
-Can search across all chains or filter by a specific chain.
+    `Find Morpho Blue lending markets by collateral type.
+
+Two search modes:
+1. PT collateral (default): Finds markets that accept Spectra/Pendle PT tokens as collateral.
+   Use pt_symbol_filter to narrow (e.g., "USDC", "sUSDe"). Essential for looping strategies.
+2. Any collateral: Use collateral_filter to search ANY Morpho market by collateral symbol
+   (e.g., "ynRWAx", "wstETH", "WETH"). Finds IBT, LST, and other collateral markets that
+   pt_symbol_filter would miss. IMPORTANT: Many yield-bearing tokens (IBTs) have Morpho
+   markets using the raw token as collateral, NOT the PT wrapper.
+
+When both filters are provided, collateral_filter takes precedence (broader search).
+
+Enriched with Merkl campaign data: shows subsidized borrow/supply rates when Merkl
+campaigns are active on the market's collateral or loan assets. Subsidized borrow rates
+can be NEGATIVE (Merkl pays borrowers), dramatically improving looping economics.
 
 Protocol context:
-- LLTV = Liquidation Loan-to-Value. This is the threshold where liquidation CAN occur,
-  NOT the safe operating level. Loop safely at ~90-95% of LLTV for margin buffer.
-- High utilization (>90%) means limited borrowing capacity — check available liquidity.
-- Borrow rates are variable and can spike. Monitor rates when running leveraged positions.
-- Not all Spectra chains have Morpho markets. Current Morpho PT coverage: mainnet, base,
-  arbitrum, katana.
+- LLTV = Liquidation Loan-to-Value. Threshold where liquidation CAN occur,
+  NOT the safe operating level. Loop safely at ~90-95% of LLTV.
+- High utilization (>90%) means limited borrowing capacity.
+- Borrow rates are variable and can spike. Monitor when leveraged.
+- Morpho chains: mainnet, base, arbitrum, katana.
 
-When no markets match, output surfaces why (chain coverage, symbol mismatch, or
-genuinely no market exists for that collateral type).
-
-Use spectra_get_looping_strategy to calculate leveraged yield for a specific PT + Morpho market.
-Use morpho_get_rate to fetch live borrow APY for a specific market key.
+Use spectra_get_looping_strategy for leveraged yield calculation.
+Use morpho_get_rate for live borrow APY on a specific market key.
 Use spectra_scan_opportunities for automated cross-chain looping discovery.`,
     {
       chain: CHAIN_ENUM
         .optional()
-        .describe("Filter by Spectra chain. Omit to search all chains with Morpho PT markets."),
+        .describe("Filter by chain. Omit to search all Morpho-capable chains."),
       pt_symbol_filter: z
         .string()
         .max(100)
         .optional()
-        .describe("Filter by PT symbol (e.g., 'USDC', 'reUSD', 'sUSDe'). Matches against collateral symbol."),
+        .describe("Filter by PT symbol (e.g., 'USDC', 'reUSD'). Prepends 'PT-' to search. For non-PT collateral, use collateral_filter instead."),
+      collateral_filter: z
+        .string()
+        .max(100)
+        .optional()
+        .describe("Search ANY Morpho market by collateral symbol (e.g., 'ynRWAx', 'wstETH', 'WETH'). Does NOT prepend 'PT-'. Use this for IBT, LST, or any non-PT collateral markets."),
       min_supply_usd: z
         .number()
         .default(0)
@@ -61,7 +72,7 @@ Use spectra_scan_opportunities for automated cross-chain looping discovery.`,
         .default(10)
         .describe("Number of results to return (default 10, max 50)"),
     },
-    async ({ chain, pt_symbol_filter, min_supply_usd, sort_by, top_n }) => {
+    async ({ chain, pt_symbol_filter, collateral_filter, min_supply_usd, sort_by, top_n }) => {
       try {
         // Determine which Morpho chain IDs to query
         let chainIds: number[] = [];
@@ -77,9 +88,15 @@ Use spectra_scan_opportunities for automated cross-chain looping discovery.`,
           chainIds = Object.values(MORPHO_CHAIN_IDS);
         }
 
-        // Build search string — always include PT- prefix, optionally narrow by symbol
+        // Build search string — collateral_filter takes precedence (broader, no PT- prefix)
+        // pt_symbol_filter prepends "PT-" for backward compatibility
         // Sanitize user input to prevent GraphQL injection
-        const search = pt_symbol_filter ? `PT-${sanitizeGraphQL(pt_symbol_filter)}` : "PT-";
+        const isPtSearch = !collateral_filter;
+        const search = collateral_filter
+          ? sanitizeGraphQL(collateral_filter)
+          : pt_symbol_filter
+            ? `PT-${sanitizeGraphQL(pt_symbol_filter)}`
+            : "PT-";
 
         const orderBy = sort_by === "borrow_apy" ? "BorrowApy"
           : sort_by === "utilization" ? "Utilization"
@@ -101,37 +118,67 @@ Use spectra_scan_opportunities for automated cross-chain looping discovery.`,
           }
         }`;
 
-        // Fetch Morpho markets and Spectra PT addresses in parallel
-        const [morphoData, spectraPtAddrs] = await Promise.all([
+        // Fetch Morpho markets, Spectra PT addresses, and Merkl campaigns in parallel
+        const [morphoData, spectraPtAddrs, ...merklResults] = await Promise.all([
           fetchMorpho(query) as Promise<any>,
           fetchSpectraPtAddresses(),
+          // Fetch Merkl campaigns for all queried chains (best-effort)
+          ...chainIds.map(cid => fetchMerklCampaigns(cid).catch(() => ({ campaigns: new Map<string, MerklCampaign[]>(), available: false }))),
         ]);
+
+        // Merge all Merkl campaign maps
+        const merklMap = new Map<string, MerklCampaign[]>();
+        for (const result of merklResults) {
+          const r = result as { campaigns: Map<string, MerklCampaign[]>; available: boolean };
+          if (r.available) {
+            for (const [addr, campaigns] of r.campaigns) {
+              const existing = merklMap.get(addr);
+              if (existing) existing.push(...campaigns);
+              else merklMap.set(addr, [...campaigns]);
+            }
+          }
+        }
+        const merklAvailable = merklResults.some((r: any) => r.available);
 
         const items: MorphoMarket[] = morphoData?.markets?.items || [];
         const total = morphoData?.markets?.pageInfo?.countTotal || 0;
 
         if (items.length === 0) {
           const scope = chain || "any tracked chain";
+          const searchDesc = collateral_filter
+            ? `collateral "${collateral_filter}"`
+            : pt_symbol_filter
+              ? `PT collateral "${pt_symbol_filter}"`
+              : "PT collateral";
           const lines = [
-            `No Morpho PT markets found on ${scope}${pt_symbol_filter ? ` matching "${pt_symbol_filter}"` : ""}.`,
+            `No Morpho markets found on ${scope} matching ${searchDesc}.`,
             ``,
             `--- Tensions ---`,
-            `⚡ No market exists — but ${total} PT markets exist on other chains/assets. Morpho market`,
-            `  creation is permissionless (createMarket() on Morpho.sol, ~$50 gas). Markets are`,
-            `  typically created by curators, asset issuers (e.g., RWA protocols bootstrapping their`,
-            `  token's DeFi utility), or liquidity providers seeking supply-side yield. The creator`,
-            `  controls risk parameters (LLTV, oracle, caps).`,
-            `⚡ This absence could mean: (A) nobody has seen sufficient demand to justify creation,`,
-            `  (B) the underlying PT is too new or illiquid for comfortable collateralization, or`,
-            `  (C) no curator has identified the opportunity yet. Each interpretation implies a`,
-            `  different action — (A) suggests wait-and-see, (B) suggests the market shouldn't exist`,
-            `  yet, (C) suggests first-mover opportunity.`,
+            `⚡ No market exists for this search — but ${total} markets match on other chains/assets.`,
+            `  Morpho market creation is permissionless (createMarket() on Morpho.sol, ~$50 gas).`,
+            `  Markets are typically created by curators, asset issuers, or liquidity providers.`,
+            `⚡ This absence could mean: (A) nobody has seen sufficient demand, (B) the asset is too`,
+            `  new or illiquid for comfortable collateralization, or (C) no curator has identified`,
+            `  the opportunity yet. Each interpretation implies a different action.`,
             ``,
-            ...(chain ? [`• Morpho PT markets exist on: mainnet, base, arbitrum, katana`] : []),
-            ...(chain ? [`• Try all chains: morpho_list_markets() without chain filter`] : []),
-            ...(pt_symbol_filter ? [`• Try without filter: morpho_list_markets(${chain ? `chain="${chain}"` : ""}) to see all available PT markets`] : []),
-            `• Without leverage: spectra_get_best_fixed_yields() or spectra_scan_opportunities()`,
           ];
+
+          // Observation boundary: if PT search failed, suggest broadening to collateral_filter
+          if (isPtSearch && pt_symbol_filter) {
+            lines.push(`⚡ OBSERVATION BOUNDARY: This search only looked for "PT-${pt_symbol_filter}" collateral.`);
+            lines.push(`  Many yield-bearing tokens have Morpho markets using the RAW token (IBT) as`);
+            lines.push(`  collateral, not the PT wrapper. Try: morpho_list_markets(collateral_filter="${pt_symbol_filter}")`);
+            lines.push(`  to search for IBT-collateral markets that this search would miss.`);
+            lines.push(``);
+          }
+
+          if (chain) lines.push(`• Morpho markets exist on: ${Object.keys(MORPHO_CHAIN_IDS).join(", ")}`);
+          if (chain) lines.push(`• Try all chains: morpho_list_markets(${collateral_filter ? `collateral_filter="${collateral_filter}"` : ""}) without chain filter`);
+          if (isPtSearch && pt_symbol_filter) {
+            lines.push(`• Broaden: morpho_list_markets(collateral_filter="${pt_symbol_filter}") for non-PT collateral markets`);
+          }
+          lines.push(`• Without leverage: spectra_get_best_fixed_yields() or spectra_scan_opportunities()`);
+
           const text = lines.join("\n");
           return { content: [{ type: "text" as const, text }] };
         }
@@ -155,10 +202,12 @@ Use spectra_scan_opportunities for automated cross-chain looping discovery.`,
           }
         } catch { vaultDataAvailable = false; }
 
-        // Cross-reference: tag each market as Spectra or Pendle/Other, add vault info
+        // Cross-reference: tag each market as Spectra or Pendle/Other, add vault + Merkl info
         const summaries = items.map((m) => {
           const collateralAddr = m.collateralAsset?.address?.toLowerCase() || "";
-          const protocol = spectraPtAddrs.has(collateralAddr) ? "Spectra" : "Pendle/Other";
+          const loanAddr = m.loanAsset?.address?.toLowerCase() || "";
+          const protocol = spectraPtAddrs.has(collateralAddr) ? "Spectra"
+            : isPtSearch ? "Pendle/Other" : "Direct";
           const summary = formatMorphoMarketSummary(m, protocol);
           const hints = formatMorphoMarketHints(m);
           const parts = [summary];
@@ -168,6 +217,34 @@ Use spectra_scan_opportunities for automated cross-chain looping discovery.`,
           if (vaultNames.length > 0) {
             parts.push(`  Vault suppliers: ${vaultNames.length} (${vaultNames.slice(0, 3).join(", ")}${vaultNames.length > 3 ? ", ..." : ""})`);
           }
+          // Enrich with Merkl campaign data — surface subsidized borrow/supply rates
+          if (merklAvailable) {
+            const relevantAddrs = [collateralAddr, loanAddr, m.uniqueKey?.toLowerCase() || ""].filter(Boolean);
+            const campaigns = lookupMerklCampaigns(merklMap, relevantAddrs);
+            if (campaigns.length > 0) {
+              parts.push(``);
+              parts.push(`  Merkl Campaigns (subsidized rates):`);
+              const totalBorrowSubsidy = campaigns.reduce((sum, c) => {
+                // Campaigns targeting this market's loan asset or market key may subsidize borrowing
+                return sum + (c.apr > 0 ? c.apr : 0);
+              }, 0);
+              for (const c of campaigns.slice(0, 5)) {
+                const tokens = c.rewardTokens.length > 0 ? c.rewardTokens.join(", ") : "?";
+                parts.push(`    ${c.name || c.action}: +${formatPct(c.apr)}% APR (${tokens}) [${c.action}]`);
+                if (c.dailyRewards > 0) parts.push(`      Daily rewards: ${formatUsd(c.dailyRewards)}`);
+              }
+              if (campaigns.length > 5) parts.push(`    ... and ${campaigns.length - 5} more campaigns`);
+              // Surface the net borrow cost insight when subsidies exist
+              const borrowApy = (m.state as any)?.borrowApy ?? 0;
+              if (totalBorrowSubsidy > 0 && borrowApy > 0) {
+                const netBorrow = borrowApy * 100 - totalBorrowSubsidy;
+                parts.push(`    ⚡ Net borrow cost: ${formatPct(borrowApy * 100)}% actual - ${formatPct(totalBorrowSubsidy)}% subsidy = ${formatPct(netBorrow)}%`);
+                if (netBorrow < 0) {
+                  parts.push(`    ⚡ NEGATIVE net borrow — Merkl pays borrowers. Looping economics dramatically improved.`);
+                }
+              }
+            }
+          }
           return parts.join("\n");
         });
 
@@ -175,10 +252,21 @@ Use spectra_scan_opportunities for automated cross-chain looping discovery.`,
           (m) => spectraPtAddrs.has(m.collateralAsset?.address?.toLowerCase() || "")
         ).length;
         const scope = chain || "all chains";
+        const filterDesc = collateral_filter
+          ? `collateral: ${collateral_filter}`
+          : pt_symbol_filter
+            ? `PT filter: ${pt_symbol_filter}`
+            : "";
+        const marketType = isPtSearch ? "PT" : "collateral";
         const headerLines = [
-          `Found ${items.length} of ${total} Morpho PT market(s) (${scope}${pt_symbol_filter ? `, filter: ${pt_symbol_filter}` : ""}, sorted by ${sort_by}):`,
-          `  Displayed: Spectra: ${spectraCount} | Pendle/Other: ${items.length - spectraCount}`,
+          `Found ${items.length} of ${total} Morpho ${marketType} market(s) (${scope}${filterDesc ? `, ${filterDesc}` : ""}, sorted by ${sort_by}):`,
         ];
+        if (isPtSearch) {
+          headerLines.push(`  Displayed: Spectra: ${spectraCount} | Pendle/Other: ${items.length - spectraCount}`);
+        }
+        if (merklAvailable) {
+          headerLines.push(`  Merkl campaign data: enriched (subsidized rates shown where active)`);
+        }
         // Truncation notice — prevent agents from generalizing displayed composition to the full set
         const truncated = total - items.length;
         if (truncated > 0 && !chain) {
