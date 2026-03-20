@@ -205,6 +205,7 @@ async function testToolRegistration(client) {
     "morpho_list_vaults",
     "morpho_get_positions",
     "morpho_get_history",
+    "merkl_list_campaigns",
     "spectra_quote_trade",
     "spectra_simulate_trade",
     "spectra_scan_opportunities",
@@ -292,6 +293,7 @@ async function testToolRegistration(client) {
     const props = morphoMarketsTool.inputSchema.properties;
     assert(props.sort_by && props.sort_by.enum, "morpho_list_markets has sort_by enum", "missing");
     assert(props.chain, "morpho_list_markets has optional chain param", "missing");
+    assert(props.collateral_filter, "morpho_list_markets has collateral_filter param", "missing");
   }
 
   const morphoRateTool = tools.find((t) => t.name === "morpho_get_rate");
@@ -1056,12 +1058,12 @@ async function testGetMorphoMarkets(client) {
   });
 
   assert(
-    text.includes("Morpho PT market") || text.includes("No Morpho PT markets"),
+    text.includes("Morpho PT market") || text.includes("Morpho collateral market") || text.includes("No Morpho") || text.includes("No Morpho markets"),
     "returns results or empty message",
     `unexpected: ${text.slice(0, 100)}`
   );
 
-  if (text.includes("Morpho PT market")) {
+  if (text.includes("Morpho PT market") || text.includes("Morpho collateral market")) {
     assert(text.includes("LLTV"), "has LLTV", "missing");
     assert(text.includes("Borrow APY"), "has borrow APY", "missing");
     assert(text.includes("Utilization"), "has utilization", "missing");
@@ -1080,7 +1082,7 @@ async function testGetMorphoMarkets(client) {
   });
 
   assert(
-    ethMarkets.includes("Morpho PT market") || ethMarkets.includes("No Morpho PT markets"),
+    ethMarkets.includes("Morpho PT market") || ethMarkets.includes("Morpho collateral market") || ethMarkets.includes("No Morpho"),
     "mainnet filter works",
     `unexpected: ${ethMarkets.slice(0, 100)}`
   );
@@ -1119,6 +1121,72 @@ async function testGetMorphoMarkets(client) {
     byApy.includes("sorted by borrow_apy") || byApy.includes("No Morpho"),
     "sort_by borrow_apy works",
     `unexpected: ${byApy.slice(0, 80)}`
+  );
+
+  // collateral_filter: search ANY market by collateral symbol (no PT- prefix)
+  const { text: wethMarkets } = await client.callTool("morpho_list_markets", {
+    collateral_filter: "wstETH",
+    chain: "mainnet",
+    top_n: 3,
+  });
+
+  assert(
+    wethMarkets.includes("wstETH") || wethMarkets.includes("No Morpho"),
+    "collateral_filter finds non-PT markets",
+    `unexpected: ${wethMarkets.slice(0, 100)}`
+  );
+
+  if (wethMarkets.includes("collateral market")) {
+    assert(
+      !wethMarkets.includes("Spectra:") && !wethMarkets.includes("Pendle/Other:"),
+      "collateral_filter does not show PT protocol tagging in header",
+      `unexpected protocol tagging: ${wethMarkets.slice(0, 200)}`
+    );
+  }
+
+  // collateral_filter with observation boundary: PT search that fails should suggest broadening
+  const { text: obscureSearch } = await client.callTool("morpho_list_markets", {
+    pt_symbol_filter: "ZZZNOTEXIST",
+  });
+
+  assert(
+    obscureSearch.includes("OBSERVATION BOUNDARY") || obscureSearch.includes("collateral_filter"),
+    "failed PT search suggests broadening to collateral_filter",
+    `unexpected: ${obscureSearch.slice(0, 150)}`
+  );
+}
+
+async function testMerklListCampaigns(client) {
+  console.log("\n--- merkl_list_campaigns ---");
+
+  // Default: list campaigns on mainnet
+  const { text } = await client.callTool("merkl_list_campaigns", {
+    chain: "mainnet",
+    top_n: 5,
+  });
+
+  assert(
+    text.includes("Merkl campaign") || text.includes("No live Merkl") || text.includes("unavailable"),
+    "returns campaigns or empty message",
+    `unexpected: ${text.slice(0, 100)}`
+  );
+
+  if (text.includes("Merkl campaign")) {
+    assert(text.includes("APR"), "shows APR", "missing");
+    assert(text.includes("Action") || text.includes("action"), "shows action type", "missing");
+  }
+
+  // Filter by asset
+  const { text: filtered } = await client.callTool("merkl_list_campaigns", {
+    chain: "mainnet",
+    asset_filter: "USDC",
+    top_n: 3,
+  });
+
+  assert(
+    filtered.includes("USDC") || filtered.includes("No live Merkl"),
+    "asset_filter works",
+    `unexpected: ${filtered.slice(0, 100)}`
   );
 }
 
@@ -2420,6 +2488,7 @@ async function main() {
 
       // Morpho integration
       await testGetMorphoMarkets(client);
+      await testMerklListCampaigns(client);
       await testGetMorphoRate(client);
       await testGetMorphoMarketSuppliers(client);
       await testGetMorphoVaults(client);

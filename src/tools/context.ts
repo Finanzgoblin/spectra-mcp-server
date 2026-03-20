@@ -280,7 +280,7 @@ PENDLE (13 tools, pendle_* prefix):
 
 MORPHO (7 tools, morpho_* prefix):
 - Lending protocol for leveraged yield strategies on both Spectra and Pendle PTs.
-- morpho_list_markets: Find markets accepting PTs as collateral (filter by chain/symbol).
+- morpho_list_markets: Find markets by collateral type. pt_symbol_filter for PT collateral (prepends "PT-"), collateral_filter for ANY asset (IBTs, LSTs, etc.). Enriched with Merkl subsidized rates.
 - morpho_get_rate: Live borrow rates with supply-side context.
 - morpho_get_market_suppliers: Who supplies lending liquidity (vault/EOA/looper breakdown).
 - morpho_list_vaults: Vault allocations with Spectra PT tagging.
