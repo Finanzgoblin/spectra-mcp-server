@@ -68,7 +68,9 @@ is invisible to protocol-native tools unless explicitly integrated.`,
           return { content: [{ type: "text" as const, text: `Unknown chain: ${chain}` }], isError: true };
         }
 
-        const { campaigns: campaignMap, available } = await fetchMerklCampaigns(chainConfig.id);
+        // Pass asset_filter as server-side name filter to get ALL matching campaigns
+        // (the default API response is truncated to ~28 results)
+        const { campaigns: campaignMap, available } = await fetchMerklCampaigns(chainConfig.id, asset_filter);
 
         if (!available) {
           return {
