@@ -2389,8 +2389,8 @@ export interface MerklResult {
   available: boolean;
 }
 
-const _merklCampaignCache = new Map<number, { campaigns: Map<string, MerklCampaign[]>; available: boolean; expiresAt: number }>();
-const _merklCampaignInflight = new Map<number, Promise<MerklResult>>();
+const _merklCampaignCache = new Map<string, { campaigns: Map<string, MerklCampaign[]>; available: boolean; expiresAt: number }>();
+const _merklCampaignInflight = new Map<string, Promise<MerklResult>>();
 
 /**
  * Extract a clean 0x address from a Merkl opportunity identifier.
@@ -2408,17 +2408,25 @@ function cleanMerklIdentifier(identifier: string): string | null {
  * available=false means the API was unreachable — campaigns may exist but we can't confirm.
  * Cached for 60s with inflight dedup. Best-effort — never throws.
  */
-export async function fetchMerklCampaigns(chainId: number): Promise<MerklResult> {
+export async function fetchMerklCampaigns(chainId: number, nameFilter?: string): Promise<MerklResult> {
+  // Cache key includes name filter so filtered and unfiltered requests are cached separately
+  const cacheKey = nameFilter ? `${chainId}:name=${nameFilter.toLowerCase()}` : `${chainId}`;
   const now = Date.now();
-  const cached = _merklCampaignCache.get(chainId);
+  const cached = _merklCampaignCache.get(cacheKey);
   if (cached && now < cached.expiresAt) return { campaigns: cached.campaigns, available: cached.available };
 
-  const inflight = _merklCampaignInflight.get(chainId);
+  const inflight = _merklCampaignInflight.get(cacheKey);
   if (inflight) return inflight;
 
   const promise = (async () => {
     try {
-      const url = `${MERKL_V4_API}/opportunities?chainId=${chainId}`;
+      // The Merkl v4 API returns ~28 results by default. When nameFilter is provided,
+      // pass it as &name= for server-side filtering (returns campaigns matching the name).
+      // Also request more items to avoid truncation.
+      let url = `${MERKL_V4_API}/opportunities?chainId=${chainId}`;
+      if (nameFilter) {
+        url += `&name=${encodeURIComponent(nameFilter)}&items=100`;
+      }
       const res = await fetchWithRetry(() =>
         fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
       );
@@ -2470,17 +2478,17 @@ export async function fetchMerklCampaigns(chainId: number): Promise<MerklResult>
         }
       }
 
-      _merklCampaignCache.set(chainId, { campaigns: campaignMap, available: true, expiresAt: Date.now() + MERKL_CAMPAIGN_TTL_MS });
+      _merklCampaignCache.set(cacheKey, { campaigns: campaignMap, available: true, expiresAt: Date.now() + MERKL_CAMPAIGN_TTL_MS });
       return { campaigns: campaignMap, available: true } as MerklResult;
     } catch (err) {
       console.error(`Merkl campaign fetch failed for chainId ${chainId}:`, err instanceof Error ? err.message : err);
       return { campaigns: new Map<string, MerklCampaign[]>(), available: false };
     } finally {
-      _merklCampaignInflight.delete(chainId);
+      _merklCampaignInflight.delete(cacheKey);
     }
   })();
 
-  _merklCampaignInflight.set(chainId, promise);
+  _merklCampaignInflight.set(cacheKey, promise);
   return promise;
 }
 
