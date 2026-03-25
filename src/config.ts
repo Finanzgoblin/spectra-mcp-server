@@ -188,10 +188,12 @@ export const VE_SPECTRA = {
   chainId: 8453, // Base
   rpcUrl: process.env.VE_SPECTRA_RPC_URL || "https://mainnet.base.org",
   selectors: {
-    totalSupply: "0x18160ddd",
-    balanceOf: "0x70a08231",
-    locked: "0xb45a3c0e",
-    ownerOf: "0x6352211e",
+    totalSupply: "0x18160ddd",          // totalSupply()
+    balanceOf: "0x70a08231",            // balanceOf(address) → NFT count
+    balanceOfNFT: "0xe7e242d4",         // balanceOfNFT(uint256) → voting power for one NFT
+    ownerToNFTokenIdList: "0x8bf9d84c", // ownerToNFTokenIdList(address,uint256) → tokenId at index
+    locked: "0xb45a3c0e",              // locked(uint256) → (amount, end) lock info
+    ownerOf: "0x6352211e",             // ownerOf(uint256) → owner address
   },
   decimals: 18,
   maxBoost: 2.5,
