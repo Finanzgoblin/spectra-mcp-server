@@ -89,8 +89,11 @@ Protocol context:
           }
         });
 
+        // Make chain failures LOUD, not a quiet footnote. When 9/11 chains fail,
+        // a "total" that only covers mainnet + sonic is dangerously misleading.
+        // The agent needs to know the number is INCOMPLETE before building strategy.
         const chainWarning = failedChains.length > 0
-          ? `\nNote: ${failedChains.length} chain(s) failed to respond (${failedChains.join(", ")}). Results may be partial.\n`
+          ? `\n⚠ INCOMPLETE — ${failedChains.length}/${networks.length} chains unreachable (${failedChains.join(", ")}). Totals below cover ONLY responding chains. True portfolio value unknown.\n`
           : "";
 
         // Build set of known addresses for Merkl matching (Spectra pools + Morpho positions)
