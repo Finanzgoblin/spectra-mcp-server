@@ -1126,6 +1126,84 @@ export async function fetchVeTotalSupply(): Promise<number> {
 }
 
 // =============================================================================
+// veSPECTRA Wallet Balance (on-chain, Base)
+// =============================================================================
+// The veNFT contract stores voting power per NFT, not per address.
+// To get a wallet's total voting power:
+//   1. balanceOf(address) → NFT count
+//   2. ownerToNFTokenIdList(address, index) → tokenId at each index
+//   3. balanceOfNFT(tokenId) → voting power for that NFT
+//   4. Sum all voting powers
+// This is 1 + N + N RPC calls for N NFTs. Most wallets have 1-3 NFTs.
+
+/**
+ * Fetch a wallet's total veSPECTRA voting power from Base chain.
+ * Returns the sum of balanceOfNFT() across all NFTs owned by the address.
+ * Returns 0 if the wallet has no veNFTs (not an error — they just don't have any).
+ */
+export async function fetchVeBalance(walletAddress: string): Promise<{
+  votingPower: number;
+  nftCount: number;
+  nfts: Array<{ tokenId: string; votingPower: number }>;
+}> {
+  const addr = walletAddress.toLowerCase().replace("0x", "");
+  const paddedAddr = "000000000000000000000000" + addr;
+
+  // Helper: make a single eth_call to the veSPECTRA contract
+  async function veCall(data: string): Promise<string> {
+    const res = await fetchWithRetry(() =>
+      fetch(VE_SPECTRA.rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: 1, method: "eth_call",
+          params: [{ to: VE_SPECTRA.address, data }, "latest"],
+        }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      })
+    );
+    const json = await res.json() as any;
+    if (json.error) throw new Error(json.error.message || "RPC error");
+    return json.result || "0x0";
+  }
+
+  // Step 1: How many veNFTs does this wallet own?
+  const countHex = await veCall(VE_SPECTRA.selectors.balanceOf + paddedAddr);
+  const nftCount = Number(BigInt(countHex));
+
+  if (nftCount === 0) {
+    return { votingPower: 0, nftCount: 0, nfts: [] };
+  }
+
+  // Step 2+3: For each NFT, get tokenId then voting power
+  const divisor = 10n ** BigInt(VE_SPECTRA.decimals);
+  const nfts: Array<{ tokenId: string; votingPower: number }> = [];
+
+  for (let i = 0; i < nftCount && i < 20; i++) { // cap at 20 NFTs to prevent abuse
+    const indexHex = i.toString(16).padStart(64, "0");
+
+    // ownerToNFTokenIdList(address, index)
+    const tokenIdHex = await veCall(
+      VE_SPECTRA.selectors.ownerToNFTokenIdList + paddedAddr + indexHex
+    );
+    const tokenId = BigInt(tokenIdHex);
+
+    // balanceOfNFT(tokenId)
+    const tokenIdPadded = tokenId.toString(16).padStart(64, "0");
+    const powerHex = await veCall(
+      VE_SPECTRA.selectors.balanceOfNFT + tokenIdPadded
+    );
+    const powerRaw = BigInt(powerHex);
+    const power = Number(powerRaw / divisor) + Number(powerRaw % divisor) / Number(divisor);
+
+    nfts.push({ tokenId: tokenId.toString(), votingPower: power });
+  }
+
+  const totalPower = nfts.reduce((sum, n) => sum + n.votingPower, 0);
+  return { votingPower: totalPower, nftCount, nfts };
+}
+
+// =============================================================================
 // Safe Amount → BigInt Conversion (avoids float overflow)
 // =============================================================================
 
