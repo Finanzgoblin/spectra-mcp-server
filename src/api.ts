@@ -2546,6 +2546,10 @@ export async function fetchMerklCampaigns(chainId: number, nameFilter?: string):
           status: opp.status || "",
           rewardTokens,
           dailyRewards: typeof opp.dailyRewards === "number" ? opp.dailyRewards : 0,
+          // Campaign timing — when the subsidy ends. Without this, agents
+          // assume incentives persist forever and build strategies on sand.
+          earliestEnd: typeof opp.earliestCampaignEnd === "number" ? opp.earliestCampaignEnd : undefined,
+          latestEnd: typeof opp.latestCampaignEnd === "number" ? opp.latestCampaignEnd : undefined,
         };
 
         const existing = campaignMap.get(addr);

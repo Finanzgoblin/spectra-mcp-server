@@ -140,6 +140,22 @@ is invisible to protocol-native tools unless explicitly integrated.`,
           ];
           if (c.dailyRewards > 0) parts.push(`   Daily rewards: ${formatUsd(c.dailyRewards)}`);
           if (c.tvl > 0) parts.push(`   Campaign TVL: ${formatUsd(c.tvl)}`);
+          // Campaign end date — critical for strategy duration planning
+          if (c.earliestEnd || c.latestEnd) {
+            const endTs = c.latestEnd || c.earliestEnd!;
+            const endDate = new Date(endTs * 1000);
+            const daysLeft = Math.max(0, Math.floor((endTs * 1000 - Date.now()) / 86400000));
+            const dateStr = endDate.toISOString().slice(0, 10);
+            if (daysLeft <= 7) {
+              parts.push(`   ⚠ Ends: ${dateStr} (${daysLeft}d left — EXPIRING SOON)`);
+            } else if (daysLeft <= 30) {
+              parts.push(`   ⏰ Ends: ${dateStr} (${daysLeft}d left)`);
+            } else {
+              parts.push(`   Ends: ${dateStr} (${daysLeft}d left)`);
+            }
+          } else {
+            parts.push(`   Ends: unknown — subsidy duration not disclosed`);
+          }
           parts.push(`   Target: ${c.identifier}`);
 
           // Surface action-specific interpretation
