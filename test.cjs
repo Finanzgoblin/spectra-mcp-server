@@ -185,7 +185,7 @@ async function testToolRegistration(client) {
   const tools = await client.listTools();
   const names = tools.map((t) => t.name);
 
-  assert(tools.length === 50, "exactly 50 tools registered", `got ${tools.length}: ${names.join(", ")}`);
+  assert(tools.length === 51, "exactly 51 tools registered", `got ${tools.length}: ${names.join(", ")}`);
 
   const expected = [
     "spectra_get_pt_details",
