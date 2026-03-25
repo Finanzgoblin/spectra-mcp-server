@@ -120,10 +120,15 @@ Use spectra_get_portfolio for Spectra positions.`,
 
         if (positions.length === 0 && failedChains.length > 0) {
           const text = [
-            `Could not fetch Pendle positions for ${address}.`,
+            `⚠ Pendle portfolio endpoint unavailable for ${address}.`,
             `Failed chains: ${failedChains.join(", ")}`,
             ``,
-            `The Pendle portfolio API may not be available. Try again later.`,
+            `The Pendle API /users/{address}/active-positions endpoint returns errors.`,
+            `This is a KNOWN LIMITATION — the endpoint may be deprecated or unstable.`,
+            ``,
+            `Workaround: use pendle_list_markets to find markets, then check on-chain`,
+            `PT/YT/LP token balances manually. The wallet's positions exist on-chain`,
+            `even when this API endpoint doesn't respond.`,
           ].join("\n");
           return { content: [{ type: "text" as const, text }], isError: true };
         }
