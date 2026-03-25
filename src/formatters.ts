@@ -171,7 +171,16 @@ export function formatMerklCampaignLines(
     const tokens = c.rewardTokens.length > 0 ? c.rewardTokens.join(", ") : "Rewards";
     const action = c.action || "UNKNOWN";
     const eligNote = action === "POOL" ? " [LP only — not for YT/PT holders]" : "";
-    lines.push(`${indent}+-- ${tokens} (${action})${eligNote}: ${formatPct(c.apr)} APR`);
+    // Show campaign end date when available — subsidy duration matters for strategy
+    let endNote = "";
+    if (c.earliestEnd || c.latestEnd) {
+      const endTs = c.latestEnd || c.earliestEnd!;
+      const daysLeft = Math.max(0, Math.floor((endTs * 1000 - Date.now()) / 86400000));
+      if (daysLeft <= 7) endNote = ` ⚠ expires in ${daysLeft}d`;
+      else if (daysLeft <= 30) endNote = ` (${daysLeft}d left)`;
+      else endNote = ` (ends ${new Date(endTs * 1000).toISOString().slice(0, 10)})`;
+    }
+    lines.push(`${indent}+-- ${tokens} (${action})${eligNote}: ${formatPct(c.apr)} APR${endNote}`);
   }
   return lines;
 }
