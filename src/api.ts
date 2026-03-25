@@ -1990,7 +1990,11 @@ export async function fetchPendleUserPositions(
   if (!pendleChainId) return { positions: [], available: true };
 
   try {
-    // Pendle user positions endpoint
+    // Pendle user positions endpoint.
+    // ⚠ KNOWN ISSUE: This endpoint returns 404 for most/all wallets as of March 2026.
+    // It may have been deprecated from the Pendle API. If it fails, we return an honest
+    // error rather than silently returning empty positions. On-chain balanceOf reads
+    // would be the robust replacement but require iterating all known market addresses.
     const raw = await fetchPendle(
       `/v1/${pendleChainId}/users/${userAddress}/active-positions`
     ) as any;
