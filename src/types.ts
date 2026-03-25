@@ -578,6 +578,10 @@ export interface MerklCampaign {
   status: string;        // LIVE, PAST, etc.
   rewardTokens: string[]; // reward token symbols
   dailyRewards: number;  // USD daily rewards
+  // Campaign timing — when subsidies end. Critical for strategy duration.
+  // Without this, agents assume subsidies persist forever.
+  earliestEnd?: number;  // Unix timestamp — earliest campaign end
+  latestEnd?: number;    // Unix timestamp — latest campaign end
 }
 
 // =============================================================================
