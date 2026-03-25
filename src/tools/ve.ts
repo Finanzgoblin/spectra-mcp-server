@@ -8,7 +8,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork, VE_SPECTRA } from "../config.js";
-import { fetchVeTotalSupply, fetchSpectra } from "../api.js";
+import { fetchVeTotalSupply, fetchVeBalance, fetchSpectra } from "../api.js";
 import { formatUsd, formatPct, parsePtResponse, computeSpectraBoost } from "../formatters.js";
 
 export function register(server: McpServer): void {
@@ -29,11 +29,14 @@ Full 2.5x boost when: v/V >= d/D (your share of votes >= your share of pool)
 Useful for understanding how much veSPECTRA you need for max boost in a given
 pool at a given deposit size.`,
     {
+      wallet_address: EVM_ADDRESS
+        .optional()
+        .describe("Wallet address to check veSPECTRA balance for. Reads on-chain from Base. If provided, auto-populates ve_spectra_balance."),
       ve_spectra_balance: z
         .number()
         .min(0)
         .optional()
-        .describe("Your veSPECTRA token balance. If provided with capital_usd, computes your boost."),
+        .describe("Your veSPECTRA token balance. If provided with capital_usd, computes your boost. Auto-populated when wallet_address is provided."),
       capital_usd: z
         .number()
         .positive()
@@ -46,10 +49,20 @@ pool at a given deposit size.`,
         .optional()
         .describe("PT address of the pool to check boost for (optional, used with chain)."),
     },
-    async ({ ve_spectra_balance, capital_usd, chain, pt_address }) => {
+    async ({ wallet_address, ve_spectra_balance, capital_usd, chain, pt_address }) => {
       try {
         const veTotalSupply = await fetchVeTotalSupply();
         let computedBoost: { multiplier: number; boostFraction: number } | null = null;
+
+        // If wallet_address provided, read on-chain balance and auto-populate
+        let walletData: { votingPower: number; nftCount: number; nfts: Array<{ tokenId: string; votingPower: number }> } | null = null;
+        if (wallet_address) {
+          walletData = await fetchVeBalance(wallet_address);
+          // Auto-populate ve_spectra_balance from on-chain if not manually overridden
+          if (ve_spectra_balance === undefined || ve_spectra_balance === 0) {
+            ve_spectra_balance = walletData.votingPower;
+          }
+        }
 
         const lines: string[] = [
           `-- veSPECTRA Info --`,
@@ -61,6 +74,24 @@ pool at a given deposit size.`,
           `  Formula: B = min(2.5, 1.5 * (v/V) * (D/d) + 1)`,
           `  Source: ${VE_SPECTRA.sourceRepo}`,
         ];
+
+        // Show wallet balance if we read it on-chain
+        if (walletData) {
+          lines.push(``);
+          lines.push(`  Wallet: ${wallet_address}`);
+          lines.push(`  veNFTs owned: ${walletData.nftCount}`);
+          if (walletData.nftCount > 0) {
+            lines.push(`  Total Voting Power: ${walletData.votingPower.toLocaleString("en-US", { maximumFractionDigits: 0 })} veSPECTRA`);
+            lines.push(`  Share of Total: ${formatPct((walletData.votingPower / veTotalSupply) * 100)}`);
+            for (const nft of walletData.nfts) {
+              lines.push(`    NFT #${nft.tokenId}: ${nft.votingPower.toLocaleString("en-US", { maximumFractionDigits: 0 })} veSPECTRA`);
+            }
+          } else {
+            lines.push(`  No veSPECTRA found at this address.`);
+            lines.push(`  Note: if you hold sdSPECTRA (StakeDAO liquid locker), your veSPECTRA`);
+            lines.push(`  is held by the StakeDAO contract, not your wallet directly.`);
+          }
+        }
 
         // If balance + capital provided, compute boost
         if (ve_spectra_balance !== undefined && ve_spectra_balance > 0 && capital_usd) {
