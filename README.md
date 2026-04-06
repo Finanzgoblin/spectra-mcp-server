@@ -2,7 +2,7 @@
 
 Multi-protocol yield intelligence for AI agents — covering [Spectra Finance](https://spectra.finance), [Pendle](https://pendle.finance), and [Morpho](https://morpho.org) via the [Model Context Protocol](https://modelcontextprotocol.io).
 
-53 tools · 3 protocols · 10+ chains · read-only · on-chain Curve quoting · Pendle logit AMM modeling · ERC-4626 health checks · yield curve term structure · historical eth_getLogs · full Pendle protocol parity (15 tools) · cross-protocol position map · cross-protocol Spectra↔Pendle comparison · veSPECTRA governance dashboard · Pendle historical time-series · Morpho supply-side visibility · Morpho user positions & historical rates · Merkl campaign APR integration · entry path awareness · curator risk monitoring · withdrawal stress testing · rollover planning · multi-vault portfolio aggregation · pool expiry monitoring · zero web3 library dependencies
+54 tools · 3 protocols · 10+ chains · read-only · on-chain Curve quoting · Pendle logit AMM modeling · ERC-4626 health checks · yield curve term structure · historical eth_getLogs · full Pendle protocol parity (15 tools) · cross-protocol position map · cross-protocol Spectra↔Pendle comparison · veSPECTRA governance dashboard · Pendle historical time-series · Morpho supply-side visibility · Morpho user positions & historical rates · Merkl campaign APR integration · entry path awareness · curator risk monitoring · withdrawal stress testing · rollover planning · multi-vault portfolio aggregation · pool expiry monitoring · zero web3 library dependencies
 
 ## What This Does
 
@@ -190,6 +190,7 @@ The observation coverage layer addresses a deeper problem: even perfect interpre
 | `spectra_stress_test_vault` | Withdrawal stress test for MetaVaults — liquidity waterfall (idle → maturing → LP removal → PT sale), cost to remaining depositors, maximum safe redemption size. Market stress mode (2x impact). |
 | `mv_plan_rollover` | Position rollover planner for expiring MetaVault positions — scans Spectra + Pendle for replacement candidates, computes entry impact, yield gap, overlap windows, and net effective APY. |
 | `mv_get_curator_portfolio` | Multi-vault portfolio aggregation — total AUM, blended APY, fee revenue projection, concentration by underlying/chain, cross-vault action items. Discovery mode (by curator address) or explicit mode. |
+| `mv_get_calibration` | Calibration oracle — what does "normal" look like? Computes statistical baselines (percentiles, anomaly thresholds) from historical data for any Morpho market, Pendle market, or Spectra pool. Includes peer comparison and assertion-ready threshold language. The bridge between perception (monitoring) and specification (security assertions). |
 | `mv_get_position_map` | Cross-protocol position map — sees the WHOLE wallet across Spectra + Pendle + Morpho + governance (veSPECTRA + vePENDLE) in one parallel call. Contradiction detection: unused governance boost, lending when fixed rates are higher, concentration risk, looper detection, expiring positions across protocols. Honest failure reporting (INCOMPLETE shown before numbers, not after). The first tool that sees the user, not just the protocol. |
 | `spectra_get_gauge_votes` | Full veSPECTRA governance dashboard — gauge vote distribution, voting APRs, bribe incentives, SPECTRA emissions per pool. Shows where veSPECTRA holders direct votes, what rewards they earn, emission concentration, and bribe efficiency ($ per vote). |
 | `pendle_get_market_history` | Historical time-series for any Pendle market — implied APY, TVL, volume, PT/YT prices over 7d/30d/90d/1y periods. First tool that answers "what happened over time?" for trend analysis, yield stability assessment, and anomaly detection. |
@@ -278,7 +279,7 @@ Add to your `claude_desktop_config.json`:
 }
 ```
 
-Restart Claude Desktop. You'll see all 53 tools (Spectra, Pendle, Morpho, cross-protocol) available.
+Restart Claude Desktop. You'll see all 54 tools (Spectra, Pendle, Morpho, cross-protocol) available.
 
 ## Connect to Claude Code
 

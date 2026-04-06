@@ -830,6 +830,63 @@ export interface BorrowRateAnalysis {
 }
 
 // =============================================================================
+// Calibration Oracle Interfaces
+// =============================================================================
+// What "normal" looks like. Built from historical observation, not theory.
+// The bridge between perception (monitoring) and specification (assertions).
+
+/** Statistical profile of a single metric over a historical period. */
+export interface CalibrationMetric {
+  name: string;             // e.g. "borrowApy", "conversionRate", "impliedApy"
+  unit: string;             // "%", "ratio", "USD", "tokens"
+  stats: {
+    min: number;
+    max: number;
+    avg: number;
+    median: number;
+    stddev: number;
+    p5: number;             // 5th percentile — lower bound of normal
+    p25: number;
+    p75: number;
+    p95: number;            // 95th percentile — upper bound of normal
+    current: number;
+    trend: "up" | "down" | "stable";
+    cov: number;            // coefficient of variation (stddev/avg * 100)
+  };
+  normalRange: [number, number];  // [p5, p95]
+  anomalyThreshold: {
+    low: number;            // below this = anomalous
+    high: number;           // above this = anomalous
+    method: string;         // "2x_max" | "3_sigma" | "iqr_fence"
+  };
+  currentStatus: "normal" | "elevated" | "anomalous";
+  dataPoints: number;
+}
+
+/** Full calibration profile for a target (market, pool, or IBT). */
+export interface CalibrationProfile {
+  target: {
+    type: "morpho_market" | "pendle_market" | "spectra_pool" | "ibt";
+    identifier: string;    // market key, pool address, or IBT address
+    chain: string;
+    name: string;
+  };
+  period: string;          // "7d" | "30d" | "90d"
+  metrics: CalibrationMetric[];
+  peerComparison: {
+    groupDescription: string;   // e.g. "8 USDC Morpho markets on mainnet"
+    peerCount: number;
+    rankings: Array<{
+      metric: string;
+      percentile: number;       // where this target sits (0-100)
+      label: string;            // "above average", "middle of pack", etc.
+    }>;
+  } | null;
+  assertionHints: string[];    // natural language threshold suggestions
+  observationBoundary: string; // what this calibration cannot tell you
+}
+
+// =============================================================================
 // Withdrawal Stress Test Interfaces
 // =============================================================================
 

@@ -1323,6 +1323,30 @@ export async function fetchVePendleBalance(walletAddress: string): Promise<{
 }
 
 // =============================================================================
+// =============================================================================
+// Statistical Helpers (used by calibration oracle + pendle_history)
+// =============================================================================
+
+/**
+ * Compute percentiles from a sorted array of numbers.
+ * Uses linear interpolation between adjacent values.
+ * Returns { p5, p25, p50, p75, p95 }.
+ */
+export function computePercentiles(values: number[]): {
+  p5: number; p25: number; p50: number; p75: number; p95: number;
+} {
+  if (values.length === 0) return { p5: 0, p25: 0, p50: 0, p75: 0, p95: 0 };
+  const sorted = [...values].sort((a, b) => a - b);
+  const pct = (p: number) => {
+    const idx = (p / 100) * (sorted.length - 1);
+    const lo = Math.floor(idx);
+    const hi = Math.ceil(idx);
+    if (lo === hi) return sorted[lo];
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+  };
+  return { p5: pct(5), p25: pct(25), p50: pct(50), p75: pct(75), p95: pct(95) };
+}
+
 // Safe Amount → BigInt Conversion (avoids float overflow)
 // =============================================================================
 
