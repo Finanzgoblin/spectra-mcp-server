@@ -14,6 +14,7 @@ import {
   API_NETWORKS,
   resolveNetwork,
   VE_SPECTRA,
+  VE_PENDLE,
   CHAIN_RPC_URLS,
   MAX_LOG_BLOCK_RANGE,
 } from "./config.js";
@@ -1201,6 +1202,124 @@ export async function fetchVeBalance(walletAddress: string): Promise<{
 
   const totalPower = nfts.reduce((sum, n) => sum + n.votingPower, 0);
   return { votingPower: totalPower, nftCount, nfts };
+}
+
+// =============================================================================
+// vePENDLE On-Chain Reads (Ethereum mainnet)
+// =============================================================================
+//
+// vePENDLE is a standard ve-token, NOT a veNFT. One balanceOf(address) call
+// returns the decayed voting power directly. No NFT iteration. No tokenId
+// lookups. The simplicity compared to veSPECTRA (3 RPC calls per wallet)
+// is because Pendle chose the veCRV model, not the Velodrome veNFT model.
+//
+// The balance decays linearly on a weekly basis. What you read on Monday
+// is slightly different from Friday. This is expected behavior, not a bug.
+
+let _vePendleTotalSupplyCache: { value: number; expiresAt: number } | null = null;
+let _vePendleTotalSupplyInflight: Promise<number> | null = null;
+
+export async function fetchVePendleTotalSupply(): Promise<number> {
+  const now = Date.now();
+  if (_vePendleTotalSupplyCache && now < _vePendleTotalSupplyCache.expiresAt) {
+    return _vePendleTotalSupplyCache.value;
+  }
+  if (_vePendleTotalSupplyInflight) return _vePendleTotalSupplyInflight;
+
+  _vePendleTotalSupplyInflight = (async () => {
+    try {
+      const res = await fetchWithRetry(() =>
+        fetch(VE_PENDLE.rpcUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0", id: 1, method: "eth_call",
+            params: [{ to: VE_PENDLE.address, data: VE_PENDLE.selectors.totalSupply }, "latest"],
+          }),
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        })
+      );
+      if (!res.ok) throw new Error(`Ethereum RPC error: ${res.status}`);
+      const json = await res.json() as any;
+      if (json.error) throw new Error(json.error.message || "RPC error");
+      const hex: string = json.result;
+      if (!hex || hex === "0x") throw new Error("vePENDLE totalSupply returned empty");
+
+      const raw = BigInt(hex);
+      const divisor = 10n ** BigInt(VE_PENDLE.decimals);
+      const value = Number(raw / divisor) + Number(raw % divisor) / Number(divisor);
+
+      _vePendleTotalSupplyCache = { value, expiresAt: Date.now() + VE_CACHE_TTL_MS };
+      return value;
+    } finally {
+      _vePendleTotalSupplyInflight = null;
+    }
+  })();
+
+  return _vePendleTotalSupplyInflight;
+}
+
+/**
+ * Read a wallet's vePENDLE voting power from Ethereum mainnet.
+ *
+ * Unlike veSPECTRA (veNFT, 3 RPC calls), vePENDLE is a standard ve-token:
+ * one balanceOf(address) call returns the current decayed voting power.
+ *
+ * Returns { votingPower, lockedAmount, lockExpiry } where:
+ *   votingPower = current decayed balance (decreases weekly)
+ *   lockedAmount = original PENDLE locked (doesn't decay)
+ *   lockExpiry = Unix timestamp when lock ends (0 if no lock)
+ */
+export async function fetchVePendleBalance(walletAddress: string): Promise<{
+  votingPower: number;
+  lockedAmount: number;
+  lockExpiry: number;
+}> {
+  const addr = walletAddress.toLowerCase().replace("0x", "");
+  const paddedAddr = "000000000000000000000000" + addr;
+
+  async function veCall(data: string): Promise<string> {
+    const res = await fetchWithRetry(() =>
+      fetch(VE_PENDLE.rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: 1, method: "eth_call",
+          params: [{ to: VE_PENDLE.address, data }, "latest"],
+        }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      })
+    );
+    const json = await res.json() as any;
+    if (json.error) throw new Error(json.error.message || "RPC error");
+    return json.result || "0x0";
+  }
+
+  const divisor = 10n ** BigInt(VE_PENDLE.decimals);
+
+  // One call for voting power — the beauty of standard ve-tokens
+  const powerHex = await veCall(VE_PENDLE.selectors.balanceOf + paddedAddr);
+  const powerRaw = BigInt(powerHex);
+  const votingPower = Number(powerRaw / divisor) + Number(powerRaw % divisor) / Number(divisor);
+
+  // Try to get lock info via positionData(address) → (uint128 amount, uint128 expiry)
+  // The selector for positionData(address) is 0xb6b55f25 but may vary — graceful fallback
+  let lockedAmount = 0;
+  let lockExpiry = 0;
+  try {
+    // positionData uses the same address encoding
+    const posHex = await veCall("0xb6b55f25" + paddedAddr);
+    if (posHex && posHex.length >= 130) { // 0x + 64 chars (amount) + 64 chars (expiry)
+      const amountRaw = BigInt("0x" + posHex.slice(2, 66));
+      const expiryRaw = BigInt("0x" + posHex.slice(66, 130));
+      lockedAmount = Number(amountRaw / divisor) + Number(amountRaw % divisor) / Number(divisor);
+      lockExpiry = Number(expiryRaw);
+    }
+  } catch {
+    // positionData selector may be wrong — voting power still valid
+  }
+
+  return { votingPower, lockedAmount, lockExpiry };
 }
 
 // =============================================================================

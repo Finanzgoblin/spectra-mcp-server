@@ -23,7 +23,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { EVM_ADDRESS, CHAIN_ENUM, API_NETWORKS, SUPPORTED_CHAINS, resolveNetwork, MORPHO_CHAIN_IDS } from "../config.js";
-import { fetchSpectra, fetchMorphoUserPositions, scanAllPendleUserPositions, fetchVeTotalSupply, fetchVeBalance } from "../api.js";
+import { fetchSpectra, fetchMorphoUserPositions, scanAllPendleUserPositions, fetchVeTotalSupply, fetchVeBalance, fetchVePendleTotalSupply, fetchVePendleBalance } from "../api.js";
 import { formatUsd, formatPct, daysToMaturity, formatBalance } from "../formatters.js";
 import type { SpectraPt, SpectraPool } from "../types.js";
 
@@ -69,6 +69,7 @@ before "what should I do?"`,
           pendleResult,
           morphoResults,
           veSpectraResult,
+          vePendleResult,
         ] = await Promise.allSettled([
           // Spectra: portfolio across all chains
           Promise.allSettled(
@@ -91,6 +92,8 @@ before "what should I do?"`,
           ),
           // veSPECTRA governance position on Base
           fetchVeBalance(address).catch(() => null),
+          // vePENDLE governance position on Ethereum mainnet
+          fetchVePendleBalance(address).catch(() => null),
         ]);
 
         // ═══════════════════════════════════════════════════════════
@@ -245,10 +248,12 @@ before "what should I do?"`,
 
         const morphoNetUsd = morphoSupplyUsd + morphoCollateralUsd + morphoVaultUsd - morphoBorrowUsd;
 
-        // veSPECTRA governance
+        // Governance: veSPECTRA (Base) + vePENDLE (Ethereum mainnet)
+        // Both checked in parallel above. Both may coexist in one wallet.
         let veLines: string[] = [];
-        let veVotingPower = 0;
+        let veVotingPower = 0; // veSPECTRA
         let veTotalSupply = 0;
+        let vePendleVotingPower = 0;
 
         if (veSpectraResult.status === "fulfilled" && veSpectraResult.value) {
           const walletData = veSpectraResult.value;
@@ -256,8 +261,26 @@ before "what should I do?"`,
           if (veVotingPower > 0) {
             try { veTotalSupply = await fetchVeTotalSupply(); } catch {}
             const share = veTotalSupply > 0 ? (veVotingPower / veTotalSupply) * 100 : 0;
-            veLines.push(`    veSPECTRA: ${veVotingPower.toLocaleString("en-US", { maximumFractionDigits: 0 })} voting power (${formatPct(share)} of supply)`);
-            veLines.push(`    NFTs: ${walletData.nftCount}`);
+            veLines.push(`    veSPECTRA: ${veVotingPower.toLocaleString("en-US", { maximumFractionDigits: 0 })} voting power (${formatPct(share)} of supply) — Base`);
+            veLines.push(`      NFTs: ${walletData.nftCount} | Max boost: 2.5x on Spectra LP`);
+          }
+        }
+
+        if (vePendleResult.status === "fulfilled" && vePendleResult.value) {
+          const pendleVe = vePendleResult.value;
+          vePendleVotingPower = pendleVe.votingPower;
+          if (vePendleVotingPower > 0) {
+            let pendleTotalSupply = 0;
+            try { pendleTotalSupply = await fetchVePendleTotalSupply(); } catch {}
+            const share = pendleTotalSupply > 0 ? (vePendleVotingPower / pendleTotalSupply) * 100 : 0;
+            veLines.push(`    vePENDLE: ${vePendleVotingPower.toLocaleString("en-US", { maximumFractionDigits: 0 })} voting power (${formatPct(share)} of supply) — Ethereum`);
+            if (pendleVe.lockedAmount > 0) {
+              const expiryStr = pendleVe.lockExpiry > 0
+                ? new Date(pendleVe.lockExpiry * 1000).toISOString().slice(0, 10)
+                : "unknown";
+              veLines.push(`      Locked: ${pendleVe.lockedAmount.toLocaleString("en-US", { maximumFractionDigits: 0 })} PENDLE until ${expiryStr} | Max boost: 2.5x on Pendle LP`);
+            }
+            veLines.push(`      Note: vePENDLE is transitioning to sPENDLE (liquid staking, launched Jan 2026)`);
           }
         }
 
@@ -338,9 +361,12 @@ before "what should I do?"`,
           insights.push(`⚠ EXPIRING: ${allExpiring.join(", ")}. Check rollover plans.`);
         }
 
-        // 2. Governance boost mismatch — has veSPECTRA but maybe no LP positions to boost
+        // 2. Governance boost mismatch — has ve tokens but maybe no LP positions to boost
         if (veVotingPower > 0 && spectraPositionCount === 0) {
           insights.push(`Governance mismatch: ${veVotingPower.toLocaleString()} veSPECTRA locked but no active Spectra LP positions. Boost is unused.`);
+        }
+        if (vePendleVotingPower > 0 && pendlePositionCount === 0) {
+          insights.push(`Governance mismatch: ${vePendleVotingPower.toLocaleString()} vePENDLE locked but no active Pendle LP positions. Boost is unused.`);
         }
 
         // 3. Morpho lending while higher fixed rates exist on Spectra/Pendle

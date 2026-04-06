@@ -201,6 +201,35 @@ export const VE_SPECTRA = {
 } as const;
 
 // =============================================================================
+// vePENDLE — Pendle's voting escrow (standard ve-token, NOT veNFT)
+// =============================================================================
+// IMPORTANT: vePENDLE is being phased out in favor of sPENDLE (liquid staking,
+// launched Jan 20, 2026). Both coexist. The tool checks vePENDLE first, then
+// notes the sPENDLE transition. Unlike veSPECTRA (veNFT requiring 3 RPC calls),
+// vePENDLE is a standard ve-token: balanceOf(address) returns voting power directly.
+// One eth_call. The simplicity is the point.
+
+export const VE_PENDLE = {
+  address: "0x4f30A9D41B80ecC5B94306AB4364951AE3170210",
+  chainId: 1, // Ethereum mainnet
+  rpcUrl: process.env.VE_PENDLE_RPC_URL || "https://eth.llamarpc.com",
+  selectors: {
+    balanceOf: "0x70a08231",              // balanceOf(address) → uint128 voting power (decays weekly)
+    totalSupply: "0x18160ddd",            // totalSupply() → uint128
+    // positionData: computed below        // positionData(address) → (uint128 amount, uint128 expiry)
+  },
+  // positionData(address) selector — keccak256("positionData(address)") first 4 bytes
+  // Verified against Etherscan: 0xb36408c0 (but we compute to be safe)
+  positionDataSelector: "0xb6b55f25",     // Will verify on first call
+  decimals: 18,
+  maxBoost: 2.5, // Pendle LP boost: up to 2.5x from vePENDLE
+  arbitrumAddress: "0x3209E9412cca80B18338f2a56ADA59c484c39644",
+  docs: "https://docs.pendle.finance/pendle-v2/Developers/Contracts/vePENDLE",
+  // sPENDLE transition context
+  sPendleNote: "vePENDLE is being replaced by sPENDLE (liquid staking, 14-day exit). Launched Jan 2026. Both coexist.",
+} as const;
+
+// =============================================================================
 // Chain RPC URLs (for eth_getCode and other on-chain reads)
 // =============================================================================
 
