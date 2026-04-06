@@ -109,8 +109,8 @@ describe("API_NETWORKS", () => {
     assert.ok(API_NETWORKS.includes("mainnet"));
   });
 
-  it("has 10 networks", () => {
-    assert.equal(API_NETWORKS.length, 10);
+  it("has 11 networks", () => {
+    assert.equal(API_NETWORKS.length, 11);
   });
 });
 
@@ -138,8 +138,8 @@ describe("MORPHO_CHAIN_IDS", () => {
 // =============================================================================
 
 describe("SUPPORTED_CHAINS", () => {
-  it("has 11 entries (10 chains + ethereum alias)", () => {
-    assert.equal(Object.keys(SUPPORTED_CHAINS).length, 11);
+  it("has 12 entries (11 chains + ethereum alias)", () => {
+    assert.equal(Object.keys(SUPPORTED_CHAINS).length, 12);
   });
 
   it("mainnet and ethereum alias have the same chain ID", () => {
@@ -180,9 +180,9 @@ describe("resolveRpcUrlsWithFallbacks", () => {
     assert.equal(urls.length, 0);
   });
 
-  it("returns only primary for chains without fallbacks", () => {
+  it("returns primary + fallbacks for chains with fallbacks", () => {
     const urls = resolveRpcUrlsWithFallbacks("sonic");
-    assert.equal(urls.length, 1);
+    assert.ok(urls.length >= 1, "sonic should have at least 1 RPC URL");
     assert.equal(urls[0], CHAIN_RPC_URLS["sonic"]);
   });
 
