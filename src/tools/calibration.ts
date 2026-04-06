@@ -30,6 +30,7 @@ import {
   computePercentiles,
   fetchSpectra,
   fetchMorpho,
+  fetchMerklCampaigns,
 } from "../api.js";
 import { formatPct, formatUsd, daysToMaturity } from "../formatters.js";
 import type { CalibrationMetric, CalibrationProfile, MorphoHistoricalDataPoint } from "../types.js";
@@ -458,6 +459,39 @@ or export knowledge about what normal looks like.`,
         }
 
         // ═══════════════════════════════════════════════
+        // MERKL SUBSIDY DETECTION
+        // ═══════════════════════════════════════════════
+        // The Connector found: calibration shows 0.74% "NORMAL" borrow rate
+        // when effective cost is -9.26% with Merkl. If the subsidy ends,
+        // the calibration would flag the shift as "anomalous" when it's
+        // actually predictable. Surface the subsidy context.
+        let subsidyWarning = "";
+        if (type === "morpho") {
+          try {
+            const chainId = MORPHO_CHAIN_IDS[network];
+            if (chainId) {
+              const result = await fetchMerklCampaigns(chainId);
+              if (result.available) {
+                // Flatten all campaigns and check if any reference this market
+                const allCampaigns: any[] = [];
+                for (const [, camps] of result.campaigns) {
+                  allCampaigns.push(...camps);
+                }
+                const addrLower = addr.toLowerCase();
+                const relevantCampaigns = allCampaigns.filter((c: any) =>
+                  c.identifier?.toLowerCase().includes(addrLower.slice(2, 10)) ||
+                  c.mainParameter?.toLowerCase().includes(addrLower.slice(2, 10))
+                );
+                if (relevantCampaigns.length > 0) {
+                  const totalDailyUsd = relevantCampaigns.reduce((s: number, c: any) => s + (c.dailyRewards || 0), 0);
+                  subsidyWarning = `⚠ SUBSIDIZED MARKET: ${relevantCampaigns.length} active Merkl campaign(s) (~${formatUsd(totalDailyUsd)}/day).\n  Calibrated baselines reflect subsidized conditions. If campaigns end,\n  borrow rates may spike and utilization may drop significantly.\n  These shifts would appear "anomalous" but are actually predictable.\n`;
+                }
+              }
+            }
+          } catch {} // Merkl check is best-effort
+        }
+
+        // ═══════════════════════════════════════════════
         // COMPOSE OUTPUT
         // ═══════════════════════════════════════════════
         const assertionHints = generateAssertionHints(metrics, targetName);
@@ -468,6 +502,11 @@ or export knowledge about what normal looks like.`,
         lines.push(`  Type: ${profileType} | Chain: ${chain} | Period: ${per}`);
         lines.push(`  Data: ${metrics.reduce((s, m) => Math.max(s, m.dataPoints), 0)} observations`);
         lines.push(``);
+
+        // Subsidy warning — shown before metrics so agents see it first
+        if (subsidyWarning) {
+          lines.push(subsidyWarning);
+        }
 
         // Observation boundary — what this calibration cannot tell you
         const sparseness = metrics.some(m => m.dataPoints < 10);

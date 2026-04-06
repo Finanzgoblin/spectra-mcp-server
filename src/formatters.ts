@@ -139,10 +139,15 @@ export function inferEntryPath(
   const isExoticUnderlying = !DIRECT_ASSETS.has(underlying) && !ONE_HOP_ASSETS.has(underlying);
   const hasWrapper = !!baseIbtSymbol && ibt.startsWith("sw-");
   const isHighGas = gasRegime === "high";
+
+  // Gas rationality floor — Richard's numbers: $10 mainnet, $0.50 L2.
+  // A position smaller than the gas cost is guaranteed to lose money.
+  const gasCostEstimate = isHighGas ? 10 : gasRegime === "medium" ? 2 : 0.5;
+  const isGasIrrational = capitalUsd !== undefined && capitalUsd < gasCostEstimate * 3;
   const isSmallPosition = capitalUsd !== undefined && capitalUsd < 500 && isHighGas;
 
   // Only surface when there's real friction to communicate
-  if (hops <= 1 && !isHighGas && !isSmallPosition) return null;
+  if (hops <= 1 && !isHighGas && !isSmallPosition && !isGasIrrational) return null;
 
   const parts: string[] = [];
 
@@ -151,9 +156,11 @@ export function inferEntryPath(
     parts.push(`Entry path (${hops} step${hops > 1 ? "s" : ""} to IBT): ${steps.join(" → ")}`);
   }
 
-  // Gas regime warning for small positions on expensive chains
-  if (isSmallPosition) {
-    parts.push(`⚠ Mainnet gas: complex entry (deposit + mint + LP) may cost $30-100. At ${formatUsd(capitalUsd!)}, gas could consume ${Math.round(70 / capitalUsd! * 100)}-${Math.round(150 / capitalUsd! * 100)}% of position.`);
+  // Gas rationality warning — position size below gas cost threshold
+  if (isGasIrrational && capitalUsd !== undefined) {
+    parts.push(`⚠ GAS IRRATIONAL: Position size ${formatUsd(capitalUsd)} is below estimated tx cost (~${formatUsd(gasCostEstimate)}/tx on ${gasRegime === "high" ? "mainnet" : gasRegime === "medium" ? "this chain" : "L2"}). Multiple transactions (approve + deposit + mint + LP) will consume most or all of the position.`);
+  } else if (isSmallPosition) {
+    parts.push(`⚠ Mainnet gas: complex entry (deposit + mint + LP) may cost $10-50. At ${formatUsd(capitalUsd!)}, gas could consume ${Math.round(30 / capitalUsd! * 100)}-${Math.round(100 / capitalUsd! * 100)}% of position.`);
   } else if (isHighGas && hops > 1) {
     parts.push(`Note: Mainnet — gas for ${hops}-step entry adds meaningful friction. Consider whether position size justifies the cost.`);
   }
@@ -2592,8 +2599,19 @@ export function formatScanOpportunity(opp: ScanOpportunity, rank: number, boostI
   // Capital-aware impact
   lines.push(`    Entry Impact: ~${formatPct(opp.entryImpactPct)} | Capacity: ~${formatUsd(opp.capacityUsd)} at <threshold`);
 
-  // APY lines
-  lines.push(`    Base APY: ${formatPct(opp.impliedApy)} | Effective APY: ≥${formatPct(opp.effectiveApy)} (conservative — verify with spectra_quote_trade)`);
+  // APY lines — with negative effective APY warning
+  // The Hunter found: -1080% effective APY ranked. The scanner ranks by PT buy
+  // impact, but LP earns at IBT rate with near-zero impact. An agent seeing
+  // negative effective APY doesn't realize LP on the SAME pool might be 23%.
+  if (opp.effectiveApy < 0) {
+    lines.push(`    ⚠ PT BUY: Effective APY ${formatPct(opp.effectiveApy)} (NEGATIVE — entry cost exceeds yield at this capital size)`);
+    lines.push(`    Base APY: ${formatPct(opp.impliedApy)} — but constant-product impact model makes this a loss. Verify with spectra_quote_trade.`);
+    if (opp.lpApy > 0) {
+      lines.push(`    → LP ALTERNATIVE: ${formatPct(opp.lpApy)} LP APY on this pool with near-zero entry impact. LP adds liquidity, not buys PT.`);
+    }
+  } else {
+    lines.push(`    Base APY: ${formatPct(opp.impliedApy)} | Effective APY: ≥${formatPct(opp.effectiveApy)} (conservative — verify with spectra_quote_trade)`);
+  }
 
   // Looping section
   if (opp.looping) {
