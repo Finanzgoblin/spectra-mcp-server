@@ -166,10 +166,13 @@ Use spectra_compare_yield for fixed-vs-variable rate analysis on the same PT.`,
             // the rate and APR may be measuring different things.
             // This is NOT a bug — it is a measurement limitation of single-snapshot health checks.
           } else {
+            // The Inverter found: a skipped check is not a passed check.
+            // Marking absence-of-evidence as evidence-of-safety is the most
+            // dangerous form of false confidence. UNKNOWN, not OK.
             checks.push({
               name: "Conversion Rate",
-              signal: "ok",
-              lines: ["On-chain read unavailable (no RPC or non-ERC-4626). Skipped."],
+              signal: "caution",
+              lines: ["⚠ UNKNOWN — on-chain read unavailable (no RPC or non-ERC-4626). Cannot verify vault is accruing value. This is NOT a passed check."],
             });
             // Still check API rate direction if available
             if (apiRate != null) {

@@ -65,11 +65,22 @@ function buildMetric(
   const trend: "up" | "down" | "stable" = Math.abs(trendPct) < 5 ? "stable" : trendPct > 0 ? "up" : "down";
 
   // Anomaly thresholds: use the more conservative of 3-sigma and 2x historical max/min
+  // Anomaly thresholds — clip to domain constraints.
+  // The Hunter found: utilization ceiling at 104% is mathematically impossible.
+  // Rates can't be negative. Utilization can't exceed 100%.
   const sigma3High = avg + 3 * stddev;
   const sigma3Low = avg - 3 * stddev;
   const maxBased = sorted[sorted.length - 1] * 2;
-  const highThreshold = Math.min(sigma3High, maxBased); // conservative = lower ceiling
-  const lowThreshold = Math.max(sigma3Low, 0); // floor at 0 for rates
+  let highThreshold = Math.min(sigma3High, maxBased); // conservative = lower ceiling
+  let lowThreshold = Math.max(sigma3Low, 0); // floor at 0 for rates
+
+  // Domain clipping: utilization and percentages can't exceed 100%
+  const isPercentageMetric = unit === "%" && (
+    name.toLowerCase().includes("utilization") ||
+    name.toLowerCase().includes("ratio")
+  );
+  if (isPercentageMetric && highThreshold > 100) highThreshold = 100;
+  if (lowThreshold < 0) lowThreshold = 0;
 
   // Current status
   let currentStatus: "normal" | "elevated" | "anomalous" = "normal";
