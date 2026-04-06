@@ -390,8 +390,59 @@ or export knowledge about what normal looks like.`,
                   };
                 }
               }
+            } else if (type === "pendle") {
+              // Pendle peer comparison: fetch all active markets on this chain,
+              // compare implied APY and TVL for similar underlyings
+              const chainId = PENDLE_CHAIN_IDS[network];
+              if (chainId) {
+                try {
+                  const raw = await (await fetch(
+                    `https://api-v2.pendle.finance/core/v1/${chainId}/markets?order_by=name%3A1&skip=0&limit=50&select=pro`,
+                    { signal: AbortSignal.timeout(10000) }
+                  )).json() as any;
+                  const allMarkets = raw?.results || [];
+
+                  if (allMarkets.length >= 2) {
+                    // Get this market's APY for comparison
+                    const targetMetric = metrics.find(m => m.name === "Implied APY");
+                    const targetApy = targetMetric?.stats.current || 0;
+
+                    const peerApys = allMarkets
+                      .map((m: any) => (m.impliedApy || 0) * 100)
+                      .filter((v: number) => v > 0)
+                      .sort((a: number, b: number) => a - b);
+
+                    const peerTvls = allMarkets
+                      .map((m: any) => m.totalTvl || m.liquidity?.usd || 0)
+                      .filter((v: number) => v > 0)
+                      .sort((a: number, b: number) => a - b);
+
+                    if (peerApys.length >= 2) {
+                      const apyRank = peerApys.filter((r: number) => r <= targetApy).length;
+                      const apyPct = Math.round((apyRank / peerApys.length) * 100);
+
+                      const rankings: Array<{ metric: string; percentile: number; label: string }> = [
+                        { metric: "Implied APY", percentile: apyPct, label: apyPct > 75 ? "high yield" : apyPct > 50 ? "above average" : apyPct > 25 ? "middle of pack" : "low yield" },
+                      ];
+
+                      // TVL ranking if we have target TVL
+                      const tvlMetric = metrics.find(m => m.name === "TVL");
+                      if (tvlMetric && peerTvls.length >= 2) {
+                        const tvlRank = peerTvls.filter((r: number) => r <= tvlMetric.stats.current).length;
+                        const tvlPct = Math.round((tvlRank / peerTvls.length) * 100);
+                        rankings.push({ metric: "TVL", percentile: tvlPct, label: tvlPct > 75 ? "large market" : tvlPct > 50 ? "above average" : "smaller market" });
+                      }
+
+                      peerComparison = {
+                        groupDescription: `${peerApys.length} active Pendle markets on ${chain}`,
+                        peerCount: peerApys.length,
+                        rankings,
+                      };
+                    }
+                  }
+                } catch {}
+              }
             }
-            // Pendle peer comparison could be added similarly using pendle_list_markets
           } catch {}
         }
 

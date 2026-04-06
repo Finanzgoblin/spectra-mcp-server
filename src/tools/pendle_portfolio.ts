@@ -9,9 +9,10 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { PENDLE_CHAIN_IDS, PENDLE_CHAIN_NAMES, EVM_ADDRESS } from "../config.js";
-import { scanAllPendleUserPositions, fetchPendleUserPositions, fetchVePendleBalance, fetchVePendleTotalSupply } from "../api.js";
+import { scanAllPendleUserPositions, fetchPendleUserPositions, fetchVePendleBalance, fetchVePendleTotalSupply, fetchMerkl, parseMerklRewards } from "../api.js";
 import type { PendleUserPosition } from "../api.js";
-import { formatPct, formatUsd, pendleDaysToMaturity } from "../formatters.js";
+import type { MerklTokenReward } from "../types.js";
+import { formatPct, formatUsd, pendleDaysToMaturity, formatMerklRewards, formatUnmatchedMerklRewards } from "../formatters.js";
 
 const PENDLE_CHAIN_KEYS = Object.keys(PENDLE_CHAIN_IDS) as [string, ...string[]];
 const PENDLE_CHAIN_ENUM = z.enum(PENDLE_CHAIN_KEYS);
@@ -90,8 +91,14 @@ Use spectra_get_portfolio for Spectra positions.`,
     },
     async ({ address, chain }) => {
       try {
-        // Fetch positions + vePENDLE governance in parallel — no added latency
-        const [posResult, veResult] = await Promise.allSettled([
+        // Fetch positions + vePENDLE + Merkl rewards in parallel — no added latency.
+        // Merkl rewards are the biggest asymmetry fix: spectra_get_portfolio has them,
+        // pendle_get_portfolio didn't. Now it does. Same pattern, different chain IDs.
+        const chainIds = chain
+          ? [{ net: chain, id: PENDLE_CHAIN_IDS[chain] }].filter(c => c.id)
+          : Object.entries(PENDLE_CHAIN_IDS).map(([net, id]) => ({ net, id }));
+
+        const [posResult, veResult, merklResults] = await Promise.allSettled([
           chain
             ? fetchPendleUserPositions(chain, address).then(r => ({
                 positions: r.positions, failedChains: r.available ? [] : [chain]
@@ -99,8 +106,15 @@ Use spectra_get_portfolio for Spectra positions.`,
             : scanAllPendleUserPositions(address).then(r => ({
                 positions: r.positions, failedChains: r.failedChains
               })),
-          // vePENDLE on Ethereum mainnet — best-effort, doesn't block portfolio
+          // vePENDLE on Ethereum mainnet — best-effort
           fetchVePendleBalance(address).catch(() => null),
+          // Merkl rewards across all Pendle chains — best-effort
+          Promise.allSettled(
+            chainIds.map(async ({ net, id }) => {
+              const raw = await fetchMerkl(address, id);
+              return { chain: net, raw };
+            })
+          ),
         ]);
 
         const { positions, failedChains } = posResult.status === "fulfilled"
@@ -108,6 +122,35 @@ Use spectra_get_portfolio for Spectra positions.`,
           : { positions: [] as PendleUserPosition[], failedChains: ["all"] };
 
         const veData = veResult.status === "fulfilled" ? veResult.value : null;
+
+        // Parse Merkl rewards — match to Pendle market/pool addresses
+        const knownAddresses = new Set<string>();
+        for (const p of positions) {
+          if (p.marketAddress) knownAddresses.add(p.marketAddress.toLowerCase());
+          if (p.pt?.address) knownAddresses.add(p.pt.address.toLowerCase());
+          if (p.yt?.address) knownAddresses.add(p.yt.address.toLowerCase());
+          if (p.sy?.address) knownAddresses.add(p.sy.address.toLowerCase());
+        }
+
+        const merklByPool = new Map<string, MerklTokenReward[]>();
+        const unmatchedRewards: MerklTokenReward[] = [];
+        let merklAvailable = false;
+
+        if (merklResults.status === "fulfilled") {
+          for (const r of merklResults.value) {
+            if (r.status !== "fulfilled") continue;
+            const { raw, chain: c } = r.value;
+            if (!raw || Object.keys(raw).length === 0) continue;
+            merklAvailable = true;
+            const parsed = parseMerklRewards(raw, knownAddresses, c);
+            for (const [poolAddr, rewards] of parsed.matched) {
+              const existing = merklByPool.get(poolAddr);
+              if (existing) existing.push(...rewards);
+              else merklByPool.set(poolAddr, [...rewards]);
+            }
+            unmatchedRewards.push(...parsed.unmatched);
+          }
+        }
 
         if (positions.length === 0 && failedChains.length === 0) {
           const scope = chain ? `on ${PENDLE_CHAIN_NAMES[chain] || chain}` : "across any Pendle chain";
@@ -272,9 +315,39 @@ Use spectra_get_portfolio for Spectra positions.`,
           lines.push(``);
         }
 
+        // Merkl rewards — matched to positions + unmatched (from exited positions)
+        if (merklAvailable && (merklByPool.size > 0 || unmatchedRewards.length > 0)) {
+          lines.push(`--- Merkl Rewards ---`);
+          if (merklByPool.size > 0) {
+            // Show rewards matched to active positions
+            for (const [poolAddr, rewards] of merklByPool) {
+              const matchedPos = positions.find(p =>
+                p.marketAddress?.toLowerCase() === poolAddr ||
+                p.pt?.address?.toLowerCase() === poolAddr ||
+                p.sy?.address?.toLowerCase() === poolAddr
+              );
+              const posName = matchedPos?.marketName || poolAddr.slice(0, 10) + "...";
+              lines.push(`  ${posName}:`);
+              for (const r of rewards) {
+                lines.push(`    ${r.symbol}: ${r.unclaimed.toLocaleString("en-US", { maximumFractionDigits: 4 })} unclaimed`);
+              }
+            }
+          }
+          if (unmatchedRewards.length > 0) {
+            lines.push(``);
+            lines.push(`  Unmatched rewards (from exited positions or external campaigns):`);
+            for (const r of unmatchedRewards.slice(0, 10)) {
+              lines.push(`    ${r.symbol}: ${r.unclaimed.toLocaleString("en-US", { maximumFractionDigits: 4 })} unclaimed`);
+            }
+            lines.push(`    Claim at: https://app.merkl.xyz`);
+          }
+          lines.push(``);
+        }
+
         lines.push(`--- Next Steps ---`);
         lines.push(`  • Market detail: pendle_get_market_details(chain=CHAIN, market_address=ADDR)`);
         lines.push(`  • Spectra positions: spectra_get_portfolio(chain=CHAIN, address="${address}")`);
+        lines.push(`  • Cross-protocol view: mv_get_position_map(address="${address}")`);
         lines.push(`  • Rollover planning: mv_plan_rollover(chain=CHAIN, metavault_address=ADDR)`);
         lines.push(`  • IBT health: mv_check_ibt_health(chain=CHAIN, ibt_address=SY_ADDR)`);
 

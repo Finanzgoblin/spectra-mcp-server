@@ -3766,6 +3766,17 @@ export function formatPendleMarketSummary(m: PendleMarket, chain: string, merklC
   lines.push(`  SY: ${m.sy}`);
   lines.push(`  Underlying Asset: ${m.underlyingAsset}`);
   lines.push(`  Maturity: ${expiryDate} (${days}d)`);
+
+  // Entry path awareness — surface distance from common assets, same as Spectra formatter.
+  // Pendle markets use SY tokens (Standardized Yield) which wrap the underlying IBT.
+  // The underlying asset name often reveals the entry complexity.
+  const pendleEntryPath = inferEntryPath(m.underlyingAsset, undefined, undefined, chain);
+  if (pendleEntryPath) {
+    lines.push(``);
+    lines.push(`  ── Entry Path ──`);
+    lines.push(`  ${pendleEntryPath}`);
+  }
+
   lines.push(``);
   lines.push(`  Implied APY (Fixed Rate): ${formatPct(d.impliedApy * 100)}`);
   lines.push(`  Underlying APY (Variable): ${formatPct(d.underlyingApy * 100)}`);
