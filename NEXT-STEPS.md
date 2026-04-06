@@ -24,12 +24,15 @@ All items from the ARCHITECT-BRIEF have been shipped:
 
 ## What Remains Open
 
-### Pendle Phase 3: Pendle Morpho Looping (Defer Until Confirmed Demand)
+### Sprint 1: Historical Intelligence + Governance (Shipped)
 
-**Only implement when confirmed Morpho markets exist for Pendle PTs.** Changes:
-- `src/api.ts` — Add `findMorphoMarketsForPendlePts()`
-- `src/tools/curator_scan.ts` — Include Pendle PTs in Morpho batch lookups
-- `src/tools/looping.ts` — Add optional `protocol` parameter to `spectra_get_looping_strategy`
+- **`pendle_get_market_history`** (`src/tools/pendle_history.ts`) — Historical APY, TVL, volume, PT/YT price time-series. First tool that answers "what happened over time?" Uses Pendle v2 historical-data endpoint. Hourly/daily/weekly, up to 1440 data points.
+- **`spectra_get_gauge_votes`** (`src/tools/gauge_votes.ts`) — Full veSPECTRA governance dashboard. Vote distribution, voting APRs, bribe incentives, SPECTRA emissions per gauge. Unlocks 95% of unused data from the governance/voting-incentives endpoint.
+- **Fix `pendle_get_portfolio`** — Added dashboard endpoint (`/v1/dashboard/positions/database/{user}`) as fallback when per-chain endpoint 404s. Cross-chain capable.
+
+### Pendle Phase 3: Pendle Morpho Looping (Shipped)
+
+Pendle looping tools exist: `pendle_get_looping_strategy`, `pendle_scan_opportunities(include_looping=true)`.
 
 ### P1-B: Borrow Rate Risk Analyzer
 
