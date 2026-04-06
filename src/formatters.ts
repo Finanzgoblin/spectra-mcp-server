@@ -27,6 +27,145 @@ export function daysToMaturity(timestamp: number): number {
   return Math.max(0, Math.round((timestamp - now) / 86400));
 }
 
+// =============================================================================
+// Entry Path Awareness
+// =============================================================================
+//
+// Open emergence principle: the tools see protocol state, not the user's
+// distance from that state. "19.8% APY" means nothing if you don't hold the
+// entry asset and need 3 swaps to get there. This function makes the path
+// visible — not by calculating swap costs (that changes by the second) but by
+// naming the steps and flagging when the path is deep.
+//
+// The entry path is inferred from data already present in every PT:
+//   underlying.symbol → the base asset (USDC, WETH, CRV)
+//   ibt.symbol → the yield-bearing wrapper (asdCRV, sw-avUSDx, ynRWAx)
+//   baseIbt.symbol → for sw-* wrappers, the unwrapped IBT underneath
+//   chain → determines gas cost regime (mainnet $$, L2 ¢)
+//
+// Competing interpretations the function surfaces:
+//   - "Direct entry" (underlying is USDC/WETH/ETH) vs "exotic entry" (ynRWAx, asdCRV)
+//   - Mainnet gas makes small positions irrational; L2 gas is negligible
+//   - sw-* wrappers add a hop that's invisible in the yield number
+//   - The same yield on different chains has different real cost to enter
+
+/** Common assets most wallets already hold or can acquire in one swap */
+const DIRECT_ASSETS = new Set([
+  "USDC", "USDT", "DAI", "USDC.e", "USDbC", "FRAX",
+  "WETH", "ETH", "wETH",
+  "WBTC", "BTC",
+]);
+
+/** Assets one swap away from common assets */
+const ONE_HOP_ASSETS = new Set([
+  "stETH", "wstETH", "cbETH", "rETH", "weETH", "ezETH", "rsETH",   // ETH LSTs
+  "sDAI", "sUSDe", "GHO", "crvUSD", "FRAX", "pyUSD", "USDG",       // stablecoins one swap
+  "CRV", "CVX", "AAVE", "COMP", "MKR",                               // governance one swap
+]);
+
+/** Gas regime by chain — rough order-of-magnitude cost for a complex tx */
+const GAS_REGIME: Record<string, "high" | "medium" | "low"> = {
+  mainnet: "high",    // $10-50 per tx
+  ethereum: "high",
+  base: "low",        // <$0.10
+  arbitrum: "low",    // <$0.10
+  optimism: "low",    // <$0.10
+  sonic: "low",
+  avalanche: "medium", // $0.50-2
+  bsc: "low",
+  flare: "low",
+  katana: "low",
+  monad: "low",
+  hemi: "low",
+};
+
+/**
+ * Infer the entry path complexity and return a human-readable description.
+ *
+ * Returns null when entry is trivial (underlying is USDC/ETH on L2).
+ * Returns a string only when the agent SHOULD know about entry friction.
+ * This is the open emergence criterion: surface tension only when it's real.
+ */
+export function inferEntryPath(
+  underlyingSymbol: string | undefined,
+  ibtSymbol: string | undefined,
+  baseIbtSymbol: string | undefined,
+  chain: string | undefined,
+  capitalUsd?: number,
+): string | null {
+  if (!underlyingSymbol || !ibtSymbol) return null;
+
+  const underlying = underlyingSymbol.toUpperCase().replace(/\.E$/i, ".e");
+  const ibt = ibtSymbol;
+  const gasRegime = GAS_REGIME[chain || ""] || "medium";
+
+  // Count hops: underlying → IBT → (sw-wrapper?) → PT → LP
+  // The underlying→IBT hop always exists (deposit into vault)
+  // The sw-wrapper hop exists when baseIbt is present
+  // PT minting and LP adding are protocol operations, always present
+  let hops = 0;
+  const steps: string[] = [];
+
+  // Step 0: Acquire the underlying
+  if (DIRECT_ASSETS.has(underlying)) {
+    // User likely has it or can get it trivially
+    // Don't count as a hop — this is the starting point
+  } else if (ONE_HOP_ASSETS.has(underlying)) {
+    hops += 1;
+    steps.push(`acquire ${underlying} (1 swap from common assets)`);
+  } else {
+    // Exotic underlying — may need DEX aggregator, specific venue, or protocol interaction
+    hops += 2;
+    steps.push(`acquire ${underlying} (exotic — may require DEX aggregator or protocol-specific deposit)`);
+  }
+
+  // Step 1: Underlying → IBT (deposit into yield vault)
+  hops += 1;
+  steps.push(`deposit ${underlying} → ${ibt} (vault deposit)`);
+
+  // Step 2: If sw-* wrapper exists, IBT → sw-IBT
+  if (baseIbtSymbol && ibt.startsWith("sw-")) {
+    hops += 1;
+    steps.push(`wrap ${baseIbtSymbol} → ${ibt} (Spectra wrapper)`);
+  }
+
+  // Step 3: IBT → PT (mint or swap)
+  // Step 4: PT + IBT → LP (add liquidity)
+  // These are always present but are protocol operations the tools already guide
+
+  // Decision: should we surface this?
+  // Trivial entries (USDC → vault on L2) don't need a warning.
+  // Complex entries (exotic asset + sw-wrapper + mainnet gas) do.
+  const isExoticUnderlying = !DIRECT_ASSETS.has(underlying) && !ONE_HOP_ASSETS.has(underlying);
+  const hasWrapper = !!baseIbtSymbol && ibt.startsWith("sw-");
+  const isHighGas = gasRegime === "high";
+  const isSmallPosition = capitalUsd !== undefined && capitalUsd < 500 && isHighGas;
+
+  // Only surface when there's real friction to communicate
+  if (hops <= 1 && !isHighGas && !isSmallPosition) return null;
+
+  const parts: string[] = [];
+
+  // Entry path steps
+  if (hops > 1 || isExoticUnderlying) {
+    parts.push(`Entry path (${hops} step${hops > 1 ? "s" : ""} to IBT): ${steps.join(" → ")}`);
+  }
+
+  // Gas regime warning for small positions on expensive chains
+  if (isSmallPosition) {
+    parts.push(`⚠ Mainnet gas: complex entry (deposit + mint + LP) may cost $30-100. At ${formatUsd(capitalUsd!)}, gas could consume ${Math.round(70 / capitalUsd! * 100)}-${Math.round(150 / capitalUsd! * 100)}% of position.`);
+  } else if (isHighGas && hops > 1) {
+    parts.push(`Note: Mainnet — gas for ${hops}-step entry adds meaningful friction. Consider whether position size justifies the cost.`);
+  }
+
+  // sw-wrapper opacity
+  if (hasWrapper) {
+    parts.push(`Note: ${ibt} is a Spectra wrapper around ${baseIbtSymbol}. The wrap is free but adds a step.`);
+  }
+
+  return parts.length > 0 ? parts.join("\n    ") : null;
+}
+
 // Fractional days for math-sensitive contexts (rate annualization, YT implied rate).
 // Avoids rounding artifacts near maturity — e.g. 18 hours = 0.75 days, not 1.
 export function fractionalDaysToMaturity(timestamp: number): number {
@@ -313,6 +452,18 @@ export function formatPoolSummary(pt: SpectraPt, pool: SpectraPool, chain: strin
   if (pt.baseIbt?.symbol) {
     lines.push(`  Base IBT: ${pt.baseIbt.symbol} (${pt.baseIbt.name || "?"})`);
     if (pt.baseIbt.address) lines.push(`  Base IBT Address: ${pt.baseIbt.address}`);
+  }
+
+  // Entry path awareness — surface the distance between common assets and this pool.
+  // Only shown when entry has real friction (exotic underlying, sw-wrapper, mainnet gas).
+  // Trivial entries (USDC → vault on L2) produce null and are silently skipped.
+  const entryPath = inferEntryPath(
+    pt.underlying?.symbol, pt.ibt?.symbol, pt.baseIbt?.symbol, chain
+  );
+  if (entryPath) {
+    lines.push(``);
+    lines.push(`  ── Entry Path ──`);
+    lines.push(`  ${entryPath}`);
   }
 
   // Maturity value — what 1 PT redeems for at maturity
@@ -2461,6 +2612,19 @@ export function formatScanOpportunity(opp: ScanOpportunity, rank: number, boostI
     }
   }
 
+  // Entry path awareness — surface distance from common assets to this pool.
+  // The scanner ranks by effective APY, but effective APY doesn't include the
+  // cost of GETTING the entry asset. An agent recommending "deposit into ynRWAx
+  // on mainnet" without flagging that ynRWAx requires minting through YieldNest
+  // is giving incomplete advice. This surfaces the gap — not the exact cost
+  // (that changes by the second) but the shape of the path.
+  const scanEntryPath = inferEntryPath(
+    opp.underlying, opp.ibtSymbol, opp.pt.baseIbt?.symbol, opp.chain
+  );
+  if (scanEntryPath) {
+    lines.push(`    ${scanEntryPath}`);
+  }
+
   // Points programs
   if (opp.pt.multipliers && opp.pt.multipliers.length > 0) {
     const mParts = opp.pt.multipliers.map(m => `${m.name} ${m.amount}x`);
@@ -3993,6 +4157,14 @@ export function formatCuratorOpportunity(opp: CuratorOpportunity, rank: number):
   // their mint output — LP some PT in the pool, loop remaining PT via Morpho, keep YT.
   if (opp.looping && opp.lpApy > 5 && opp.lpApy > opp.looping.optimalEffectiveNetApy * 0.5) {
     lines.push(`      Combined: Mint PT+YT → LP a portion (${formatPct(opp.lpApy)}) + loop remaining PT (${formatPct(opp.looping.optimalEffectiveNetApy)} net). Split by Morpho depth (${formatUsd(opp.morpho?.availableLiquidityUsd || 0)}).`);
+  }
+
+  // Entry path — surface distance from common assets for curator opportunity
+  // CuratorOpportunity has `underlying` but not ibtSymbol/baseIbt, so we infer
+  // from the name (which contains the IBT symbol for most pools)
+  const curatorEntryPath = inferEntryPath(opp.underlying, undefined, undefined, opp.chain);
+  if (curatorEntryPath) {
+    lines.push(`    ${curatorEntryPath}`);
   }
 
   // Morpho Market section
