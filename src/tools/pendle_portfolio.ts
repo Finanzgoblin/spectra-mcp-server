@@ -9,7 +9,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { PENDLE_CHAIN_IDS, PENDLE_CHAIN_NAMES, EVM_ADDRESS } from "../config.js";
-import { scanAllPendleUserPositions, fetchPendleUserPositions } from "../api.js";
+import { scanAllPendleUserPositions, fetchPendleUserPositions, fetchVePendleBalance, fetchVePendleTotalSupply } from "../api.js";
 import type { PendleUserPosition } from "../api.js";
 import { formatPct, formatUsd, pendleDaysToMaturity } from "../formatters.js";
 
@@ -90,18 +90,24 @@ Use spectra_get_portfolio for Spectra positions.`,
     },
     async ({ address, chain }) => {
       try {
-        let positions: PendleUserPosition[];
-        let failedChains: string[];
+        // Fetch positions + vePENDLE governance in parallel — no added latency
+        const [posResult, veResult] = await Promise.allSettled([
+          chain
+            ? fetchPendleUserPositions(chain, address).then(r => ({
+                positions: r.positions, failedChains: r.available ? [] : [chain]
+              }))
+            : scanAllPendleUserPositions(address).then(r => ({
+                positions: r.positions, failedChains: r.failedChains
+              })),
+          // vePENDLE on Ethereum mainnet — best-effort, doesn't block portfolio
+          fetchVePendleBalance(address).catch(() => null),
+        ]);
 
-        if (chain) {
-          const result = await fetchPendleUserPositions(chain, address);
-          positions = result.positions;
-          failedChains = result.available ? [] : [chain];
-        } else {
-          const result = await scanAllPendleUserPositions(address);
-          positions = result.positions;
-          failedChains = result.failedChains;
-        }
+        const { positions, failedChains } = posResult.status === "fulfilled"
+          ? posResult.value
+          : { positions: [] as PendleUserPosition[], failedChains: ["all"] };
+
+        const veData = veResult.status === "fulfilled" ? veResult.value : null;
 
         if (positions.length === 0 && failedChains.length === 0) {
           const scope = chain ? `on ${PENDLE_CHAIN_NAMES[chain] || chain}` : "across any Pendle chain";
@@ -153,6 +159,32 @@ Use spectra_get_portfolio for Spectra positions.`,
         lines.push(`  Total Value: ${formatUsd(totalValueUsd)}`);
         lines.push(`  Breakdown: PT ${formatUsd(totalPtUsd)} | YT ${formatUsd(totalYtUsd)} | LP ${formatUsd(totalLpUsd)}`);
         lines.push(`  Positions: ${active.length} active${expired.length > 0 ? `, ${expired.length} expired` : ""}`);
+
+        // vePENDLE governance — shows boost potential alongside positions
+        if (veData && veData.votingPower > 0) {
+          let veShare = "";
+          try {
+            const totalSupply = await fetchVePendleTotalSupply();
+            if (totalSupply > 0) veShare = ` (${formatPct((veData.votingPower / totalSupply) * 100)} of supply)`;
+          } catch {}
+
+          lines.push(``);
+          lines.push(`  --- Governance ---`);
+          lines.push(`  vePENDLE: ${veData.votingPower.toLocaleString("en-US", { maximumFractionDigits: 0 })} voting power${veShare}`);
+          if (veData.lockedAmount > 0) {
+            const expiryStr = veData.lockExpiry > 0
+              ? new Date(veData.lockExpiry * 1000).toISOString().slice(0, 10)
+              : "unknown";
+            lines.push(`  Locked: ${veData.lockedAmount.toLocaleString("en-US", { maximumFractionDigits: 0 })} PENDLE until ${expiryStr}`);
+          }
+          lines.push(`  Note: vePENDLE is transitioning to sPENDLE (liquid staking, Jan 2026)`);
+
+          // Boost mismatch detection
+          const hasLpPositions = positions.some(p => p.lp.valueUsd > 0);
+          if (!hasLpPositions) {
+            lines.push(`  ⚠ vePENDLE locked but no active LP positions — boost is unused`);
+          }
+        }
 
         // Chain distribution
         const chainCounts = new Map<string, number>();
