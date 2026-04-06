@@ -2,7 +2,7 @@
 
 Multi-protocol yield intelligence for AI agents — covering [Spectra Finance](https://spectra.finance), [Pendle](https://pendle.finance), and [Morpho](https://morpho.org) via the [Model Context Protocol](https://modelcontextprotocol.io).
 
-50 tools · 3 protocols · 10+ chains · read-only · on-chain Curve quoting · Pendle logit AMM modeling · ERC-4626 health checks · yield curve term structure · historical eth_getLogs · full Pendle protocol parity (13 tools) · cross-protocol Spectra↔Pendle comparison · Morpho supply-side visibility · Morpho user positions & historical rates · Merkl campaign APR integration · curator risk monitoring · withdrawal stress testing · rollover planning · multi-vault portfolio aggregation · pool expiry monitoring · zero web3 library dependencies
+53 tools · 3 protocols · 10+ chains · read-only · on-chain Curve quoting · Pendle logit AMM modeling · ERC-4626 health checks · yield curve term structure · historical eth_getLogs · full Pendle protocol parity (15 tools) · cross-protocol position map · cross-protocol Spectra↔Pendle comparison · veSPECTRA governance dashboard · Pendle historical time-series · Morpho supply-side visibility · Morpho user positions & historical rates · Merkl campaign APR integration · entry path awareness · curator risk monitoring · withdrawal stress testing · rollover planning · multi-vault portfolio aggregation · pool expiry monitoring · zero web3 library dependencies
 
 ## What This Does
 
@@ -273,7 +273,7 @@ Add to your `claude_desktop_config.json`:
 }
 ```
 
-Restart Claude Desktop. You'll see all 50 tools (Spectra, Pendle, Morpho, cross-protocol) available.
+Restart Claude Desktop. You'll see all 53 tools (Spectra, Pendle, Morpho, cross-protocol) available.
 
 ## Connect to Claude Code
 

@@ -101,7 +101,7 @@ server.resource(
       mimeType: "text/plain",
       text: `MetaVault MCP — Multi-Protocol Yield Intelligence
 ===================================================
-This server covers THREE protocols with 50 tools. Always consider all three:
+This server covers THREE protocols with 53 tools. Always consider all three:
 
   Spectra (24 tools, spectra_* prefix): Interest rate derivatives — PT/YT splitting,
     Curve StableSwap-NG pools, MetaVaults, veSPECTRA governance.
@@ -118,7 +118,8 @@ This server covers THREE protocols with 50 tools. Always consider all three:
   Merkl (1 tool, merkl_* prefix): Incentive campaign discovery — find subsidized rates,
     borrow rewards, LP incentives across chains.
 
-  Cross-protocol (6 tools, mv_* prefix): Unified analysis across protocols.
+  Cross-protocol (7 tools, mv_* prefix): Unified analysis across protocols.
+    mv_get_position_map — see the WHOLE wallet across Spectra + Pendle + Morpho + governance.
     mv_scan_curator_opportunities — scans BOTH Spectra + Pendle with capital-aware metrics.
     mv_compare_yield — side-by-side Spectra vs Pendle with maturity-aware matching.
     mv_check_ibt_health — ERC-4626 health checks (works for both Spectra IBTs and Pendle SY).
