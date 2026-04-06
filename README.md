@@ -19,7 +19,9 @@ Any AI agent (Claude, GPT, open-source) that supports MCP can query Spectra, Pen
 - **Simulate** portfolio state after a hypothetical trade (BEFORE / TRADE / AFTER with deltas)
 - **Scan** all chains for capital-aware opportunities with price impact, effective APY, and Morpho looping analysis
 - **Detect** YT arbitrage opportunities where IBT APR diverges from YT implied rate
-- **Compute** real veSPECTRA boost multipliers per-pool using live on-chain data from Base
+- **Compute** real veSPECTRA boost multipliers per-pool using live on-chain data from Base, and vePENDLE voting power from Ethereum mainnet (with sPENDLE transition awareness)
+- **Map** your full cross-protocol position in one call — Spectra + Pendle + Morpho + governance (veSPECTRA + vePENDLE), with contradiction detection (unused boost, lending vs fixed rate spreads, concentration, looper detection, expiring positions across protocols)
+- **Assess** entry path complexity — automatically flags exotic underlyings, sw-wrapper hops, and mainnet gas friction so agents know the real cost of reaching advertised yields
 - **Discover** live MetaVaults across all chains — curator info, TVL, APY, positions, epoch history
 - **Model** MetaVault "double loop" strategies for curators — vault compounding + Morpho leverage with curator economics, auto-populated from live API data or manual parameters
 - **Monitor** MetaVault operational health — curator dashboard with vault allocation per position, depositor flows, fee revenue, bridge activity, and actionable alerts
@@ -188,6 +190,9 @@ The observation coverage layer addresses a deeper problem: even perfect interpre
 | `spectra_stress_test_vault` | Withdrawal stress test for MetaVaults — liquidity waterfall (idle → maturing → LP removal → PT sale), cost to remaining depositors, maximum safe redemption size. Market stress mode (2x impact). |
 | `mv_plan_rollover` | Position rollover planner for expiring MetaVault positions — scans Spectra + Pendle for replacement candidates, computes entry impact, yield gap, overlap windows, and net effective APY. |
 | `mv_get_curator_portfolio` | Multi-vault portfolio aggregation — total AUM, blended APY, fee revenue projection, concentration by underlying/chain, cross-vault action items. Discovery mode (by curator address) or explicit mode. |
+| `mv_get_position_map` | Cross-protocol position map — sees the WHOLE wallet across Spectra + Pendle + Morpho + governance (veSPECTRA + vePENDLE) in one parallel call. Contradiction detection: unused governance boost, lending when fixed rates are higher, concentration risk, looper detection, expiring positions across protocols. Honest failure reporting (INCOMPLETE shown before numbers, not after). The first tool that sees the user, not just the protocol. |
+| `spectra_get_gauge_votes` | Full veSPECTRA governance dashboard — gauge vote distribution, voting APRs, bribe incentives, SPECTRA emissions per pool. Shows where veSPECTRA holders direct votes, what rewards they earn, emission concentration, and bribe efficiency ($ per vote). |
+| `pendle_get_market_history` | Historical time-series for any Pendle market — implied APY, TVL, volume, PT/YT prices over 7d/30d/90d/1y periods. First tool that answers "what happened over time?" for trend analysis, yield stability assessment, and anomaly detection. |
 | `spectra_list_expiring_pools` | Scan all chains for pools approaching maturity (default 21-day threshold). Groups by urgency (CRITICAL ≤7d, WARNING ≤14d, ALERT ≤21d). Cross-references each expiring pool's IBT against all active pools for successor detection. Fetches gauge status from governance API. Per-pool readiness assessment (OK/CAUTION/WARNING). Operator checklist: deploy successor pool, submit gauge proposal, ready for migration. |
 | `mv_get_protocol_context` | Returns protocol mechanics reference (PT/YT identity, Router batching, deposit paths, glossary, fees & costs, workflow routing). 9 topics callable on-demand. Fees topic covers Spectra 3% / Pendle 5% YT fees, reward basis (held vs notional), Merkl campaign types, and external points program discovery. |
 
@@ -430,6 +435,9 @@ src/
     rollover.ts     mv_plan_rollover (expiring position rollover planner with cross-protocol candidates)
     curator_portfolio.ts mv_get_curator_portfolio (multi-vault aggregation, AUM, blended APY, concentration)
     expiry_monitor.ts spectra_list_expiring_pools (pool maturity monitoring, urgency grouping, successor cross-reference, gauge status, readiness assessment)
+    gauge_votes.ts  spectra_get_gauge_votes (veSPECTRA governance: vote distribution, voting APRs, bribes, emissions)
+    pendle_history.ts pendle_get_market_history (historical APY, TVL, volume, PT/YT prices time-series)
+    position_map.ts mv_get_position_map (cross-protocol wallet view: Spectra + Pendle + Morpho + governance, contradiction detection)
 test.cjs              Integration test suite (405 tests, McpTestClient over stdio)
 test-agent.cjs        Agent reasoning test suite (82 assertions, McpTestClient over stdio)
 AGENT-TESTS.md        38-question subjective test suite with grading rubrics (incl. open emergence, coverage, newcomer comprehension tiers)
