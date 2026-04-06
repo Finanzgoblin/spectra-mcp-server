@@ -20,6 +20,7 @@ import {
   formatMorphoLltv,
   cumulativeLeverageAtLoop,
   getEffectiveLiquidityUsd,
+  formatPrescriptiveObservationBoundary,
 } from "../formatters.js";
 
 const PENDLE_CHAIN_KEYS = Object.keys(PENDLE_CHAIN_IDS) as [string, ...string[]];
@@ -443,6 +444,11 @@ For Spectra-only scanning, use spectra_scan_opportunities.`,
           lines.push(`--- Tensions in This Data ---`);
           tensions.forEach(t => lines.push(`  ⚡ ${t}`));
         }
+
+        // Observation boundary
+        lines.push(``);
+        const boundaryLines = formatPrescriptiveObservationBoundary("pendle_scan");
+        for (const bl of boundaryLines) lines.push(bl);
 
         const text = lines.join("\n");
         return { content: [{ type: "text" as const, text }] };

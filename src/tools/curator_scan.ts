@@ -42,6 +42,7 @@ import {
   formatCuratorScanResults,
   formatCuratorOpportunityCompact,
   getEffectiveLiquidityUsd,
+  formatPrescriptiveObservationBoundary,
 } from "../formatters.js";
 import type { BoostInfo } from "../formatters.js";
 
@@ -700,6 +701,10 @@ Use spectra_get_curator_dashboard for operational monitoring of an existing Meta
         if (tensions.length > 0) {
           text += `\n\n--- Tensions in This Data ---\n` + tensions.map(t => `⚡ ${t}`).join("\n");
         }
+
+        // Observation boundary — cross-protocol capital deployment recommendations
+        const boundaryLines = formatPrescriptiveObservationBoundary("curator_scan");
+        text += "\n\n" + boundaryLines.join("\n");
 
         return { content: [{ type: "text" as const, text: text + warningsSuffix }] };
       } catch (e: any) {

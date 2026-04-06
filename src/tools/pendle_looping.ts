@@ -22,6 +22,7 @@ import {
   cumulativeLeverageAtLoop,
   estimateLoopingEntryCost,
   estimatePendlePriceImpact,
+  formatPrescriptiveObservationBoundary,
 } from "../formatters.js";
 
 const PENDLE_CHAIN_KEYS = Object.keys(PENDLE_CHAIN_IDS) as [string, ...string[]];
@@ -331,6 +332,11 @@ Use morpho_list_markets to find available Morpho markets.`,
           lines.push(`  • Monitor borrow rate: morpho_get_rate(chain="${chain}", market_key="${morphoMarket!.uniqueKey}")`);
         }
         lines.push(`  • Spectra looping: spectra_get_looping_strategy for Spectra equivalents`);
+
+        // Observation boundary — leverage amplifies temporal instability
+        lines.push(``);
+        const boundaryLines = formatPrescriptiveObservationBoundary("pendle_looping");
+        for (const bl of boundaryLines) lines.push(bl);
 
         const text = lines.join("\n");
         return { content: [{ type: "text" as const, text }] };

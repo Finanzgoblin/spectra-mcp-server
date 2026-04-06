@@ -166,6 +166,66 @@ export function inferEntryPath(
   return parts.length > 0 ? parts.join("\n    ") : null;
 }
 
+// =============================================================================
+// Prescriptive Observation Boundary
+// =============================================================================
+//
+// The Dialectician found the deepest asymmetry in this codebase:
+// diagnostic tools (ibt_health, risk_monitor, calibration) declare
+// what they cannot see. Prescriptive tools (scan_opportunities,
+// looping_strategy, curator_scanner) did not. The epistemological
+// honesty lived where stakes were lowest and was absent where
+// stakes were highest.
+//
+// This function adds the same honesty to every tool that produces
+// ranked numerical recommendations an agent will act on.
+
+/**
+ * Generate observation boundary lines for prescriptive tools.
+ * Call this at the end of any tool output that ranks opportunities
+ * or projects returns — anywhere an agent might deploy capital
+ * based on the numbers shown.
+ *
+ * @param context Which prescriptive tool is speaking
+ * @param extras Additional context-specific caveats
+ */
+export function formatPrescriptiveObservationBoundary(
+  context: "scan" | "looping" | "curator_scan" | "pendle_scan" | "pendle_looping",
+  extras?: string[],
+): string[] {
+  const lines: string[] = [];
+  lines.push(`── Observation Boundary ──`);
+  lines.push(`  This ranking is a point-in-time snapshot. Numbers shown have temporal instability:`);
+  lines.push(`  • Borrow rates are variable — Morpho rates can spike 10x in hours. Looping spreads`);
+  lines.push(`    that are profitable now may turn negative before your transaction confirms.`);
+  lines.push(`  • Pool liquidity was sampled once — a large trade in the pool between this snapshot`);
+  lines.push(`    and your entry changes all impact estimates.`);
+  lines.push(`  • Merkl subsidies have expiry dates — campaign APR shown may end without notice.`);
+  lines.push(`    Check merkl_list_campaigns for campaign duration before sizing positions.`);
+  lines.push(`  • Effective APY is computed, not guaranteed — it combines base rate, entry cost`);
+  lines.push(`    amortization, and subsidy APR, each with different shelf lives.`);
+
+  if (context === "looping" || context === "pendle_looping") {
+    lines.push(`  • Leverage amplifies ALL of the above — a 3x loop has 3x exposure to rate changes,`);
+    lines.push(`    3x sensitivity to liquidity shifts, and 3x consequences from subsidy expiry.`);
+  }
+
+  if (context === "curator_scan") {
+    lines.push(`  • Cross-protocol rankings compare Spectra and Pendle with different AMM models —`);
+    lines.push(`    Spectra uses Curve StableSwap-NG, Pendle uses logit with time-decay. Impact`);
+    lines.push(`    estimates are not directly comparable at the margin.`);
+  }
+
+  if (extras) {
+    for (const e of extras) lines.push(`  • ${e}`);
+  }
+
+  lines.push(`  Position sizing should assume these numbers have a ±10-30% confidence band,`);
+  lines.push(`  not the ±0.01% implied by two-decimal-place display.`);
+
+  return lines;
+}
+
 // Fractional days for math-sensitive contexts (rate annualization, YT implied rate).
 // Avoids rounding artifacts near maturity — e.g. 18 hours = 0.75 days, not 1.
 export function fractionalDaysToMaturity(timestamp: number): number {

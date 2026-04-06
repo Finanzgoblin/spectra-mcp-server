@@ -18,6 +18,7 @@ import {
   cumulativeLeverageAtLoop,
   estimateLoopingEntryCost,
   estimatePriceImpact,
+  formatPrescriptiveObservationBoundary,
 } from "../formatters.js";
 
 /**
@@ -454,6 +455,11 @@ discover the best looping opportunities across all chains with capital-aware siz
         if (morphoDetected) {
           lines.push(`• Monitor borrow rate: morpho_get_rate(chain="${chain}", market_key="${morphoMarket!.uniqueKey}") — rates are variable`);
         }
+
+        // Observation boundary — looping is the highest-stakes prescriptive tool
+        lines.push(``);
+        const boundaryLines = formatPrescriptiveObservationBoundary("looping");
+        for (const bl of boundaryLines) lines.push(bl);
 
         const text = lines.join("\n");
         return { content: [{ type: "text" as const, text }] };

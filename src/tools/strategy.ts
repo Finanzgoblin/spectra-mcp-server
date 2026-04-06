@@ -38,6 +38,7 @@ import {
   extractLpApyBreakdown,
   computeSpectraBoost,
   getEffectiveLiquidityUsd,
+  formatPrescriptiveObservationBoundary,
 } from "../formatters.js";
 import type { BoostInfo } from "../formatters.js";
 
@@ -878,16 +879,19 @@ function buildNarrativeLayer(
   }
 
   // ── Observation boundaries ──
-  lines.push(`--- Observation Boundaries ---`);
-  lines.push(`- This scan covers Spectra pools only. Pendle markets may offer competitive yields — use mv_scan_curator_opportunities for cross-protocol coverage.`);
-  lines.push(`- Entry impact is a conservative upper bound. On-chain quotes (spectra_quote_trade) give exact figures.`);
-  lines.push(`- Looping projections assume static borrow rates. Variable rates can spike, turning profitable loops negative.`);
+  // The Dialectician found: prescriptive tools that recommend capital deployment
+  // must declare what they cannot see, with the same honesty as diagnostic tools.
+  const scanExtras: string[] = [
+    `This scan covers Spectra pools only. Use mv_scan_curator_opportunities for cross-protocol coverage.`,
+  ];
   if (!merklAvailable) {
-    lines.push(`- Merkl incentive data was unavailable — external campaign APR may be missing.`);
+    scanExtras.push(`Merkl incentive data was unavailable — external campaign APR may be missing.`);
   }
   if (!veDataAvailable && veSpectraBalance !== undefined && veSpectraBalance > 0) {
-    lines.push(`- veSPECTRA totalSupply unavailable (Base RPC unreachable) — boost calculations defaulted to min APY range.`);
+    scanExtras.push(`veSPECTRA totalSupply unavailable (Base RPC unreachable) — boost calculations defaulted to min APY range.`);
   }
+  const boundaryLines = formatPrescriptiveObservationBoundary("scan", scanExtras);
+  for (const bl of boundaryLines) lines.push(bl);
 
   return lines.join("\n");
 }
