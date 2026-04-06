@@ -101,7 +101,7 @@ server.resource(
       mimeType: "text/plain",
       text: `MetaVault MCP — Multi-Protocol Yield Intelligence
 ===================================================
-This server covers THREE protocols with 54 tools. Always consider all three:
+This server covers THREE protocols with 55 tools. Always consider all three:
 
   Spectra (24 tools, spectra_* prefix): Interest rate derivatives — PT/YT splitting,
     Curve StableSwap-NG pools, MetaVaults, veSPECTRA governance.

@@ -758,7 +758,7 @@ export function register(server: McpServer): void {
   server.tool(
     "mv_get_protocol_context",
     `Get essential protocol mechanics for Spectra, Pendle, and Morpho — needed for correct reasoning.
-This server covers 3 protocols with 54 tools. This context tool teaches how they all work.
+This server covers 3 protocols with 55 tools. This context tool teaches how they all work.
 
 Use topic "pendle_morpho" first if you're unfamiliar with the multi-protocol scope — it
 explains all three protocols, their tools (spectra_*, pendle_*, morpho_*, mv_*), and
