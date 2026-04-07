@@ -229,8 +229,8 @@ export function formatPrescriptiveObservationBoundary(
     for (const e of extras) lines.push(`  • ${e}`);
   }
 
-  lines.push(`  Position sizing should assume these numbers have a ±10-30% confidence band,`);
-  lines.push(`  not the ±0.01% implied by two-decimal-place display.`);
+  lines.push(`  Two-decimal-place display implies precision that does not exist.`);
+  lines.push(`  Use mv_get_calibration to see historical volatility for any specific market.`);
 
   return lines;
 }
@@ -2619,18 +2619,13 @@ export function formatScanOpportunity(opp: ScanOpportunity, rank: number, boostI
   // Capital-aware impact
   lines.push(`    Entry Impact: ~${formatPct(opp.entryImpactPct)} | Capacity: ~${formatUsd(opp.capacityUsd)} at <threshold`);
 
-  // APY lines — with negative effective APY warning
-  // The Hunter found: -1080% effective APY ranked. The scanner ranks by PT buy
-  // impact, but LP earns at IBT rate with near-zero impact. An agent seeing
-  // negative effective APY doesn't realize LP on the SAME pool might be 23%.
-  if (opp.effectiveApy < 0) {
-    lines.push(`    ⚠ PT BUY: Effective APY ${formatPct(opp.effectiveApy)} (NEGATIVE — entry cost exceeds yield at this capital size)`);
-    lines.push(`    Base APY: ${formatPct(opp.impliedApy)} — but constant-product impact model makes this a loss. Verify with spectra_quote_trade.`);
-    if (opp.lpApy > 0) {
-      lines.push(`    → LP ALTERNATIVE: ${formatPct(opp.lpApy)} LP APY on this pool with near-zero entry impact. LP adds liquidity, not buys PT.`);
-    }
-  } else {
-    lines.push(`    Base APY: ${formatPct(opp.impliedApy)} | Effective APY: ≥${formatPct(opp.effectiveApy)} (conservative — verify with spectra_quote_trade)`);
+  // APY lines — always show all three dimensions. No threshold hides the LP alternative.
+  // Open emergence: the comparison between base, effective, and LP IS the information.
+  // An agent seeing "base 23%, effective -228%, LP 23%" understands immediately that
+  // PT buy is expensive but LP is viable. The three numbers together teach the mechanics.
+  lines.push(`    Base APY: ${formatPct(opp.impliedApy)} | Effective APY (PT buy): ≥${formatPct(opp.effectiveApy)} (conservative est.)`);
+  if (opp.lpApy > 0) {
+    lines.push(`    LP APY: ${formatPct(opp.lpApy)} (near-zero entry impact — LP adds liquidity, not buys PT)`);
   }
 
   // Looping section
