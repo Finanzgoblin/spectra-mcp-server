@@ -65,22 +65,24 @@ function buildMetric(
   const trendPct = firstThirdAvg !== 0 ? ((lastThirdAvg - firstThirdAvg) / Math.abs(firstThirdAvg)) * 100 : 0;
   const trend: "up" | "down" | "stable" = Math.abs(trendPct) < 5 ? "stable" : trendPct > 0 ? "up" : "down";
 
-  // Anomaly thresholds: use the more conservative of 3-sigma and 2x historical max/min
-  // Anomaly thresholds — clip to domain constraints.
-  // The Hunter found: utilization ceiling at 104% is mathematically impossible.
-  // Rates can't be negative. Utilization can't exceed 100%.
+  // Anomaly thresholds: conservative of 3-sigma and 2x historical max.
+  // These are statistical bounds, not heuristics — they describe what the
+  // data says is unusual, using two complementary methods.
   const sigma3High = avg + 3 * stddev;
   const sigma3Low = avg - 3 * stddev;
   const maxBased = sorted[sorted.length - 1] * 2;
-  let highThreshold = Math.min(sigma3High, maxBased); // conservative = lower ceiling
-  let lowThreshold = Math.max(sigma3Low, 0); // floor at 0 for rates
+  let highThreshold = Math.min(sigma3High, maxBased);
+  let lowThreshold = Math.max(sigma3Low, 0);
 
-  // Domain clipping: utilization and percentages can't exceed 100%
-  const isPercentageMetric = unit === "%" && (
+  // Physical constraint clipping — NOT a heuristic. These are properties
+  // of the domain: utilization = borrowed/supplied, physically bounded [0,100].
+  // Rates are bounded [0, ∞). A 3-sigma formula that outputs 104% utilization
+  // is a statistical artifact, not a meaningful threshold.
+  const isBoundedMetric = unit === "%" && (
     name.toLowerCase().includes("utilization") ||
     name.toLowerCase().includes("ratio")
   );
-  if (isPercentageMetric && highThreshold > 100) highThreshold = 100;
+  if (isBoundedMetric && highThreshold > 100) highThreshold = 100;
   if (lowThreshold < 0) lowThreshold = 0;
 
   // Current status

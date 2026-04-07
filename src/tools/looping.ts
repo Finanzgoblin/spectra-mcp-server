@@ -147,22 +147,14 @@ discover the best looping opportunities across all chains with capital-aware siz
           `  Pool Liquidity: ${formatUsd(poolLiqUsd)}`,
         ];
 
-        // ── Maturity gate: warn when looping into short-dated positions ──
-        // The Breaker found: 38.8% annualized APY on a 2-day position = 0.21%
-        // absolute return. Gas eats it. An agent seeing the annualized number
-        // without the absolute number would walk into a guaranteed loss.
-        if (maturityDays <= 14) {
+        // ── Absolute return context: always show, let the agent judge ──
+        // Open emergence: the data speaks, not the threshold. Showing both
+        // annualized and absolute lets the agent compare. A 30% APY over
+        // 2 days is 0.16% absolute. A 5% APY over 300 days is 4.1% absolute.
+        // The comparison IS the information. No threshold decides when to show it.
+        {
           const absoluteReturn = baseApy * (maturityDays / 365);
-          lines.push(``);
-          lines.push(`  ⚠ MATURITY WARNING: This PT expires in ${maturityDays} day${maturityDays !== 1 ? "s" : ""}.`);
-          lines.push(`    Annualized APY of ${formatPct(baseApy)} = ~${formatPct(absoluteReturn)} absolute return over remaining life.`);
-          lines.push(`    Looping amplifies gas costs, not just yields. At 3x leverage on a ${maturityDays}-day horizon,`);
-          lines.push(`    gas + entry costs likely exceed the absolute return.`);
-          if (maturityDays <= 3) {
-            lines.push(`    STRONGLY CONSIDER: Do not loop into positions expiring in ≤3 days.`);
-            lines.push(`    Use spectra_get_yield_curve or pendle_get_yield_curve for longer-dated alternatives.`);
-          }
-          lines.push(``);
+          lines.push(`  Absolute Return: ~${formatPct(absoluteReturn)} over ${maturityDays} days (${formatPct(baseApy)} annualized)`);
         }
 
         // Show Morpho source

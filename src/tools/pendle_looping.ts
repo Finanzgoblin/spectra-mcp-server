@@ -118,18 +118,10 @@ Use morpho_list_markets to find available Morpho markets.`,
           `  PT: ${ptAddress}`,
         ];
 
-        // ── Maturity gate ──
-        if (days <= 14) {
+        // ── Absolute return: always show, no threshold ──
+        {
           const absoluteReturn = baseApy * (days / 365);
-          lines.push(``);
-          lines.push(`  ⚠ MATURITY WARNING: This PT expires in ${days} day${days !== 1 ? "s" : ""}.`);
-          lines.push(`    Annualized APY of ${formatPct(baseApy)} = ~${formatPct(absoluteReturn)} absolute return over remaining life.`);
-          lines.push(`    Looping amplifies gas costs, not just yields.`);
-          if (days <= 3) {
-            lines.push(`    STRONGLY CONSIDER: Do not loop into positions expiring in ≤3 days.`);
-            lines.push(`    Use pendle_get_yield_curve for longer-dated alternatives.`);
-          }
-          lines.push(``);
+          lines.push(`  Absolute Return: ~${formatPct(absoluteReturn)} over ${days} days (${formatPct(baseApy)} annualized)`);
         }
 
         if (morphoDetected) {

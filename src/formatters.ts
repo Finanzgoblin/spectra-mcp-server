@@ -140,27 +140,29 @@ export function inferEntryPath(
   const hasWrapper = !!baseIbtSymbol && ibt.startsWith("sw-");
   const isHighGas = gasRegime === "high";
 
-  // Gas rationality floor — Richard's numbers: $10 mainnet, $0.50 L2.
-  // A position smaller than the gas cost is guaranteed to lose money.
-  const gasCostEstimate = isHighGas ? 10 : gasRegime === "medium" ? 2 : 0.5;
-  const isGasIrrational = capitalUsd !== undefined && capitalUsd < gasCostEstimate * 3;
-  const isSmallPosition = capitalUsd !== undefined && capitalUsd < 500 && isHighGas;
+  const isExotic = isExoticUnderlying;
 
   // Only surface when there's real friction to communicate
-  if (hops <= 1 && !isHighGas && !isSmallPosition && !isGasIrrational) return null;
+  if (hops <= 1 && !isHighGas && !(capitalUsd !== undefined)) return null;
 
   const parts: string[] = [];
 
   // Entry path steps
-  if (hops > 1 || isExoticUnderlying) {
+  if (hops > 1 || isExotic) {
     parts.push(`Entry path (${hops} step${hops > 1 ? "s" : ""} to IBT): ${steps.join(" → ")}`);
   }
 
-  // Gas rationality warning — position size below gas cost threshold
-  if (isGasIrrational && capitalUsd !== undefined) {
-    parts.push(`⚠ GAS IRRATIONAL: Position size ${formatUsd(capitalUsd)} is below estimated tx cost (~${formatUsd(gasCostEstimate)}/tx on ${gasRegime === "high" ? "mainnet" : gasRegime === "medium" ? "this chain" : "L2"}). Multiple transactions (approve + deposit + mint + LP) will consume most or all of the position.`);
-  } else if (isSmallPosition) {
-    parts.push(`⚠ Mainnet gas: complex entry (deposit + mint + LP) may cost $10-50. At ${formatUsd(capitalUsd!)}, gas could consume ${Math.round(30 / capitalUsd! * 100)}-${Math.round(100 / capitalUsd! * 100)}% of position.`);
+  // Gas context — always show the ratio when capital is known, let agent judge.
+  // Open emergence: no hardcoded "rational" threshold. The ratio IS the information.
+  // $5 position with $10 gas = 200% gas ratio. $500 with $10 gas = 2%.
+  // Both are informative. The agent decides what's acceptable for the strategy.
+  const gasCostEstimate = isHighGas ? 10 : gasRegime === "medium" ? 2 : 0.5;
+  if (capitalUsd !== undefined && capitalUsd > 0) {
+    const gasRatio = (gasCostEstimate * 3) / capitalUsd * 100; // 3 txns typical (approve + deposit + mint)
+    if (gasRatio > 1) { // only show when gas is >1% of position — below that it's noise
+      parts.push(`Gas context: ~${formatUsd(gasCostEstimate)}/tx on ${gasRegime === "high" ? "mainnet" : gasRegime === "medium" ? "this chain" : "L2"}, ~3 txns needed. Estimated gas: ${gasRatio.toFixed(0)}% of ${formatUsd(capitalUsd)} position.`);
+    }
+  } else if (isHighGas) {
   } else if (isHighGas && hops > 1) {
     parts.push(`Note: Mainnet — gas for ${hops}-step entry adds meaningful friction. Consider whether position size justifies the cost.`);
   }
@@ -1014,33 +1016,22 @@ export function formatMorphoSupplierAnalysis(
     lines.push(`  Supply Gap: Only ${formatUsd(available)} available — looping at scale needs more supply-side liquidity.`);
   }
 
-  // Supplier cascade modeling — the Inverter found: 51% EOA concentration
-  // is shown as a data point, not modeled as a risk scenario. When top
-  // supplier controls > 40%, compute what happens if they leave.
-  if (topPct >= 40 && totalSupply > 0) {
+  // Supplier withdrawal scenario — ALWAYS shown, no threshold gate.
+  // Open emergence: the scenario is informative at every concentration level.
+  // A 20% supplier exiting is different from a 60% supplier exiting, but both
+  // are worth showing. The data speaks — the agent judges.
+  if (suppliers.length > 0 && totalSupply > 0) {
     const topSupplyUsd = suppliers[0].supplyAssetsUsd;
     const totalBorrow = suppliers.reduce((s, sup) => s + (sup.borrowAssetsUsd || 0), 0);
     const afterSupply = totalSupply - topSupplyUsd;
     const afterAvailable = Math.max(0, afterSupply - totalBorrow);
+    const currentUtil = totalBorrow > 0 ? (totalBorrow / totalSupply) * 100 : 0;
     const afterUtil = afterSupply > 0 ? Math.min(100, (totalBorrow / afterSupply) * 100) : 100;
 
     lines.push(``);
-    lines.push(`  ── Withdrawal Scenario: What if top supplier exits? ──`);
-    lines.push(`    If ${suppliers[0].isVault ? suppliers[0].vaultName : "top EOA"} (${formatUsd(topSupplyUsd)}) withdraws:`);
-    lines.push(`    Supply: ${formatUsd(totalSupply)} → ${formatUsd(afterSupply)}`);
-    lines.push(`    Available liquidity: ${formatUsd(available)} → ${formatUsd(afterAvailable)}`);
-    lines.push(`    Utilization: ${formatPct(totalBorrow > 0 ? (totalBorrow / totalSupply) * 100 : 0)} → ${formatPct(afterUtil)}`);
-
-    if (afterUtil >= 95) {
-      lines.push(`    ⚠ CRITICAL: Utilization would spike to ${formatPct(afterUtil)} — borrow rates enter panic territory.`);
-      lines.push(`    All loopers in this market would face margin compression or liquidation.`);
-    } else if (afterUtil >= 85) {
-      lines.push(`    ⚠ HIGH: Utilization would reach ${formatPct(afterUtil)} — borrow rates would increase significantly.`);
-    }
-
-    if (afterAvailable <= 0) {
-      lines.push(`    Available liquidity drops to ZERO — new borrows impossible, existing borrowers cannot increase positions.`);
-    }
+    lines.push(`  ── If top supplier exits ──`);
+    lines.push(`    ${suppliers[0].isVault ? suppliers[0].vaultName : `EOA ${suppliers[0].address?.slice(0, 10) || "?"}`} (${formatUsd(topSupplyUsd)}, ${formatPct(topPct)})`);
+    lines.push(`    Supply: ${formatUsd(totalSupply)} → ${formatUsd(afterSupply)} | Liquidity: ${formatUsd(available)} → ${formatUsd(afterAvailable)} | Utilization: ${formatPct(currentUtil)} → ${formatPct(afterUtil)}`);
   }
 
   return lines.join("\n");

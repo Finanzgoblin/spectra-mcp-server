@@ -173,23 +173,28 @@ Use spectra_list_expiring_pools to check gauge status for expiring pools.`,
         lines.push(`--- Gauges (${shown.length} of ${gauges.length}, sorted by ${sort_by}) ---`);
         lines.push(``);
 
-        // Detect and tag zombie gauges — pools that have already matured.
-        // The Connector found: expired pools dominate gauge rankings with
-        // 1846% voting APR because the votes were set and forgotten.
+        // Show maturity status for every gauge — the data speaks, not a binary tag.
+        // Open emergence: an agent seeing "matured 47d ago" and "matures in 180d"
+        // can reason about the temporal dimension. The days-since or days-until
+        // IS the information. No threshold decides what's "expired enough" to flag.
         const nowSec = Math.floor(Date.now() / 1000);
-        let zombieCount = 0;
 
         for (let i = 0; i < shown.length; i++) {
           const g = shown[i];
           const chainName = CHAIN_NAMES[g.chainId] || `Chain ${g.chainId}`;
           const maturityTs = g.maturity ? parseInt(g.maturity) : 0;
           const maturityDate = maturityTs > 0 ? new Date(maturityTs * 1000).toISOString().split("T")[0] : "?";
-          const isExpired = maturityTs > 0 && maturityTs < nowSec;
           const votePct = totalVotes > 0 ? (g.votesNum / totalVotes) * 100 : 0;
 
-          if (isExpired) zombieCount++;
-          const zombieTag = isExpired ? " [⚠ EXPIRED — votes are wasted on a matured pool]" : "";
-          lines.push(`  #${i + 1} ${g.symbol || g.address.slice(0, 10)} (${chainName}) — Maturity: ${maturityDate}${zombieTag}`);
+          // Temporal context: how far from maturity, in which direction
+          let maturityContext = "";
+          if (maturityTs > 0) {
+            const daysDelta = Math.round((maturityTs - nowSec) / 86400);
+            maturityContext = daysDelta < 0
+              ? ` (matured ${Math.abs(daysDelta)}d ago)`
+              : ` (${daysDelta}d to maturity)`;
+          }
+          lines.push(`  #${i + 1} ${g.symbol || g.address.slice(0, 10)} (${chainName}) — ${maturityDate}${maturityContext}`);
           lines.push(`    Pool: ${g.address}`);
           lines.push(`    Votes: ${g.votesNum.toLocaleString("en-US", { maximumFractionDigits: 0 })} veSPECTRA (${formatPct(votePct)} of total)`);
           lines.push(`    Voting APR: ${formatPct((g.votingApr?.total || 0) * 100)} (rewards ${formatPct((g.votingApr?.rewards || 0) * 100)} + fees ${formatPct((g.votingApr?.fees || 0) * 100)})`);
@@ -229,11 +234,14 @@ Use spectra_list_expiring_pools to check gauge status for expiring pools.`,
           lines.push(``);
         }
 
-        // Zombie gauge warning
-        if (zombieCount > 0) {
-          lines.push(`⚠ ZOMBIE GAUGES: ${zombieCount} of ${shown.length} shown gauges point at EXPIRED pools.`);
-          lines.push(`  Votes on expired gauges are wasted — emissions go to pools with no liquidity.`);
-          lines.push(`  Consider redirecting votes to active pools. Use spectra_list_pools to find live targets.`);
+        // Maturity distribution — how many gauges point at past vs future pools
+        const maturedCount = shown.filter(g => {
+          const ts = g.maturity ? parseInt(g.maturity) : 0;
+          return ts > 0 && ts < nowSec;
+        }).length;
+        if (maturedCount > 0) {
+          const maturedPct = (maturedCount / shown.length * 100).toFixed(0);
+          lines.push(`Maturity distribution: ${maturedCount}/${shown.length} gauges (${maturedPct}%) point at pools that have already matured.`);
           lines.push(``);
         }
 
