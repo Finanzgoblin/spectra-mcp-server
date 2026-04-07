@@ -105,8 +105,8 @@ Use spectra_list_expiring_pools to check gauge status for expiring pools.`,
       try {
         const rawArr = await fetchSpectra("/governance/voting-incentives") as any;
 
-        // The endpoint returns an array with a single element containing the data
-        const raw: GovernanceResponse | undefined = Array.isArray(rawArr) ? rawArr[0] : rawArr;
+        // The endpoint returns an array of epochs, newest last. Use the latest epoch.
+        const raw: GovernanceResponse | undefined = Array.isArray(rawArr) ? rawArr[rawArr.length - 1] : rawArr;
         if (!raw || !Array.isArray(raw.data)) {
           return { content: [{ type: "text" as const, text: "Governance voting-incentives endpoint returned no data." }] };
         }
