@@ -330,12 +330,11 @@ Goal: "Find the best yield for my capital"
   questions. Both are valid depending on your assumptions about capital size and slippage.
 
 Goal: "Analyze a wallet's strategy"
-  Start with: spectra_get_portfolio(address) AND pendle_get_portfolio(address) in parallel
-  Also: morpho_get_positions(address) for leveraged positions (looping, vault deposits)
+  START HERE: mv_get_position_map(address) — sees the WHOLE wallet across Spectra + Pendle +
+  Morpho + governance (veSPECTRA + vePENDLE) in ONE call with contradiction detection.
+  Then drill deeper per-protocol: spectra_get_portfolio, pendle_get_portfolio, morpho_get_positions.
   Then: spectra_get_pool_activity(chain, pool_address, address) on pools where they hold positions
   Then: spectra_get_address_activity(address) for cross-pool pattern discovery
-  Full picture = Spectra + Pendle + Morpho positions combined. A wallet may run different
-  strategies across protocols (e.g., fixed yield on Spectra, YT speculation on Pendle, looping on Morpho).
   Portfolio shows WHAT they hold; activity shows HOW they got there. Neither alone tells
   the full story — always cross-reference both.
   CHECK OBSERVATION COVERAGE in spectra_get_pool_activity output. If value coverage is low,
@@ -365,9 +364,11 @@ Goal: "Find YT mispricing"
   requires flash-mint/flash-redeem via the Router (more complex, appears as PT trades in pool data).
 
 Goal: "Optimize governance position / veSPECTRA"
-  Start with: spectra_get_ve_info(ve_balance, capital) for boost scenarios
-  Then: spectra_scan_opportunities(capital, ve_spectra_balance) for boosted rankings
+  Start with: spectra_get_ve_info(wallet_address=ADDR) — reads on-chain veSPECTRA balance
+  Then: spectra_get_gauge_votes(sort_by="voting_apr") — where to direct votes for max return
+  Then: spectra_scan_opportunities(capital, ve_spectra_balance) for boosted LP rankings
   veSPECTRA boost only affects gauge-enabled LP positions, not PT or YT directly.
+  Gauge votes show: vote distribution, voting APRs, bribe incentives, SPECTRA emissions per pool.
 
 Goal: "Model a curator / MetaVault strategy"
   Start with: spectra_get_curator_dashboard(chain, metavault_address) for operational overview
@@ -421,6 +422,28 @@ Goal: "Compare maturities for a single underlying (term structure)"
   Cross-protocol comparison: same underlying at similar maturities may offer different rates
   on Spectra vs Pendle. Use mv_compare_yield for head-to-head matching.
   Then: spectra_get_pt_details or mv_check_ibt_health on specific maturities to drill deeper.
+
+Goal: "Assess if a rate is normal or anomalous"
+  Start with: mv_get_calibration(chain, target_address) — historical baselines + percentiles
+  Then: merkl_list_campaigns(chain, asset_filter) — check if subsidies affect the rate
+  The calibration oracle answers "what should the threshold be?" from 30 days of observation.
+  Shows normal range (5th-95th percentile), anomaly thresholds, peer comparison,
+  and assertion-ready language for security tooling. If Merkl campaigns are active,
+  calibration warns that baselines reflect subsidized conditions.
+
+Goal: "Check historical rate stability before entering a position"
+  Start with: morpho_get_history(chain, market_key, period="30d") for Morpho rate trends
+  Or: pendle_get_market_history(chain, market_address, period="30d") for Pendle trends
+  Then: mv_get_calibration(chain, target_address) for statistical framing of "normal"
+  History gives the trajectory. Calibration gives the percentiles. Together they answer:
+  "Is this rate stable enough to build a leveraged strategy on?"
+
+Goal: "Find and evaluate Merkl subsidy opportunities"
+  Start with: merkl_list_campaigns(chain) — all active campaigns with APR, daily rewards, TVL
+  Then: morpho_list_markets(collateral_filter) or spectra_list_pools(chain) to find the pool
+  Campaign types: POOL (LP only), HOLD (token holders), BORROW (reduces net cost).
+  Borrow subsidies can make net borrow cost NEGATIVE (Merkl pays borrowers).
+  Always check: "Ends: unknown" means the subsidy could stop without warning.
 
 Six discovery tools and when to use each:
   spectra_get_best_fixed_yields — Spectra headline rates across all chains (no capital adjustment)

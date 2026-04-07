@@ -240,6 +240,7 @@ or export knowledge about what normal looks like.`,
         let targetName = target_address;
         let targetType = type;
         let profileType: CalibrationProfile["target"]["type"] = "morpho_market";
+        let targetMaturityDays: number | null = null; // detected from market data
 
         // ═══════════════════════════════════════════════
         // MORPHO CALIBRATION
@@ -298,6 +299,18 @@ or export knowledge about what normal looks like.`,
 
           targetName = `Pendle market ${addr.slice(0, 10)}...`;
           profileType = "pendle_market";
+
+          // Detect maturity from Pendle API for maturity-aware calibration
+          try {
+            const marketRaw = await (await fetch(
+              `https://api-v2.pendle.finance/core/v1/${chainId}/markets/${addr}`,
+              { signal: AbortSignal.timeout(8000) }
+            )).json() as any;
+            if (marketRaw?.expiry) {
+              targetMaturityDays = Math.max(0, Math.round((new Date(marketRaw.expiry).getTime() - Date.now()) / 86400000));
+              if (marketRaw.name) targetName = marketRaw.name;
+            }
+          } catch {} // best-effort maturity detection
 
           // Extract time-series per field
           const impliedValues = result.results.map((r: any) => r.impliedApy).filter((v: any) => v != null);
@@ -502,6 +515,20 @@ or export knowledge about what normal looks like.`,
         lines.push(`  Type: ${profileType} | Chain: ${chain} | Period: ${per}`);
         lines.push(`  Data: ${metrics.reduce((s, m) => Math.max(s, m.dataPoints), 0)} observations`);
         lines.push(``);
+
+        // Maturity awareness — near-expiry pools have fundamentally different behavior
+        if (targetMaturityDays !== null && targetMaturityDays <= 30) {
+          lines.push(`⚠ NEAR MATURITY: ${targetMaturityDays} days to expiry.`);
+          lines.push(`  Near-maturity calibration caveats:`);
+          lines.push(`  - Implied APY becomes unreliable as PT price converges to 1.0`);
+          lines.push(`  - Historical percentiles include data from when the pool was young (different regime)`);
+          lines.push(`  - Volume patterns shift from trading to redemption-driven`);
+          lines.push(`  - Anomaly thresholds calibrated over ${per} may not reflect convergence compression`);
+          if (targetMaturityDays <= 7) {
+            lines.push(`  - At ${targetMaturityDays}d, this pool is in active convergence. Statistical baselines are less meaningful.`);
+          }
+          lines.push(``);
+        }
 
         // Subsidy warning — shown before metrics so agents see it first
         if (subsidyWarning) {

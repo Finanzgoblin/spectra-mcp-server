@@ -1014,6 +1014,35 @@ export function formatMorphoSupplierAnalysis(
     lines.push(`  Supply Gap: Only ${formatUsd(available)} available — looping at scale needs more supply-side liquidity.`);
   }
 
+  // Supplier cascade modeling — the Inverter found: 51% EOA concentration
+  // is shown as a data point, not modeled as a risk scenario. When top
+  // supplier controls > 40%, compute what happens if they leave.
+  if (topPct >= 40 && totalSupply > 0) {
+    const topSupplyUsd = suppliers[0].supplyAssetsUsd;
+    const totalBorrow = suppliers.reduce((s, sup) => s + (sup.borrowAssetsUsd || 0), 0);
+    const afterSupply = totalSupply - topSupplyUsd;
+    const afterAvailable = Math.max(0, afterSupply - totalBorrow);
+    const afterUtil = afterSupply > 0 ? Math.min(100, (totalBorrow / afterSupply) * 100) : 100;
+
+    lines.push(``);
+    lines.push(`  ── Withdrawal Scenario: What if top supplier exits? ──`);
+    lines.push(`    If ${suppliers[0].isVault ? suppliers[0].vaultName : "top EOA"} (${formatUsd(topSupplyUsd)}) withdraws:`);
+    lines.push(`    Supply: ${formatUsd(totalSupply)} → ${formatUsd(afterSupply)}`);
+    lines.push(`    Available liquidity: ${formatUsd(available)} → ${formatUsd(afterAvailable)}`);
+    lines.push(`    Utilization: ${formatPct(totalBorrow > 0 ? (totalBorrow / totalSupply) * 100 : 0)} → ${formatPct(afterUtil)}`);
+
+    if (afterUtil >= 95) {
+      lines.push(`    ⚠ CRITICAL: Utilization would spike to ${formatPct(afterUtil)} — borrow rates enter panic territory.`);
+      lines.push(`    All loopers in this market would face margin compression or liquidation.`);
+    } else if (afterUtil >= 85) {
+      lines.push(`    ⚠ HIGH: Utilization would reach ${formatPct(afterUtil)} — borrow rates would increase significantly.`);
+    }
+
+    if (afterAvailable <= 0) {
+      lines.push(`    Available liquidity drops to ZERO — new borrows impossible, existing borrowers cannot increase positions.`);
+    }
+  }
+
   return lines.join("\n");
 }
 
