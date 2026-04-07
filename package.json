@@ -1,6 +1,6 @@
 {
   "name": "metavault-mcp",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "MetaVault MCP — multi-protocol yield intelligence for AI agents (Spectra, Morpho, Pendle)",
   "type": "module",
   "bin": {
@@ -15,7 +15,8 @@
     "test:unit": "npm run build && node --test build/config.test.js build/formatters.test.js build/api.test.js",
     "test:agent": "npm run build && node test-agent.cjs",
     "test:agent:offline": "npm run build && node test-agent.cjs --offline",
-    "test:subjective": "npm run build && node test-subjective.cjs"
+    "test:subjective": "npm run build && node test-subjective.cjs",
+    "prepublishOnly": "npm run build && npm run test:offline"
   },
   "files": [
     "build"

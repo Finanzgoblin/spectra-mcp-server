@@ -32,6 +32,7 @@
  *   - spectra_get_yield_curve         -> Term structure / yield curve for a given underlying
  *   - spectra_list_expiring_pools     -> Scan all chains for pools approaching maturity
  *   - spectra_stress_test_vault       -> Withdrawal stress test for MetaVaults
+ *   - spectra_get_gauge_votes        -> veSPECTRA governance: vote distribution, bribes, emissions
  *
  *   Morpho:
  *   - morpho_list_markets             -> Find Morpho markets by collateral (PT or any asset)
@@ -56,6 +57,7 @@
  *   - pendle_get_looping_strategy    -> Leveraged PT + Morpho looping calculator
  *   - pendle_quote_trade             -> PT trade quote with impact estimation
  *   - pendle_simulate_trade          -> Portfolio impact simulation for PT trades
+ *   - pendle_get_market_history      -> Historical APY, TVL, volume time-series
  *
  *   Merkl:
  *   - merkl_list_campaigns            -> Discover live Merkl incentive campaigns by chain
@@ -67,6 +69,8 @@
  *   - mv_check_ibt_health             -> Multi-signal IBT health assessment
  *   - mv_plan_rollover                -> Position rollover planner for expiring positions
  *   - mv_get_curator_portfolio        -> Multi-vault curator portfolio aggregation
+ *   - mv_get_position_map            -> Cross-protocol position map with contradiction detection
+ *   - mv_get_calibration             -> Historical baselines, percentiles, anomaly thresholds
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -80,7 +84,7 @@ import { discoverAndRegisterTools } from "./tool_loader.js";
 
 const server = new McpServer({
   name: "metavault-mcp",
-  version: "2.0.0",
+  version: "2.1.0",
 });
 
 // Auto-discover and register all tools from src/tools/*.ts
