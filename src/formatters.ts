@@ -2696,8 +2696,9 @@ export function formatScanOpportunity(opp: ScanOpportunity, rank: number, boostI
   // on mainnet" without flagging that ynRWAx requires minting through YieldNest
   // is giving incomplete advice. This surfaces the gap — not the exact cost
   // (that changes by the second) but the shape of the path.
+  // Pass capitalUsd so the gas rationality floor fires for small positions
   const scanEntryPath = inferEntryPath(
-    opp.underlying, opp.ibtSymbol, opp.pt.baseIbt?.symbol, opp.chain
+    opp.underlying, opp.ibtSymbol, opp.pt.baseIbt?.symbol, opp.chain, opp.capitalUsd
   );
   if (scanEntryPath) {
     lines.push(`    ${scanEntryPath}`);
@@ -2810,6 +2811,12 @@ export function formatScanResults(
   lines.push(``);
   lines.push(`  Rankings reflect one dimension of a multi-dimensional space. A lower-ranked pool could be better`);
   lines.push(`  for a different strategy (YT accumulation, LP farming) or time horizon. See Yield Dimensions per opportunity.`);
+
+  // Prescriptive observation boundary — the tools that recommend capital
+  // deployment must declare what they cannot see
+  lines.push(``);
+  const boundary = formatPrescriptiveObservationBoundary("scan");
+  for (const bl of boundary) lines.push(bl);
 
   return lines.join("\n");
 }

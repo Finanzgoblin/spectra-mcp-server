@@ -346,6 +346,7 @@ export interface ScanOpportunity {
   poolLiquidityUsd: number;
 
   // Capital-aware metrics (the differentiator vs spectra_get_best_fixed_yields)
+  capitalUsd: number;         // the capital size this was computed for (needed for gas rationality)
   entryImpactPct: number;
   effectiveApy: number;       // base APY minus amortized entry cost
   capacityUsd: number;        // max capital before impact exceeds threshold
