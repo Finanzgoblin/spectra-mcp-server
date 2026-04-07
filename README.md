@@ -2,7 +2,7 @@
 
 Multi-protocol yield intelligence for AI agents — covering [Spectra Finance](https://spectra.finance), [Pendle](https://pendle.finance), and [Morpho](https://morpho.org) via the [Model Context Protocol](https://modelcontextprotocol.io).
 
-55 tools · 3 protocols · 10+ chains · read-only · on-chain Curve quoting · Pendle logit AMM modeling · ERC-4626 health checks · yield curve term structure · historical eth_getLogs · full Pendle protocol parity (15 tools) · cross-protocol position map · cross-protocol Spectra↔Pendle comparison · veSPECTRA governance dashboard · Pendle historical time-series · Morpho supply-side visibility · Morpho user positions & historical rates · Merkl campaign APR integration · entry path awareness · curator risk monitoring · withdrawal stress testing · rollover planning · multi-vault portfolio aggregation · pool expiry monitoring · zero web3 library dependencies
+55 tools · 3 protocols · 10+ chains · read-only · open emergence architecture · calibration intelligence · on-chain Curve quoting · Pendle logit AMM modeling · ERC-4626 health checks · yield curve term structure · historical eth_getLogs · full Pendle protocol parity (15 tools) · cross-protocol position map · cross-protocol Spectra↔Pendle comparison · veSPECTRA + vePENDLE governance · Pendle historical time-series · Morpho supply-side visibility with supplier cascade modeling · Morpho user positions & historical rates · Merkl campaign APR + expiry integration · entry path awareness · prescriptive observation boundaries · curator risk monitoring · withdrawal stress testing · rollover planning · multi-vault portfolio aggregation · pool expiry monitoring · zero web3 library dependencies
 
 ## What This Does
 
