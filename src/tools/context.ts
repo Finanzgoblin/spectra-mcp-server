@@ -253,6 +253,21 @@ MERKL CAMPAIGN TYPES:
   HOLD = rewards for token holders (including YT if the campaign targets YT).
 - If a campaign shows "(POOL)" in the output, do NOT count it as YT yield.
 
+MERKL DISTRIBUTION PIPELINE (gauge → Merkl → LP):
+- SPECTRA gauge emissions are distributed to LPs via Merkl campaigns. A gauge vote
+  directs SPECTRA emissions to a pool, but a Merkl campaign must EXIST at that pool
+  address for LPs to actually receive the rewards. Without the campaign, emissions
+  are allocated but not distributed — a silent failure invisible to LPs.
+- spectra_get_gauge_votes cross-references each gauge against Merkl and flags:
+  ✅ campaign active, ⚠ stale campaign (targets old/matured pool), ❌ missing.
+- Common failure modes:
+  (A) Campaign never created — governance deployed the gauge but Merkl setup was missed.
+  (B) Pool rolled to new maturity — gauge updated to successor pool but Merkl campaign
+      still targets the predecessor. Detected via fuzzy symbol matching.
+  (C) Campaign expired — the Merkl campaign had a duration and ended.
+- When investigating emission health, start with spectra_get_gauge_votes, not
+  merkl_list_campaigns — the gauge tool surfaces the relationship.
+
 COVERAGE BOUNDARIES:
 - MCP tools cover: Spectra, Pendle, Morpho, and Merkl protocol mechanics and live data.
 - MCP tools do NOT cover: external points programs, token launch schedules, FDV assumptions,

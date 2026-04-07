@@ -39,6 +39,11 @@ opportunities, or understand the full yield stack of any position.
 Campaign types: CLAMM (concentrated LP), ERC20LOGPROCESSOR (Morpho/lending),
 MORPHOVAULT, etc. Action types: POOL (LP only), HOLD (token holders), BORROW, LEND.
 
+Data completeness: the underlying Merkl API is fully paginated (all campaigns
+fetched, not truncated) and cached 15min in-memory + 30min on disk. Chains like
+Ethereum mainnet have 1,800+ campaigns — all are indexed. When asset_filter is
+provided, it also applies server-side filtering for targeted lookups.
+
 When an agent says "no subsidy exists" — check here first. The subsidy layer
 is invisible to protocol-native tools unless explicitly integrated.`,
     {

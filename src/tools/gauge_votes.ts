@@ -8,7 +8,8 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { fetchSpectra } from "../api.js";
+import { fetchSpectra, fetchMerklCampaigns, lookupMerklCampaigns } from "../api.js";
+import type { MerklCampaign } from "../types.js";
 import { formatPct, formatUsd } from "../formatters.js";
 
 interface GaugeEntry {
@@ -58,7 +59,7 @@ interface GovernanceResponse {
 
 const CHAIN_NAMES: Record<number, string> = {
   1: "Ethereum", 8453: "Base", 42161: "Arbitrum", 10: "Optimism",
-  43114: "Avalanche", 146: "Sonic", 14: "Flare", 56: "BSC",
+  43114: "Avalanche", 747474: "Katana", 146: "Sonic", 14: "Flare", 56: "BSC",
 };
 
 function parseVotes(v: string): number {
@@ -69,7 +70,7 @@ export function register(server: McpServer): void {
   server.tool(
     "spectra_get_gauge_votes",
     `Full veSPECTRA governance dashboard: gauge vote distribution, voting APRs,
-bribe incentives, and SPECTRA emissions per pool.
+bribe incentives, SPECTRA emissions per pool, and Merkl campaign health.
 
 Shows where veSPECTRA holders direct their votes, what rewards they earn for
 voting, and how SPECTRA emissions are distributed across pools. Essential for:
@@ -77,6 +78,20 @@ voting, and how SPECTRA emissions are distributed across pools. Essential for:
 - Finding pools with active bribe markets (voting incentives)
 - Understanding emission concentration and governance dynamics
 - Evaluating bribe efficiency ($ per vote)
+- Detecting broken emission pipelines (votes directing SPECTRA to pools
+  where no Merkl campaign exists to distribute them)
+
+Each gauge is cross-referenced against live Merkl campaigns:
+  ✅ = Merkl campaign active at the gauge's pool address (emissions flowing)
+  ⚠ = Merkl campaign exists but targets a different pool address (likely stale —
+      gauge rolled to a successor pool but the campaign wasn't updated)
+  ❌ = No campaign found (emissions allocated by governance but not distributed)
+
+The ⚠ stale detection uses fuzzy symbol matching: if the gauge symbol (e.g.,
+"yvvbUSDC") appears in a Merkl campaign name containing "Spectra" but the
+campaign targets a different address, the campaign likely belongs to a matured
+predecessor pool. This catches the common failure mode where pools roll to new
+maturities but Merkl campaigns lag behind.
 
 The voting APR is what veSPECTRA holders earn by directing votes to a gauge:
   voting APR = (voting rewards + swap fees) / vote value
@@ -140,6 +155,27 @@ Use spectra_list_expiring_pools to check gauge status for expiring pools.`,
         }
 
         const shown = gauges.slice(0, top_n);
+
+        // Fetch Merkl campaigns for all unique chains (parallel, best-effort)
+        const uniqueChainIds = [...new Set(shown.map((g) => g.chainId))];
+        const merklMaps = new Map<number, Map<string, MerklCampaign[]>>();
+        const merklAvailability = new Map<number, boolean>();
+
+        const merklResults = await Promise.allSettled(
+          uniqueChainIds.map(async (chainId) => {
+            const result = await fetchMerklCampaigns(chainId).catch(() => ({
+              campaigns: new Map<string, MerklCampaign[]>(),
+              available: false,
+            }));
+            return { chainId, campaigns: result.campaigns, available: result.available };
+          })
+        );
+        for (const r of merklResults) {
+          if (r.status === "fulfilled") {
+            merklMaps.set(r.value.chainId, r.value.campaigns);
+            merklAvailability.set(r.value.chainId, r.value.available);
+          }
+        }
 
         // Protocol-level stats
         const totalVotingPower = parseVotes(raw.totalVotingPower);
@@ -231,6 +267,46 @@ Use spectra_list_expiring_pools to check gauge status for expiring pools.`,
             lines.push(`    Swap Fees to Voters: ${formatUsd(g.totalVotingFees)}`);
           }
 
+          // Merkl campaign cross-reference
+          const emissionValue = g.lpIncentives?.value || 0;
+          if (emissionValue > 0) {
+            const chainMerklMap = merklMaps.get(g.chainId);
+            const chainAvailable = merklAvailability.get(g.chainId);
+
+            if (!chainMerklMap || chainAvailable === false) {
+              lines.push(`    Merkl: ? API unavailable — cannot verify campaign status`);
+            } else {
+              // Exact match by pool address
+              const exactCampaigns = lookupMerklCampaigns(chainMerklMap, [g.address]);
+              if (exactCampaigns.length > 0) {
+                const best = exactCampaigns.reduce((a, b) => (a.apr > b.apr ? a : b));
+                lines.push(`    Merkl: ✅ Campaign active (${formatPct(best.apr)}%, ${formatUsd(best.dailyRewards)}/day)`);
+              } else {
+                // Fuzzy match: scan all campaigns for name match against gauge symbol
+                const gaugeSymLower = (g.symbol || "").toLowerCase();
+                let fuzzyMatch: MerklCampaign | undefined;
+                if (gaugeSymLower) {
+                  for (const campaigns of chainMerklMap.values()) {
+                    for (const c of campaigns) {
+                      const nameLower = c.name.toLowerCase();
+                      if (nameLower.includes("spectra") && nameLower.includes(gaugeSymLower)) {
+                        if (!fuzzyMatch || c.apr > fuzzyMatch.apr) fuzzyMatch = c;
+                      }
+                    }
+                  }
+                }
+
+                if (fuzzyMatch) {
+                  lines.push(`    Merkl: ⚠ Campaign exists but targets different pool ${fuzzyMatch.identifier}`);
+                  lines.push(`           Likely stale — gauge rolled to new pool but Merkl campaign wasn't updated`);
+                  lines.push(`           Campaign: "${fuzzyMatch.name}" (${formatPct(fuzzyMatch.apr)}%)`);
+                } else {
+                  lines.push(`    Merkl: ❌ No campaign found — ${formatUsd(emissionValue)}/wk emissions allocated but not distributed`);
+                }
+              }
+            }
+          }
+
           lines.push(``);
         }
 
@@ -245,20 +321,74 @@ Use spectra_list_expiring_pools to check gauge status for expiring pools.`,
           lines.push(``);
         }
 
+        // Merkl distribution summary
+        let merklActive = 0, merklActiveValue = 0;
+        let merklStale = 0, merklStaleValue = 0;
+        let merklMissing = 0, merklMissingValue = 0;
+        for (const g of shown) {
+          const ev = g.lpIncentives?.value || 0;
+          if (ev <= 0) continue;
+          const chainMap = merklMaps.get(g.chainId);
+          if (!chainMap || merklAvailability.get(g.chainId) === false) continue;
+          const exact = lookupMerklCampaigns(chainMap, [g.address]);
+          if (exact.length > 0) {
+            merklActive++; merklActiveValue += ev;
+          } else {
+            const symLower = (g.symbol || "").toLowerCase();
+            let fuzzy = false;
+            if (symLower) {
+              for (const cs of chainMap.values()) {
+                for (const c of cs) {
+                  if (c.name.toLowerCase().includes("spectra") && c.name.toLowerCase().includes(symLower)) {
+                    fuzzy = true; break;
+                  }
+                }
+                if (fuzzy) break;
+              }
+            }
+            if (fuzzy) {
+              merklStale++; merklStaleValue += ev;
+            } else {
+              merklMissing++; merklMissingValue += ev;
+            }
+          }
+        }
+        if (merklActive + merklStale + merklMissing > 0) {
+          lines.push(`--- Merkl Distribution Status ---`);
+          if (merklActive > 0) lines.push(`  ✅ Campaigns active: ${merklActive} gauge(s) (${formatUsd(merklActiveValue)}/wk emissions covered)`);
+          if (merklStale > 0) lines.push(`  ⚠ Stale campaigns: ${merklStale} gauge(s) (${formatUsd(merklStaleValue)}/wk — campaigns target old pool addresses)`);
+          if (merklMissing > 0) lines.push(`  ❌ Missing campaigns: ${merklMissing} gauge(s) (${formatUsd(merklMissingValue)}/wk emissions not distributed)`);
+          lines.push(``);
+        }
+
         // Open emergence: what the data surface doesn't show
         lines.push(`── Observation Boundary ──`);
-        lines.push(`This snapshot shows the CURRENT vote distribution and reward structure.`);
-        lines.push(`It cannot detect: vote migration trends (are whales rotating?), bribe`);
-        lines.push(`sustainability (will these rewards persist next epoch?), or whether`);
-        lines.push(`high voting APR reflects genuine protocol demand vs temporary promotion.`);
-        lines.push(`Cross-reference with spectra_get_pool_activity on high-voted gauges to`);
-        lines.push(`see if trading activity justifies the emission allocation.`);
+        lines.push(`This snapshot shows the CURRENT vote distribution, reward structure, and`);
+        lines.push(`Merkl campaign health for each gauge.`);
+        lines.push(``);
+        lines.push(`What it CAN detect:`);
+        lines.push(`- Whether emissions have a distribution path (exact Merkl campaign match)`);
+        lines.push(`- Whether a campaign targets a stale/matured pool (fuzzy symbol match)`);
+        lines.push(`- Bribe-to-emission ratio inefficiencies`);
+        lines.push(``);
+        lines.push(`What it CANNOT detect:`);
+        lines.push(`- Whether LPs are actually claiming their Merkl rewards`);
+        lines.push(`- Vote migration trends (are whales rotating between epochs?)`);
+        lines.push(`- Bribe sustainability (will these rewards persist next epoch?)`);
+        lines.push(`- Whether high voting APR reflects genuine demand vs temporary promotion`);
+        lines.push(`- Campaign expiry risk (Merkl campaigns can end mid-epoch)`);
+        lines.push(``);
+        lines.push(`Merkl data is fully paginated (all campaigns fetched, not truncated) and`);
+        lines.push(`cached 15min in-memory + 30min on disk. Fuzzy matching uses gauge symbol`);
+        lines.push(`against Merkl campaign names containing "Spectra" — it catches pool rollovers`);
+        lines.push(`but may miss campaigns with non-standard naming.`);
         lines.push(``);
 
         lines.push(`--- Next Steps ---`);
         lines.push(`  • Boost calc: spectra_get_ve_info(wallet_address=YOUR_ADDR)`);
         lines.push(`  • Pool details: spectra_get_pt_details(chain=CHAIN, pt_address=ADDR)`);
         lines.push(`  • Expiring gauges: spectra_list_expiring_pools(threshold_days=30)`);
+        lines.push(`  • Verify missing campaign: merkl_list_campaigns(chain=CHAIN, asset_filter=SYMBOL)`);
         lines.push(`  • Protocol stats: spectra_get_protocol_stats()`);
 
         const text = lines.join("\n");

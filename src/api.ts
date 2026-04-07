@@ -2,6 +2,9 @@
  * API helpers — fetch wrappers with retry, GraphQL sanitization, and Morpho market lookup.
  */
 
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import {
   SPECTRA_API,
   SPECTRA_APP_API,
@@ -2725,7 +2728,8 @@ export function parseMerklRewards(
 // =============================================================================
 
 const MERKL_V4_API = "https://api.merkl.xyz/v4";
-const MERKL_CAMPAIGN_TTL_MS = 60_000; // 60 seconds
+const MERKL_CAMPAIGN_TTL_MS = 15 * 60_000; // 15 minutes — campaigns change infrequently
+const MERKL_FILE_TTL_MS = 30 * 60_000; // 30 minutes — file cache lasts longer for restart resilience
 /** Result from Merkl API — distinguishes "no campaigns" from "API unavailable" */
 export interface MerklResult {
   campaigns: Map<string, MerklCampaign[]>;
@@ -2734,6 +2738,34 @@ export interface MerklResult {
 
 const _merklCampaignCache = new Map<string, { campaigns: Map<string, MerklCampaign[]>; available: boolean; expiresAt: number }>();
 const _merklCampaignInflight = new Map<string, Promise<MerklResult>>();
+
+// Persistent file cache for Merkl campaigns — survives server restarts
+const MERKL_CACHE_DIR = join(homedir(), ".cache", "metavault-mcp");
+
+function merklCacheFilePath(cacheKey: string): string {
+  // Sanitize key for filename (e.g., "8453" or "8453:name=spectra")
+  const safe = cacheKey.replace(/[^a-zA-Z0-9_-]/g, "_");
+  return join(MERKL_CACHE_DIR, `merkl-${safe}.json`);
+}
+
+function writeMerklCacheFile(cacheKey: string, campaignMap: Map<string, MerklCampaign[]>): void {
+  try {
+    if (!existsSync(MERKL_CACHE_DIR)) mkdirSync(MERKL_CACHE_DIR, { recursive: true });
+    const data = { ts: Date.now(), entries: Array.from(campaignMap.entries()) };
+    writeFileSync(merklCacheFilePath(cacheKey), JSON.stringify(data));
+  } catch { /* best-effort */ }
+}
+
+function readMerklCacheFile(cacheKey: string): MerklResult | null {
+  try {
+    const filePath = merklCacheFilePath(cacheKey);
+    if (!existsSync(filePath)) return null;
+    const data = JSON.parse(readFileSync(filePath, "utf8"));
+    if (!data?.ts || Date.now() - data.ts > MERKL_FILE_TTL_MS) return null;
+    const map = new Map<string, MerklCampaign[]>(data.entries);
+    return { campaigns: map, available: true };
+  } catch { return null; }
+}
 
 /**
  * Extract a clean 0x address from a Merkl opportunity identifier.
@@ -2749,7 +2781,7 @@ function cleanMerklIdentifier(identifier: string): string | null {
  * Fetch Merkl v4 campaign opportunities for a chain, indexed by target address.
  * Returns { campaigns: Map<lowercased_address, MerklCampaign[]>, available: boolean }.
  * available=false means the API was unreachable — campaigns may exist but we can't confirm.
- * Cached for 60s with inflight dedup. Best-effort — never throws.
+ * Cached 15min in-memory + 30min on disk (survives restarts). Best-effort — never throws.
  */
 export async function fetchMerklCampaigns(chainId: number, nameFilter?: string): Promise<MerklResult> {
   // Cache key includes name filter so filtered and unfiltered requests are cached separately
@@ -2758,74 +2790,97 @@ export async function fetchMerklCampaigns(chainId: number, nameFilter?: string):
   const cached = _merklCampaignCache.get(cacheKey);
   if (cached && now < cached.expiresAt) return { campaigns: cached.campaigns, available: cached.available };
 
+  // Check persistent file cache (survives server restarts)
+  const fileCached = readMerklCacheFile(cacheKey);
+  if (fileCached) {
+    _merklCampaignCache.set(cacheKey, { campaigns: fileCached.campaigns, available: true, expiresAt: now + MERKL_CAMPAIGN_TTL_MS });
+    return fileCached;
+  }
+
   const inflight = _merklCampaignInflight.get(cacheKey);
   if (inflight) return inflight;
 
   const promise = (async () => {
     try {
-      // The Merkl v4 API returns ~28 results by default. When nameFilter is provided,
-      // pass it as &name= for server-side filtering (returns campaigns matching the name).
-      // Also request more items to avoid truncation.
-      let url = `${MERKL_V4_API}/opportunities?chainId=${chainId}`;
-      if (nameFilter) {
-        url += `&name=${encodeURIComponent(nameFilter)}&items=100`;
-      }
-      const res = await fetchWithRetry(() =>
-        fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
-      );
-      if (!res.ok) return { campaigns: new Map<string, MerklCampaign[]>(), available: false };
-
-      const raw = await res.json() as any[];
-      if (!Array.isArray(raw)) return { campaigns: new Map<string, MerklCampaign[]>(), available: false };
-
+      // The Merkl v4 API paginates with max 100 items per page.
+      // Iterate pages until we get fewer than 100 results (last page).
+      // Ethereum mainnet has ~1,800+ campaigns (19 pages). Full pagination
+      // takes ~2s and is cached for 60s. Safety cap at 25 pages.
       const campaignMap = new Map<string, MerklCampaign[]>();
+      const MAX_PAGES = 25;
+      const ITEMS_PER_PAGE = 100;
 
-      for (const opp of raw) {
-        if (!opp || typeof opp !== "object") continue;
-        if (opp.status !== "LIVE") continue;
-        if (!opp.identifier || typeof opp.identifier !== "string") continue;
+      for (let page = 0; page < MAX_PAGES; page++) {
+        let url = `${MERKL_V4_API}/opportunities?chainId=${chainId}&items=${ITEMS_PER_PAGE}&page=${page}`;
+        if (nameFilter) {
+          url += `&name=${encodeURIComponent(nameFilter)}`;
+        }
+        const res = await fetchWithRetry(() =>
+          fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
+        );
+        if (!res.ok) {
+          // If first page fails, mark unavailable. If later page fails, return what we have.
+          if (page === 0) return { campaigns: new Map<string, MerklCampaign[]>(), available: false };
+          break;
+        }
 
-        const addr = cleanMerklIdentifier(opp.identifier);
-        if (!addr) continue;
+        const raw = await res.json() as any[];
+        if (!Array.isArray(raw)) {
+          if (page === 0) return { campaigns: new Map<string, MerklCampaign[]>(), available: false };
+          break;
+        }
 
-        const apr = typeof opp.apr === "number" ? opp.apr : 0;
-        if (apr <= 0) continue;
+        for (const opp of raw) {
+          if (!opp || typeof opp !== "object") continue;
+          if (opp.status !== "LIVE") continue;
+          if (!opp.identifier || typeof opp.identifier !== "string") continue;
 
-        // Extract reward token symbols from tokens array
-        const rewardTokens: string[] = [];
-        if (Array.isArray(opp.tokens)) {
-          for (const t of opp.tokens) {
-            if (t?.symbol && typeof t.symbol === "string") {
-              rewardTokens.push(t.symbol);
+          const addr = cleanMerklIdentifier(opp.identifier);
+          if (!addr) continue;
+
+          const apr = typeof opp.apr === "number" ? opp.apr : 0;
+          if (apr <= 0) continue;
+
+          // Extract reward token symbols from tokens array
+          const rewardTokens: string[] = [];
+          if (Array.isArray(opp.tokens)) {
+            for (const t of opp.tokens) {
+              if (t?.symbol && typeof t.symbol === "string") {
+                rewardTokens.push(t.symbol);
+              }
             }
+          }
+
+          const campaign: MerklCampaign = {
+            identifier: addr,
+            apr,
+            type: opp.type || "",
+            action: opp.action || "",
+            name: opp.name || "",
+            tvl: typeof opp.tvl === "number" ? opp.tvl : 0,
+            status: opp.status || "",
+            rewardTokens,
+            dailyRewards: typeof opp.dailyRewards === "number" ? opp.dailyRewards : 0,
+            // Campaign timing — when the subsidy ends. Without this, agents
+            // assume incentives persist forever and build strategies on sand.
+            earliestEnd: typeof opp.earliestCampaignEnd === "number" ? opp.earliestCampaignEnd : undefined,
+            latestEnd: typeof opp.latestCampaignEnd === "number" ? opp.latestCampaignEnd : undefined,
+          };
+
+          const existing = campaignMap.get(addr);
+          if (existing) {
+            existing.push(campaign);
+          } else {
+            campaignMap.set(addr, [campaign]);
           }
         }
 
-        const campaign: MerklCampaign = {
-          identifier: addr,
-          apr,
-          type: opp.type || "",
-          action: opp.action || "",
-          name: opp.name || "",
-          tvl: typeof opp.tvl === "number" ? opp.tvl : 0,
-          status: opp.status || "",
-          rewardTokens,
-          dailyRewards: typeof opp.dailyRewards === "number" ? opp.dailyRewards : 0,
-          // Campaign timing — when the subsidy ends. Without this, agents
-          // assume incentives persist forever and build strategies on sand.
-          earliestEnd: typeof opp.earliestCampaignEnd === "number" ? opp.earliestCampaignEnd : undefined,
-          latestEnd: typeof opp.latestCampaignEnd === "number" ? opp.latestCampaignEnd : undefined,
-        };
-
-        const existing = campaignMap.get(addr);
-        if (existing) {
-          existing.push(campaign);
-        } else {
-          campaignMap.set(addr, [campaign]);
-        }
+        // If we got fewer than a full page, we've reached the end
+        if (raw.length < ITEMS_PER_PAGE) break;
       }
 
       _merklCampaignCache.set(cacheKey, { campaigns: campaignMap, available: true, expiresAt: Date.now() + MERKL_CAMPAIGN_TTL_MS });
+      writeMerklCacheFile(cacheKey, campaignMap);
       return { campaigns: campaignMap, available: true } as MerklResult;
     } catch (err) {
       console.error(`Merkl campaign fetch failed for chainId ${chainId}:`, err instanceof Error ? err.message : err);
