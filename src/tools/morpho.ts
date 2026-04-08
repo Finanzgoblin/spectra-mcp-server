@@ -7,7 +7,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, MORPHO_CHAIN_IDS, resolveNetwork } from "../config.js";
 import type { MorphoMarket, MorphoVault, MorphoUserPositions, MorphoUserMarketPosition, MorphoUserVaultPosition, MorphoHistoricalAnalysis, MorphoHistoricalDataPoint, MorphoRateStats, MerklCampaign } from "../types.js";
-import { fetchMorpho, sanitizeGraphQL, MORPHO_MARKET_FIELDS, fetchSpectraPtAddresses, fetchMorphoMarketSuppliers, fetchMorphoVaults, fetchMorphoMarketRates, fetchMorphoUserPositions, fetchMorphoMarketHistory, fetchMerklCampaigns, lookupMerklCampaigns, fetchSpectra } from "../api.js";
+import { fetchMorpho, sanitizeGraphQL, MORPHO_MARKET_FIELDS, fetchSpectraPtAddresses, fetchPtMaturityIndex, fetchMorphoMarketSuppliers, fetchMorphoVaults, fetchMorphoMarketRates, fetchMorphoUserPositions, fetchMorphoMarketHistory, fetchMerklCampaigns, lookupMerklCampaigns, fetchSpectra } from "../api.js";
 import { formatPct, formatUsd, formatMorphoLltv, formatMorphoMarketSummary, formatMorphoMarketHints, formatMorphoSupplierAnalysis, formatMorphoVaultSummary, formatMorphoVaultSummaryEnriched, formatMorphoUserPositions, formatMorphoHistoricalAnalysis, formatMorphoHistoryHints, parsePtResponse } from "../formatters.js";
 
 export function register(server: McpServer): void {
@@ -118,10 +118,14 @@ Use spectra_scan_opportunities for automated cross-chain looping discovery.`,
           }
         }`;
 
-        // Fetch Morpho markets, Spectra PT addresses, and Merkl campaigns in parallel
-        const [morphoData, spectraPtAddrs, ...merklResults] = await Promise.all([
+        // Fetch Morpho markets, Spectra PT addresses, PT maturity index, and Merkl campaigns in parallel
+        // spectraPtAddrs = Spectra-only set for protocol tagging (Spectra vs Pendle/Other)
+        // ptMaturityIndex = unified Spectra+Pendle PT/pool address → maturity (Unix seconds)
+        // Both backed by fetchChainPools cache — second call is free
+        const [morphoData, spectraPtAddrs, ptMaturityIndex, ...merklResults] = await Promise.all([
           fetchMorpho(query) as Promise<any>,
           fetchSpectraPtAddresses(),
+          fetchPtMaturityIndex(),
           // Fetch Merkl campaigns for all queried chains (best-effort)
           ...chainIds.map(cid => fetchMerklCampaigns(cid).catch(() => ({ campaigns: new Map<string, MerklCampaign[]>(), available: false }))),
         ]);
@@ -209,7 +213,7 @@ Use spectra_scan_opportunities for automated cross-chain looping discovery.`,
           const protocol = spectraPtAddrs.has(collateralAddr) ? "Spectra"
             : isPtSearch ? "Pendle/Other" : "Direct";
           const summary = formatMorphoMarketSummary(m, protocol);
-          const hints = formatMorphoMarketHints(m);
+          const hints = formatMorphoMarketHints(m, ptMaturityIndex);
           const parts = [summary];
           if (hints.length > 0) parts.push(hints.join("\n"));
           // Add vault supplier info

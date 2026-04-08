@@ -1022,9 +1022,70 @@ export async function scanAllChainPools(
 // =============================================================================
 
 /**
- * Fetch all Spectra PT addresses from chains that overlap with Morpho.
- * Returns a Set<string> of lowercased PT addresses for O(1) lookups.
- * Best-effort — chains that fail are skipped silently.
+ * Unified PT maturity index: address → maturity (Unix seconds).
+ * Covers both Spectra PTs and Pendle PTs across Morpho-capable chains.
+ * Also indexes pool/market addresses for Merkl campaign cross-referencing.
+ *
+ * Callers that only need `has(addr)` for protocol tagging use this unchanged —
+ * Map.has() is O(1) like Set.has().
+ *
+ * Dissolution condition: when Morpho GraphQL exposes PT maturity as a first-class
+ * field, this cross-protocol index is redundant.
+ */
+export async function fetchPtMaturityIndex(): Promise<Map<string, number>> {
+  const index = new Map<string, number>();
+
+  const morphoNetworks = Object.keys(MORPHO_CHAIN_IDS);
+
+  // Fetch Spectra PTs and Pendle markets in parallel across all Morpho-capable chains
+  const [spectraResults, pendleResults] = await Promise.all([
+    Promise.allSettled(
+      morphoNetworks.map(async (net) => {
+        const pts = await fetchChainPools(net);
+        return pts.filter((pt) => pt.address && pt.maturity);
+      })
+    ),
+    Promise.allSettled(
+      morphoNetworks.map(async (net) => {
+        const result = await fetchPendleMarkets(net);
+        return result.ok ? result.markets : [];
+      })
+    ),
+  ]);
+
+  // Index Spectra: PT address + pool addresses → maturity
+  for (const result of spectraResults) {
+    if (result.status === "fulfilled") {
+      for (const pt of result.value) {
+        index.set(pt.address.toLowerCase(), pt.maturity);
+        if (pt.pools) {
+          for (const pool of pt.pools) {
+            if (pool.address) index.set(pool.address.toLowerCase(), pt.maturity);
+          }
+        }
+      }
+    }
+  }
+
+  // Index Pendle: PT address + market address → maturity
+  for (const result of pendleResults) {
+    if (result.status === "fulfilled") {
+      for (const m of result.value) {
+        const expiry = Math.floor(new Date(m.expiry).getTime() / 1000);
+        if (!isNaN(expiry) && expiry > 0) {
+          if (m.pt) index.set(m.pt.toLowerCase(), expiry);
+          if (m.address) index.set(m.address.toLowerCase(), expiry);
+        }
+      }
+    }
+  }
+
+  return index;
+}
+
+/**
+ * @deprecated Use fetchPtMaturityIndex() instead. This wrapper maintains backward
+ * compatibility for callers that only need a Set<string> of Spectra PT addresses.
  */
 export async function fetchSpectraPtAddresses(): Promise<Set<string>> {
   const morphoNetworks = Object.keys(MORPHO_CHAIN_IDS);

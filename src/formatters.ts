@@ -2362,7 +2362,7 @@ export function formatVolumeHints(opts: {
  * point for all looping decisions (i.e., agents never call morpho_list_markets
  * directly for strategy), these hints are redundant and should be removed.
  */
-export function formatMorphoMarketHints(m: MorphoMarket): string[] {
+export function formatMorphoMarketHints(m: MorphoMarket, ptMaturityIndex?: Map<string, number>): string[] {
   const lines: string[] = [];
   const s = m.state;
   if (!s) return lines;
@@ -2388,14 +2388,20 @@ export function formatMorphoMarketHints(m: MorphoMarket): string[] {
     lines.push(`  Hint: Borrow rate ${formatPct(borrowApy)} is low -- could indicate a favorable looping environment if PT APY is above this.`);
   }
 
-  // Temporal perception: surface collateral PT maturity from naming conventions
-  const maturity = parsePtMaturityFromName(m.collateralAsset?.name || "");
-  if (maturity) {
-    const deltaDays = Math.floor((Date.now() - maturity.getTime()) / 86400000);
+  // Temporal perception: surface collateral PT maturity
+  // Prefer structured data from Spectra/Pendle APIs, fall back to name parsing
+  const collateralAddr = m.collateralAsset?.address?.toLowerCase() || "";
+  const structuredMaturity = ptMaturityIndex?.get(collateralAddr);
+  const maturityDate = structuredMaturity
+    ? new Date(structuredMaturity * 1000)
+    : parsePtMaturityFromName(m.collateralAsset?.name || "");
+
+  if (maturityDate && !isNaN(maturityDate.getTime())) {
+    const deltaDays = Math.floor((Date.now() - maturityDate.getTime()) / 86400000);
     if (deltaDays > 0) {
-      lines.push(`  Collateral PT matured ${maturity.toISOString().slice(0, 10)} (${deltaDays}d ago)`);
+      lines.push(`  Collateral PT matured ${maturityDate.toISOString().slice(0, 10)} (${deltaDays}d ago)`);
     } else if (-deltaDays <= 14) {
-      lines.push(`  Collateral PT matures ${maturity.toISOString().slice(0, 10)} (${-deltaDays}d)`);
+      lines.push(`  Collateral PT matures ${maturityDate.toISOString().slice(0, 10)} (${-deltaDays}d)`);
     }
   }
 
