@@ -3244,8 +3244,8 @@ export function formatMetavaultSummary(mv: SpectraMetavault, chain: string): str
       const curr = sorted[i];
       const prevAssets = Number(prev.assets) / divisor;
       const currAssets = Number(curr.assets) / divisor;
-      const prevRate = Number(prev.rate) / 1e6;
-      const currRate = Number(curr.rate) / 1e6;
+      const prevRate = Number(prev.rate) / divisor;
+      const currRate = Number(curr.rate) / divisor;
 
       // Asset delta includes both deposits/withdrawals AND yield accrual.
       // Approximate yield = prevAssets * (currRate - prevRate) / prevRate
@@ -3264,8 +3264,8 @@ export function formatMetavaultSummary(mv: SpectraMetavault, chain: string): str
     // Summary: total net flow
     const firstAssets = Number(sorted[0].assets) / divisor;
     const lastAssets = Number(sorted[sorted.length - 1].assets) / divisor;
-    const firstRate = Number(sorted[0].rate) / 1e6;
-    const lastRate = Number(sorted[sorted.length - 1].rate) / 1e6;
+    const firstRate = Number(sorted[0].rate) / divisor;
+    const lastRate = Number(sorted[sorted.length - 1].rate) / divisor;
     const totalYield = firstAssets * (lastRate - firstRate) / firstRate;
     const totalAssetDelta = lastAssets - firstAssets;
     const totalNetDeposits = totalAssetDelta - totalYield;
