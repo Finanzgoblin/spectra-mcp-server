@@ -1002,9 +1002,20 @@ export async function scanAllChainPools(
         if ((pt.tvl?.usd || 0) < minTvl) continue;
 
         if (assetFilter) {
-          const sym = (pt.underlying?.symbol || "").toUpperCase();
-          const name = (pt.underlying?.name || "").toUpperCase();
-          if (!sym.includes(assetFilter) && !name.includes(assetFilter)) continue;
+          const candidates = [
+            pt.underlying?.symbol,
+            pt.underlying?.name,
+            pt.ibt?.symbol,
+            pt.ibt?.name,
+            pt.name,
+            pt.symbol,
+            pt.baseIbt?.symbol,
+            pt.baseIbt?.name,
+          ];
+          const match = candidates.some(
+            (c) => c && c.toUpperCase().includes(assetFilter)
+          );
+          if (!match) continue;
         }
 
         for (const pool of pt.pools) {
