@@ -318,6 +318,17 @@ Use spectra_get_pool_activity on a specific pool to see recent trading patterns.
           );
         }
 
+        // Check for phantom pools: non-zero APY but near-zero TVL and liquidity
+        const phantomPools = expanded.filter(e =>
+          (e.pt.tvl?.usd ?? 0) < 1 && (e.pool.liquidity?.usd ?? 0) < 1
+        );
+        if (phantomPools.length > 0) {
+          tensionLines.push(
+            `  Data tension: ${phantomPools.length} pool(s) show <$1 TVL and <$1 liquidity ` +
+            `but appear active with non-zero APY. Likely price feed outage or unfunded pool.`
+          );
+        }
+
         const footer = [
           ``,
           ...(tensionLines.length > 0 ? [...tensionLines, ``] : []),

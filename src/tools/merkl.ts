@@ -20,7 +20,7 @@ import { z } from "zod";
 import { CHAIN_ENUM, SUPPORTED_CHAINS, resolveNetwork } from "../config.js";
 import { fetchMerklCampaigns } from "../api.js";
 import type { MerklCampaign } from "../types.js";
-import { formatPct, formatUsd } from "../formatters.js";
+import { formatPct, formatUsd, parsePtMaturityFromName } from "../formatters.js";
 
 export function register(server: McpServer): void {
   server.tool(
@@ -162,6 +162,17 @@ is invisible to protocol-native tools unless explicitly integrated.`,
             parts.push(`   Ends: unknown — subsidy duration not disclosed`);
           }
           parts.push(`   Target: ${c.identifier}`);
+
+          // Temporal perception: surface target pool maturity from campaign name
+          const maturity = parsePtMaturityFromName(c.name || "");
+          if (maturity) {
+            const deltaDays = Math.floor((Date.now() - maturity.getTime()) / 86400000);
+            if (deltaDays > 0) {
+              parts.push(`   Target pool maturity: ${maturity.toISOString().slice(0, 10)} (${deltaDays}d ago)`);
+            } else if (-deltaDays <= 30) {
+              parts.push(`   Target pool maturity: ${maturity.toISOString().slice(0, 10)} (${-deltaDays}d remaining)`);
+            }
+          }
 
           // Surface action-specific interpretation
           if (c.action === "POOL") {

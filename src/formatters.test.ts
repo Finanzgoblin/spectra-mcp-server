@@ -38,6 +38,7 @@ import {
   formatPendleMarketSummary,
   ROUTER_BATCHABLE_TYPES,
   ROUTER_BATCH_FOOTNOTE,
+  parsePtMaturityFromName,
 } from "./formatters.js";
 import type { SpectraPt, SpectraPool, PendleMarket } from "./types.js";
 
@@ -102,6 +103,48 @@ describe("fractionalDaysToMaturity", () => {
     const halfDayFromNow = Math.floor(Date.now() / 1000) + 43200;
     const result = fractionalDaysToMaturity(halfDayFromNow);
     assert.ok(Math.abs(result - 0.5) < 0.01, `Expected ~0.5 but got ${result}`);
+  });
+});
+
+// =============================================================================
+// parsePtMaturityFromName
+// =============================================================================
+
+describe("parsePtMaturityFromName", () => {
+  it("parses Morpho/Pendle ddMONyyyy format", () => {
+    const d = parsePtMaturityFromName("PT Staked cap USD 29JAN2026");
+    assert.ok(d);
+    assert.equal(d!.toISOString().slice(0, 10), "2026-01-29");
+  });
+
+  it("parses single-digit day", () => {
+    const d = parsePtMaturityFromName("PT-RLP-9APR2026");
+    assert.ok(d);
+    assert.equal(d!.toISOString().slice(0, 10), "2026-04-09");
+  });
+
+  it("parses Spectra yyyy/mm/dd format", () => {
+    const d = parsePtMaturityFromName("PT-yvvbUSDC(vbUSDC)-2026/02/13");
+    assert.ok(d);
+    assert.equal(d!.toISOString().slice(0, 10), "2026-02-13");
+  });
+
+  it("parses date embedded in campaign name", () => {
+    const d = parsePtMaturityFromName("Provide liquidity to the Spectra yvvbUSDC / PT-yvvbUSDC(vbUSDC)-2026/08/02 pool");
+    assert.ok(d);
+    assert.equal(d!.toISOString().slice(0, 10), "2026-08-02");
+  });
+
+  it("returns null for names without dates", () => {
+    assert.equal(parsePtMaturityFromName("USDC"), null);
+    assert.equal(parsePtMaturityFromName(""), null);
+    assert.equal(parsePtMaturityFromName("PT-wstETH"), null);
+  });
+
+  it("handles case-insensitive month", () => {
+    const d = parsePtMaturityFromName("PT-sUSDE-7May2026");
+    assert.ok(d);
+    assert.equal(d!.toISOString().slice(0, 10), "2026-05-07");
   });
 });
 

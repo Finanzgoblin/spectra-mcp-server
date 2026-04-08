@@ -9,6 +9,41 @@ import { SUPPORTED_CHAINS } from "./config.js";
 // Primitive Formatters
 // =============================================================================
 
+/**
+ * Parse a maturity date from PT/campaign naming conventions.
+ * Handles two format families:
+ *   - Morpho/Pendle: "PT Staked cap USD 29JAN2026", "PT-RLP-9APR2026"
+ *   - Spectra: "PT-yvvbUSDC(vbUSDC)-2026/02/13", "2026/07/16"
+ *
+ * Returns Date or null. Pure perception — no interpretation.
+ *
+ * Dissolution condition: when protocols expose maturity as structured data
+ * (e.g., Morpho GraphQL field), this parser is redundant.
+ */
+const MONTH_MAP: Record<string, number> = {
+  JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5,
+  JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11,
+};
+export function parsePtMaturityFromName(name: string): Date | null {
+  if (!name) return null;
+  // Spectra style: 2026/02/13 or 2026/07/16
+  const slashMatch = name.match(/(\d{4})\/(\d{2})\/(\d{2})/);
+  if (slashMatch) {
+    const d = new Date(Date.UTC(+slashMatch[1], +slashMatch[2] - 1, +slashMatch[3]));
+    return isNaN(d.getTime()) ? null : d;
+  }
+  // Morpho/Pendle style: 29JAN2026, 5MAR2026, 9APR2026
+  const ddMonMatch = name.match(/(\d{1,2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(\d{4})/i);
+  if (ddMonMatch) {
+    const mon = MONTH_MAP[ddMonMatch[2].toUpperCase()];
+    if (mon !== undefined) {
+      const d = new Date(Date.UTC(+ddMonMatch[3], mon, +ddMonMatch[1]));
+      return isNaN(d.getTime()) ? null : d;
+    }
+  }
+  return null;
+}
+
 export function formatUsd(val: number): string {
   return `$${val.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
@@ -2353,6 +2388,17 @@ export function formatMorphoMarketHints(m: MorphoMarket): string[] {
     lines.push(`  Hint: Borrow rate ${formatPct(borrowApy)} is low -- could indicate a favorable looping environment if PT APY is above this.`);
   }
 
+  // Temporal perception: surface collateral PT maturity from naming conventions
+  const maturity = parsePtMaturityFromName(m.collateralAsset?.name || "");
+  if (maturity) {
+    const deltaDays = Math.floor((Date.now() - maturity.getTime()) / 86400000);
+    if (deltaDays > 0) {
+      lines.push(`  Collateral PT matured ${maturity.toISOString().slice(0, 10)} (${deltaDays}d ago)`);
+    } else if (-deltaDays <= 14) {
+      lines.push(`  Collateral PT matures ${maturity.toISOString().slice(0, 10)} (${-deltaDays}d)`);
+    }
+  }
+
   return lines;
 }
 
@@ -3070,6 +3116,11 @@ export function formatMetavaultSummary(mv: SpectraMetavault, chain: string): str
         ? ` (${[...new Set(incentiveTokens)].join(", ")})`
         : "";
       lines.push(`    Yield composition: ${formatPct(baseApy)} base + ${formatPct(incentiveApy)} incentives${tokenList} (${incentivePct.toFixed(0)}% from incentive programs)`);
+      // Single-source fact: surface when one token provides the majority of incentive yield
+      const uniqueTokens = [...new Set(incentiveTokens)];
+      if (incentivePct > 75 && uniqueTokens.length === 1) {
+        lines.push(`    Single incentive source: ${uniqueTokens[0]}`);
+      }
     }
   }
 
