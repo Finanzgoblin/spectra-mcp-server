@@ -167,10 +167,12 @@ Use spectra_model_metavault to model MetaVault looping economics.`,
           scanAllChainPools({ min_tvl_usd, min_liquidity_usd, asset_filter }),
           include_metavaults
             ? scanAllMetavaults()
-            : Promise.resolve({ metavaults: [] as Array<{ metavault: any; chain: string }> }),
+            : Promise.resolve({ metavaults: [] as Array<{ metavault: any; chain: string }>, failedChains: [] as string[] }),
         ]);
 
         const { opportunities: rawOpps, failedChains } = poolResult;
+        const mvFailedChains = metavaultResult.failedChains || [];
+        if (mvFailedChains.length > 0) failedChains.push(...mvFailedChains.filter(c => !failedChains.includes(c)));
 
         // Fetch Merkl campaigns for unique chains in results (best-effort, parallel)
         const uniqueChainIds = new Map<string, number>();

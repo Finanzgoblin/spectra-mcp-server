@@ -469,7 +469,13 @@ const MORPHO_VAULT_FIELDS = `
     netApy
     fee
     allocation {
-      market { uniqueKey loanAsset { symbol } collateralAsset { address symbol } }
+      market {
+        uniqueKey
+        lltv
+        loanAsset { symbol }
+        collateralAsset { address symbol }
+        state { borrowApy supplyApy utilization }
+      }
       supplyAssetsUsd
       supplyCap
       supplyCapUsd
@@ -524,6 +530,11 @@ export async function fetchMorphoVaults(
         supplyAssetsUsd: a.supplyAssetsUsd || 0,
         supplyCap: a.supplyCap || null,
         supplyCapUsd: a.supplyCapUsd || null,
+        // Inline market state from enriched vault query
+        lltv: a.market?.lltv != null ? Number(a.market.lltv) : undefined,
+        borrowApy: a.market?.state?.borrowApy != null ? Number(a.market.state.borrowApy) : undefined,
+        supplyApy: a.market?.state?.supplyApy != null ? Number(a.market.state.supplyApy) : undefined,
+        utilization: a.market?.state?.utilization != null ? Number(a.market.state.utilization) : undefined,
       }));
 
       return {
@@ -1914,11 +1925,14 @@ export async function fetchChainPoolAddresses(chain: string): Promise<Set<string
 
 /**
  * Scan all chains for MetaVaults in parallel.
- * Returns all MetaVaults with their chain slug attached.
+ * Returns all MetaVaults with their chain slug attached, plus any chains that failed.
+ * Follows the same pattern as scanAllChainPools / scanAllPendleMarkets.
  */
 export async function scanAllMetavaults(): Promise<{
   metavaults: Array<{ metavault: SpectraMetavault; chain: string }>;
+  failedChains: string[];
 }> {
+  const failedChains: string[] = [];
   const results = await Promise.allSettled(
     API_NETWORKS.map(async (chain) => {
       const mvs = await fetchMetavaults(chain);
@@ -1926,11 +1940,17 @@ export async function scanAllMetavaults(): Promise<{
     })
   );
 
-  const metavaults = results
-    .filter((r): r is PromiseFulfilledResult<Array<{ metavault: SpectraMetavault; chain: string }>> => r.status === "fulfilled")
-    .flatMap(r => r.value);
+  const metavaults: Array<{ metavault: SpectraMetavault; chain: string }> = [];
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    if (r.status === "fulfilled") {
+      metavaults.push(...r.value);
+    } else {
+      failedChains.push(API_NETWORKS[i]);
+    }
+  }
 
-  return { metavaults };
+  return { metavaults, failedChains };
 }
 
 // =============================================================================

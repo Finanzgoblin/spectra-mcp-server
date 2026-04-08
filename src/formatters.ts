@@ -1076,7 +1076,11 @@ export function formatMorphoSupplierAnalysis(
 // Morpho Vault Enriched Allocation
 // =============================================================================
 
-/** Format a single vault allocation with optional live rates and Spectra PT tagging. */
+/**
+ * Format a single vault allocation with optional live rates and Spectra PT tagging.
+ * Prefers inline state from the enriched vault query (alloc.borrowApy etc.),
+ * falls back to the external marketRate map for backward compatibility.
+ */
 export function formatMorphoVaultAllocationEnriched(
   alloc: MorphoVaultAllocation,
   marketRate?: { borrowApy: number; supplyApy: number; utilization: number; supplyAssetsUsd?: number },
@@ -1086,8 +1090,12 @@ export function formatMorphoVaultAllocationEnriched(
   const cap = alloc.supplyCapUsd != null && alloc.supplyCapUsd > 0
     ? ` | Cap: ${formatUsd(alloc.supplyCapUsd)} (${formatPct((alloc.supplyAssetsUsd / alloc.supplyCapUsd) * 100)} used)`
     : "";
-  const rates = marketRate
-    ? ` | Borrow: ${formatPct(marketRate.borrowApy * 100)} | Util: ${formatPct(marketRate.utilization * 100)}`
+  // Prefer inline state (from enriched vault query), fall back to external rates map
+  const borrowApy = alloc.borrowApy ?? marketRate?.borrowApy;
+  const util = alloc.utilization ?? marketRate?.utilization;
+  const lltv = alloc.lltv;
+  const rates = borrowApy != null && util != null
+    ? ` | Borrow: ${formatPct(borrowApy * 100)} | Util: ${formatPct(util * 100)}${lltv != null ? ` | LLTV: ${formatPct(lltv * 100)}` : ""}`
     : "";
   return `    ${tag}${alloc.collateralSymbol}/${alloc.loanSymbol}: ${formatUsd(alloc.supplyAssetsUsd)}${cap}${rates} | Key: ${alloc.marketKey.slice(0, 10)}...`;
 }

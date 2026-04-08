@@ -247,15 +247,20 @@ the vault contract address won't appear in pool activity data.`,
       try {
         let entries: Array<{ metavault: any; chain: string }>;
 
+        let failedChains: string[] = [];
         if (chain) {
           const mvs = await fetchMetavaults(chain);
           entries = mvs.map((metavault) => ({ metavault, chain }));
         } else {
           const result = await scanAllMetavaults();
           entries = result.metavaults;
+          failedChains = result.failedChains;
         }
 
-        const text = formatMetavaultList(entries, chain);
+        let text = formatMetavaultList(entries, chain);
+        if (failedChains.length > 0) {
+          text += `\nNote: ${failedChains.length} chain(s) unreachable: ${failedChains.join(", ")}. MetaVaults on those chains may be missing.`;
+        }
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
         const text = `Error fetching MetaVaults: ${e.message}`;

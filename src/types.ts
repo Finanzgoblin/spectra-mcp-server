@@ -169,6 +169,11 @@ export interface MorphoVaultAllocation {
   supplyAssetsUsd: number;
   supplyCap: string | null;
   supplyCapUsd: number | null;
+  // Inline market state — carried from vault query, avoids separate batch rate fetch
+  lltv?: number;
+  borrowApy?: number;
+  supplyApy?: number;
+  utilization?: number;
 }
 
 export interface MorphoVault {
