@@ -9,7 +9,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork } from "../config.js";
 import type { SpectraPt, SpectraPool, PositionSnapshot, TradeQuote } from "../types.js";
-import { fetchSpectra } from "../api.js";
+import { fetchSpectra, resolvePtFromPoolAddress } from "../api.js";
 import {
   parsePtResponse,
   buildQuoteFromPt,
@@ -77,14 +77,26 @@ price quote without portfolio context.`,
 
         // Fetch portfolio and PT data in parallel
         // Portfolio is best-effort — if it fails, simulate from zero
+        let effectivePtAddr = pt_address;
         const [portfolioResult, ptData] = await Promise.all([
           fetchSpectra(`/${network}/portfolio/${address}`).catch(() => null) as Promise<any>,
-          fetchSpectra(`/${network}/pt/${pt_address}`) as Promise<any>,
+          fetchSpectra(`/${network}/pt/${effectivePtAddr}`) as Promise<any>,
         ]);
 
-        const pt = parsePtResponse(ptData);
+        let pt = parsePtResponse(ptData);
+
+        // If not found, the address might be a pool address — try resolving
         if (!pt) {
-          const text = `No PT found at ${pt_address} on ${chain}`;
+          const resolved = await resolvePtFromPoolAddress(chain, pt_address);
+          if (resolved) {
+            effectivePtAddr = resolved;
+            const data2 = await fetchSpectra(`/${network}/pt/${effectivePtAddr}`) as any;
+            pt = parsePtResponse(data2);
+          }
+        }
+
+        if (!pt) {
+          const text = `No PT found at ${pt_address} on ${chain}. If this is a pool address, use spectra_list_pools to find the PT address.`;
           return { content: [{ type: "text" as const, text }], isError: true };
         }
 

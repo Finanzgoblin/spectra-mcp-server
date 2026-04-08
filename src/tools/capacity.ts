@@ -9,7 +9,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork } from "../config.js";
-import { fetchSpectra, fetchCurveCalcTokenAmount, amountToBigInt } from "../api.js";
+import { fetchSpectra, fetchCurveCalcTokenAmount, amountToBigInt, resolvePtFromPoolAddress } from "../api.js";
 import { parsePtResponse, buildQuoteFromPt, formatUsd, formatPct, formatDate, daysToMaturity, estimateLpDepositImpact, extractLpApyBreakdown } from "../formatters.js";
 import { tryOnChainQuote } from "./quote.js";
 
@@ -70,11 +70,22 @@ Use mv_check_ibt_health to verify the underlying IBT before deploying.`,
     async ({ chain, pt_address, steps, max_capital_usd, use_on_chain, mode }) => {
       try {
         const network = resolveNetwork(chain);
-        const data = await fetchSpectra(`/${network}/pt/${pt_address}`) as any;
-        const pt = parsePtResponse(data);
+        let effectivePtAddr = pt_address;
+        let data = await fetchSpectra(`/${network}/pt/${effectivePtAddr}`) as any;
+        let pt = parsePtResponse(data);
+
+        // If not found, the address might be a pool address — try resolving
+        if (!pt) {
+          const resolved = await resolvePtFromPoolAddress(chain, pt_address);
+          if (resolved) {
+            effectivePtAddr = resolved;
+            data = await fetchSpectra(`/${network}/pt/${effectivePtAddr}`) as any;
+            pt = parsePtResponse(data);
+          }
+        }
 
         if (!pt) {
-          const text = `No PT found at ${pt_address} on ${chain}.\nIf this PT belongs to a cross-chain MetaVault position, try the chain where the pool actually lives (e.g., a Base MetaVault may have positions on Avalanche via CCTP bridge).`;
+          const text = `No PT found at ${pt_address} on ${chain}.\nIf this is a pool address, use spectra_list_pools to find the PT address.\nIf this PT belongs to a cross-chain MetaVault position, try the chain where the pool actually lives (e.g., a Base MetaVault may have positions on Avalanche via CCTP bridge).`;
           return { content: [{ type: "text" as const, text }], isError: true };
         }
 

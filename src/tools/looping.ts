@@ -5,7 +5,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, PROTOCOL_CONSTANTS, MORPHO_CHAIN_IDS, resolveNetwork } from "../config.js";
-import { fetchSpectra, findMorphoMarketForPt, fetchMorphoMarketHistory } from "../api.js";
+import { fetchSpectra, findMorphoMarketForPt, fetchMorphoMarketHistory, resolvePtFromPoolAddress } from "../api.js";
 import type { BorrowRateRisk } from "../types.js";
 import {
   formatPct,
@@ -92,11 +92,22 @@ discover the best looping opportunities across all chains with capital-aware siz
       // quote_trade() or scan_opportunities(capital_usd=...) for accurate sizing.
       try {
         const network = resolveNetwork(chain);
-        const data = await fetchSpectra(`/${network}/pt/${pt_address}`) as any;
-        const pt = parsePtResponse(data);
+        let effectivePtAddr = pt_address;
+        let data = await fetchSpectra(`/${network}/pt/${effectivePtAddr}`) as any;
+        let pt = parsePtResponse(data);
+
+        // If not found, the address might be a pool address — try resolving
+        if (!pt) {
+          const resolved = await resolvePtFromPoolAddress(chain, pt_address);
+          if (resolved) {
+            effectivePtAddr = resolved;
+            data = await fetchSpectra(`/${network}/pt/${effectivePtAddr}`) as any;
+            pt = parsePtResponse(data);
+          }
+        }
 
         if (!pt) {
-          const text = `No PT found at ${pt_address} on ${chain}`;
+          const text = `No PT found at ${pt_address} on ${chain}. If this is a pool address, use spectra_list_pools to find the PT address.`;
           return { content: [{ type: "text" as const, text }], isError: true };
         }
 

@@ -1935,6 +1935,30 @@ export async function fetchChainPoolAddresses(chain: string): Promise<Set<string
 }
 
 /**
+ * Resolve a Curve pool address to its PT address on a given chain.
+ * Uses the cached fetchChainPools() to avoid extra API calls.
+ * Returns null if no PT maps to this pool address (i.e., it was already a PT or invalid).
+ */
+export async function resolvePtFromPoolAddress(chain: string, poolAddress: string): Promise<string | null> {
+  try {
+    const pts = await fetchChainPools(resolveNetwork(chain));
+    const needle = poolAddress.toLowerCase();
+    for (const pt of pts) {
+      if (pt.pools) {
+        for (const pool of pt.pools) {
+          if (pool.address?.toLowerCase() === needle) {
+            return pt.address;
+          }
+        }
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Scan all chains for MetaVaults in parallel.
  * Returns all MetaVaults with their chain slug attached, plus any chains that failed.
  * Follows the same pattern as scanAllChainPools / scanAllPendleMarkets.

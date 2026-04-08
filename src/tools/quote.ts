@@ -10,7 +10,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork } from "../config.js";
-import { fetchSpectra, fetchCurveGetDy, amountToBigInt } from "../api.js";
+import { fetchSpectra, fetchCurveGetDy, amountToBigInt, resolvePtFromPoolAddress } from "../api.js";
 import type { TradeQuote } from "../types.js";
 import { parsePtResponse, buildQuoteFromPt, formatTradeQuote, formatPct, formatBalance } from "../formatters.js";
 
@@ -117,11 +117,22 @@ makes sense relative to variable rates.`,
     async ({ chain, pt_address, amount, side, slippage_tolerance }) => {
       try {
         const network = resolveNetwork(chain);
-        const data = await fetchSpectra(`/${network}/pt/${pt_address}`) as any;
-        const pt = parsePtResponse(data);
+        let effectivePtAddr = pt_address;
+        let data = await fetchSpectra(`/${network}/pt/${effectivePtAddr}`) as any;
+        let pt = parsePtResponse(data);
+
+        // If not found, the address might be a pool address — try resolving
+        if (!pt) {
+          const resolved = await resolvePtFromPoolAddress(chain, pt_address);
+          if (resolved) {
+            effectivePtAddr = resolved;
+            data = await fetchSpectra(`/${network}/pt/${effectivePtAddr}`) as any;
+            pt = parsePtResponse(data);
+          }
+        }
 
         if (!pt) {
-          const text = `No PT found at ${pt_address} on ${chain}`;
+          const text = `No PT found at ${pt_address} on ${chain}. If this is a pool address, use spectra_list_pools to find the PT address.`;
           return { content: [{ type: "text" as const, text }], isError: true };
         }
 
