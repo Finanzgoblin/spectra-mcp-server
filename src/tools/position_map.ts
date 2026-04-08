@@ -169,31 +169,33 @@ before "what should I do?"`,
         const pendleExpiring: string[] = [];
 
         if (pendleResult.status === "fulfilled") {
-          const positions = pendleResult.value;
-          if (Array.isArray(positions)) {
-            for (const pos of positions) {
-              if (!pos || typeof pos !== "object") continue;
-              const valUsd = pos.valuation?.usd || pos.valueUsd || 0;
-              if (valUsd === 0 && !pos.pt && !pos.yt && !pos.lp) continue;
-
-              pendlePositionCount++;
-              pendleTotalUsd += valUsd;
-
-              const maturity = pos.expiry ? daysToMaturity(pos.expiry) : null;
-              const isExpiring = maturity !== null && maturity > 0 && maturity <= 14;
-              const isExpired = maturity !== null && maturity <= 0;
-              let statusTag = "";
-              if (isExpired) statusTag = " [MATURED]";
-              else if (isExpiring) statusTag = ` [⚠ ${maturity}d]`;
-
-              pendleLines.push(`    ${pos.name || pos.symbol || "Pendle position"} — ${formatUsd(valUsd)}${statusTag}`);
-              if (isExpiring) pendleExpiring.push(`${pos.name} (${maturity}d)`);
-              if (isExpired) pendleExpiring.push(`${pos.name} (MATURED)`);
-            }
+          const { positions: pendlePositions, failedChains: pendleFailedChains } = pendleResult.value;
+          if (pendleFailedChains.length > 0) {
+            failures.push(`Pendle: ${pendleFailedChains.length} chain(s) failed (${pendleFailedChains.join(", ")})`);
           }
-          if (pendlePositionCount === 0) {
-            // Pendle portfolio API may be down (known dead endpoint)
-            failures.push("Pendle: portfolio endpoint may be unavailable (known limitation)");
+          for (const pos of pendlePositions) {
+            if (!pos || typeof pos !== "object") continue;
+            const valUsd = pos.totalValueUsd || 0;
+            if (valUsd === 0 && !pos.pt && !pos.yt && !pos.lp) continue;
+
+            pendlePositionCount++;
+            pendleTotalUsd += valUsd;
+
+            // pos.expiry is ISO string — convert to Unix seconds for daysToMaturity
+            const expiryTs = pos.expiry ? Math.floor(new Date(pos.expiry).getTime() / 1000) : 0;
+            const maturity = expiryTs > 0 ? daysToMaturity(expiryTs) : null;
+            const isExpiring = maturity !== null && maturity > 0 && maturity <= 14;
+            const isExpired = pos.isExpired || (maturity !== null && maturity <= 0);
+            let statusTag = "";
+            if (isExpired) statusTag = " [MATURED]";
+            else if (isExpiring) statusTag = ` [⚠ ${maturity}d]`;
+
+            pendleLines.push(`    ${pos.marketName || "Pendle position"} — ${formatUsd(valUsd)}${statusTag}`);
+            if (isExpiring) pendleExpiring.push(`${pos.marketName} (${maturity}d)`);
+            if (isExpired) pendleExpiring.push(`${pos.marketName} (MATURED)`);
+          }
+          if (pendlePositionCount === 0 && pendleFailedChains.length === 0) {
+            // No positions found and no chains failed — wallet genuinely has no Pendle positions
           }
         } else {
           failures.push("Pendle: portfolio fetch failed");

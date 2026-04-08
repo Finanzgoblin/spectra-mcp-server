@@ -22,7 +22,10 @@ interface GaugeResult {
   available: boolean;
 }
 
-/** Fetch pool addresses that have gauges from the governance API */
+/** Fetch pool addresses that have gauges from the governance API.
+ *  The endpoint returns GovernanceResponse[] (array of epochs), each containing
+ *  a .data array of GaugeEntry objects. Gauge pool addresses live in entry.data[].address.
+ */
 async function fetchGaugePoolAddresses(): Promise<GaugeResult> {
   try {
     const data = await fetchSpectra("/governance/voting-incentives");
@@ -30,8 +33,11 @@ async function fetchGaugePoolAddresses(): Promise<GaugeResult> {
       return { addrs: new Set(), available: false };
     }
     const addrs = new Set<string>();
-    for (const entry of data) {
-      if (entry.address) addrs.add(entry.address.toLowerCase());
+    for (const epoch of data) {
+      const gauges = epoch.data || [];
+      for (const gauge of gauges) {
+        if (gauge.address) addrs.add(gauge.address.toLowerCase());
+      }
     }
     return { addrs, available: true };
   } catch {
