@@ -56,7 +56,15 @@ Protocol context:
         const [portfolioResults, merklSettled, morphoAddressResults] = await Promise.all([
           Promise.allSettled(
             networks.map(async (net): Promise<Position[]> => {
-              const raw = await fetchSpectra(`/${net}/portfolio/${address}`) as any;
+              let raw: any;
+              try {
+                raw = await fetchSpectra(`/${net}/portfolio/${address}`) as any;
+              } catch (err: any) {
+                // Spectra API returns 500 "portfolioWithoutIbt is undefined" when wallet
+                // has no positions on a chain. This is an API bug, not a real failure.
+                if (err?.message?.includes("500")) return [];
+                throw err;
+              }
               const items = Array.isArray(raw) ? raw : raw?.data || [];
               return items.map((pos: SpectraPt) => ({ pos, chain: net }));
             })
