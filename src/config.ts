@@ -7,7 +7,7 @@
  *   MORPHO_GRAPHQL_URL  — Morpho GraphQL endpoint (default: https://api.morpho.org/graphql)
  *   PENDLE_API_URL      — Pendle API base (default: https://api-v2.pendle.finance/core)
  *   FETCH_TIMEOUT       — API timeout in ms (default: 15000)
- *   VE_SPECTRA_RPC_URL  — RPC for veSPECTRA reads (default: https://mainnet.base.org)
+ *   VE_SPECTRA_RPC_URL  — RPC for veSPECTRA reads (default: https://base-rpc.publicnode.com)
  */
 
 import { z } from "zod";
@@ -186,7 +186,7 @@ export const VE_SPECTRA = {
   address: process.env.VE_SPECTRA_ADDRESS || "0x6a89228055c7c28430692e342f149f37462b478b",
   implementation: "0x8a92294ffcfe469a3df4a85c76a0b0d2b3292119", // EIP-1967 proxy
   chainId: 8453, // Base
-  rpcUrl: process.env.VE_SPECTRA_RPC_URL || "https://mainnet.base.org",
+  rpcUrl: process.env.VE_SPECTRA_RPC_URL || "https://base-rpc.publicnode.com",
   selectors: {
     totalSupply: "0x18160ddd",          // totalSupply()
     balanceOf: "0x70a08231",            // balanceOf(address) → NFT count
@@ -238,7 +238,7 @@ export const VE_PENDLE = {
 // If a public RPC goes stale, try alternatives like Alchemy/Infura endpoints.
 export const CHAIN_RPC_URLS: Partial<Record<string, string>> = {
   mainnet:   "https://eth.llamarpc.com",
-  base:      "https://mainnet.base.org",
+  base:      "https://base-rpc.publicnode.com",
   arbitrum:  "https://arb1.arbitrum.io/rpc",
   optimism:  "https://mainnet.optimism.io",
   avalanche: "https://api.avax.network/ext/bc/C/rpc",
