@@ -3261,12 +3261,18 @@ export function formatMetavaultSummary(mv: SpectraMetavault, chain: string): str
       lines.push(`    ${formatDate(prev.timestamp)} → ${formatDate(curr.timestamp)} | ${arrow} ${sign}${formatUsd(Math.abs(deltaUsd))} net | TVL ${formatUsd(currAssets * underlyingPrice)} | Rate ${currRate.toFixed(6)}`);
     }
 
-    // Summary: total net flow
+    // Summary: total net flow — sum yield epoch-by-epoch using each epoch's actual TVL
     const firstAssets = Number(sorted[0].assets) / divisor;
     const lastAssets = Number(sorted[sorted.length - 1].assets) / divisor;
     const firstRate = Number(sorted[0].rate) / divisor;
     const lastRate = Number(sorted[sorted.length - 1].rate) / divisor;
-    const totalYield = firstAssets * (lastRate - firstRate) / firstRate;
+    let totalYield = 0;
+    for (let i = 1; i < sorted.length; i++) {
+      const pA = Number(sorted[i - 1].assets) / divisor;
+      const pR = Number(sorted[i - 1].rate) / divisor;
+      const cR = Number(sorted[i].rate) / divisor;
+      if (pR > 0) totalYield += pA * (cR - pR) / pR;
+    }
     const totalAssetDelta = lastAssets - firstAssets;
     const totalNetDeposits = totalAssetDelta - totalYield;
     const totalNetUsd = totalNetDeposits * underlyingPrice;
