@@ -237,7 +237,7 @@ export const VE_PENDLE = {
 // Used for best-effort on-chain queries (contract detection, etc).
 // If a public RPC goes stale, try alternatives like Alchemy/Infura endpoints.
 export const CHAIN_RPC_URLS: Partial<Record<string, string>> = {
-  mainnet:   "https://eth.llamarpc.com",
+  mainnet:   "https://ethereum-rpc.publicnode.com",
   base:      "https://base-rpc.publicnode.com",
   arbitrum:  "https://arb1.arbitrum.io/rpc",
   optimism:  "https://mainnet.optimism.io",
