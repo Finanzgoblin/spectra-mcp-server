@@ -49,7 +49,7 @@ export function formatUsd(val: number): string {
 }
 
 export function formatPct(val: number): string {
-  return `${val.toFixed(2)}%`;
+  return `${(val ?? 0).toFixed(2)}%`;
 }
 
 export function formatDate(timestamp: number): string {
@@ -487,7 +487,8 @@ export function formatPoolSummary(pt: SpectraPt, pool: SpectraPool, chain: strin
   const boosted = pool.lpApy?.details?.boostedRewards;
   if (boosted && Object.keys(boosted).length > 0) {
     for (const [token, range] of Object.entries(boosted)) {
-      lines.push(`    +-- ${token} Gauge: ${formatPct(range.min)} -> ${formatPct(range.max)} (with veSPECTRA boost)`);
+      if (range.min == null && range.max == null) continue; // skip gauges with no data
+      lines.push(`    +-- ${token} Gauge: ${formatPct(range.min ?? 0)} -> ${formatPct(range.max ?? 0)} (with veSPECTRA boost)`);
     }
   }
 
@@ -1952,12 +1953,19 @@ export function extractLpApyBreakdown(pool: SpectraPool, boostFraction: number =
   };
 } {
   const lp = pool.lpApy;
+  // Sanitize boostedRewards: API can return null for min/max on new gauges
+  const rawBoosted = lp?.details?.boostedRewards || {};
+  const safeBoosted: Record<string, { min: number; max: number }> = {};
+  for (const [token, range] of Object.entries(rawBoosted)) {
+    if (range.min == null && range.max == null) continue; // skip entirely null gauges
+    safeBoosted[token] = { min: range.min ?? 0, max: range.max ?? 0 };
+  }
   const breakdown = {
     fees: lp?.details?.fees || 0,
     pt: lp?.details?.pt || 0,
     ibt: lp?.details?.ibt || 0,
     rewards: lp?.details?.rewards || {},
-    boostedRewards: lp?.details?.boostedRewards || {},
+    boostedRewards: safeBoosted,
   };
   return {
     lpApy: lp?.total || 0,
@@ -3111,7 +3119,9 @@ export function formatMetavaultSummary(mv: SpectraMetavault, chain: string): str
     }
     if (apyDetails.boostedRewards && Object.keys(apyDetails.boostedRewards).length > 0) {
       for (const [token, range] of Object.entries(apyDetails.boostedRewards)) {
-        lines.push(`    +-- ${token} Gauge: ${formatPct(range.min)} -> ${formatPct(range.max)} (with veSPECTRA boost)`);
+        if (range.min == null && range.max == null) continue;
+        lines.push(`    +-- ${token} Gauge: ${formatPct(range.min ?? 0)} -> ${formatPct(range.max ?? 0)} (with veSPECTRA boost)`);
+
       }
     }
 
@@ -3198,7 +3208,8 @@ export function formatMetavaultSummary(mv: SpectraMetavault, chain: string): str
         }
         if (lpDetails.boostedRewards) {
           for (const [token, range] of Object.entries(lpDetails.boostedRewards)) {
-            parts.push(`${token} gauge ${formatPct(range.min)}-${formatPct(range.max)}`);
+            if (range.min == null && range.max == null) continue;
+            parts.push(`${token} gauge ${formatPct(range.min ?? 0)}-${formatPct(range.max ?? 0)}`);
           }
         }
         if (parts.length > 0) {
@@ -3759,7 +3770,8 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
     }
     if (opts.apyDetails.boostedRewards) {
       for (const [token, range] of Object.entries(opts.apyDetails.boostedRewards)) {
-        lines.push(`  ${token} Gauge: ${formatPct(range.min)} -> ${formatPct(range.max)}`);
+        if (range.min == null && range.max == null) continue;
+        lines.push(`  ${token} Gauge: ${formatPct(range.min ?? 0)} -> ${formatPct(range.max ?? 0)}`);
       }
     }
     lines.push(``);
@@ -4021,7 +4033,7 @@ export function formatPendleSpectraComparison(opts: {
   const pendleFees = pd.swapFeeApy * 100;
   row("  LP: Swap Fees",      formatPct(spectraFees),    formatPct(pendleFees),    formatPct(spectraFees - pendleFees));
   const spectraRewards = Object.values(spectraPool.lpApy?.details?.rewards || {}).reduce((a, b) => a + b, 0)
-    + Object.values(spectraPool.lpApy?.details?.boostedRewards || {}).reduce((a, r) => a + r.min, 0);
+    + Object.values(spectraPool.lpApy?.details?.boostedRewards || {}).reduce((a, r) => a + (r.min ?? 0), 0);
   const pendleIncentives = pd.pendleApy * 100;
   row("  LP: Incentives",     `${formatPct(spectraRewards)} SPECTRA`, `${formatPct(pendleIncentives)} PENDLE`, formatPct(spectraRewards - pendleIncentives));
   const spectraBoosted = spectraPool.lpApy?.boostedTotal || 0;

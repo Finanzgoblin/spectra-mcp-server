@@ -436,7 +436,8 @@ blended base APY and warns about manual Pendle rollover requirements.`,
               }
               if (apyDetails.boostedRewards && Object.keys(apyDetails.boostedRewards).length > 0) {
                 for (const [token, range] of Object.entries(apyDetails.boostedRewards)) {
-                  noteLines.push(`    ${token} Gauge: ${formatPct(range.min)} -> ${formatPct(range.max)}`);
+                  if (range.min == null && range.max == null) continue;
+                  noteLines.push(`    ${token} Gauge: ${formatPct(range.min ?? 0)} -> ${formatPct(range.max ?? 0)}`);
                 }
               }
 
