@@ -219,9 +219,10 @@ Use spectra_get_pool_activity to monitor recent trading patterns in the target p
           if (breakEvenDays > days) warnings.push("Break-even exceeds maturity");
 
           // Extract LP APY with gauge emissions (computed from real boost formula)
+          // Use pool liquidity (total AMM depth) for boost, not PT TVL
           let boostInfo: BoostInfo | undefined;
           if (ve_spectra_balance !== undefined && ve_spectra_balance > 0 && veTotalSupply !== null) {
-            boostInfo = computeSpectraBoost(ve_spectra_balance, veTotalSupply, tvlUsd, capital_usd);
+            boostInfo = computeSpectraBoost(ve_spectra_balance, veTotalSupply, poolLiqUsd || tvlUsd, capital_usd);
           }
           const lpData = extractLpApyBreakdown(pool, boostInfo?.boostFraction ?? 0);
 

@@ -106,24 +106,28 @@ pool at a given deposit size.`,
             const pt = parsePtResponse(ptData);
             const pool = pt?.pools?.[0];
             const tvlUsd = pt?.tvl?.usd || 0;
+            // Use pool liquidity (total AMM depth) for boost, not PT TVL —
+            // the gauge boost formula uses the user's share of the pool
+            const poolLiqUsd = pool?.liquidity?.usd || 0;
+            const boostDenominator = poolLiqUsd || tvlUsd;
 
-            if (pt && pool && tvlUsd > 0) {
+            if (pt && pool && boostDenominator > 0) {
               const boost = computeSpectraBoost(
-                ve_spectra_balance, veTotalSupply, tvlUsd, capital_usd
+                ve_spectra_balance, veTotalSupply, boostDenominator, capital_usd
               );
               computedBoost = boost;
               const { multiplier, boostFraction } = boost;
 
               lines.push(``);
               lines.push(`  Pool: ${pt.name}`);
-              lines.push(`  Pool TVL: ${formatUsd(tvlUsd)}`);
+              lines.push(`  Pool Liquidity: ${formatUsd(boostDenominator)}`);
               lines.push(`  Your Deposit: ${formatUsd(capital_usd)}`);
               lines.push(`  Your Boost: ${multiplier.toFixed(2)}x`);
               lines.push(`  Boost Utilization: ${formatPct(boostFraction * 100)}`);
 
               // Compute veSPECTRA needed for full 2.5x boost
               // Full boost when v/V >= d/D, so v >= V * d/D
-              const neededForMax = veTotalSupply * (capital_usd / tvlUsd);
+              const neededForMax = veTotalSupply * (capital_usd / boostDenominator);
               lines.push(``);
               if (ve_spectra_balance >= neededForMax) {
                 lines.push(`  You have FULL 2.5x boost in this pool at this deposit size.`);

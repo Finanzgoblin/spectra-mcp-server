@@ -533,15 +533,18 @@ check your current positions. Use spectra_scan_opportunities for multi-chain com
         const spread = fixedApy - variableApr;
         const maturityDays = daysToMaturity(pt.maturity);
         const tvlUsd = pt.tvl?.usd || 0;
+        const poolLiqUsd = pool.liquidity?.usd || 0;
 
         // Compute real boost if veSPECTRA balance provided
+        // Use pool liquidity (total AMM depth), not PT TVL — the gauge boost formula
+        // uses the user's share of the pool, which is pool.liquidity, not pt.tvl
         let boostInfo: { multiplier: number; boostFraction: number } | undefined;
         let veTotalSupply: number | null = null;
         let veDataAvailable = true;
         if (ve_spectra_balance !== undefined && ve_spectra_balance > 0) {
           try {
             veTotalSupply = await fetchVeTotalSupply();
-            boostInfo = computeSpectraBoost(ve_spectra_balance, veTotalSupply, tvlUsd, capital_usd);
+            boostInfo = computeSpectraBoost(ve_spectra_balance, veTotalSupply, poolLiqUsd || tvlUsd, capital_usd);
           } catch {
             veDataAvailable = false;
             // Degrade gracefully if RPC fails
@@ -562,7 +565,6 @@ check your current positions. Use spectra_scan_opportunities for multi-chain com
         }
 
         // Entry cost at agent's capital size
-        const poolLiqUsd = pool.liquidity?.usd || 0;
         const impactFrac = estimatePriceImpact(capital_usd, poolLiqUsd);
         const impactPct = impactFrac * 100;
         const annualizedEntryCost = maturityDays > 0
@@ -618,8 +620,8 @@ check your current positions. Use spectra_scan_opportunities for multi-chain com
         if (boostInfo && boostInfo.multiplier > 1) {
           lines.push(`  LP (Your ${boostInfo.multiplier.toFixed(2)}x Boost at ${formatUsd(capital_usd)} deposit): ${formatPct(lpData.lpApyAtBoost)} APY`);
           // Show how much veSPECTRA needed for full boost
-          if (tvlUsd > 0 && ve_spectra_balance !== undefined && veTotalSupply !== null) {
-            const neededForMax = veTotalSupply * (capital_usd / tvlUsd);
+          if ((poolLiqUsd || tvlUsd) > 0 && ve_spectra_balance !== undefined && veTotalSupply !== null) {
+            const neededForMax = veTotalSupply * (capital_usd / (poolLiqUsd || tvlUsd));
             if (ve_spectra_balance < neededForMax) {
               lines.push(`  Full 2.5x boost requires: ${neededForMax.toLocaleString("en-US", { maximumFractionDigits: 0 })} veSPECTRA at this deposit size`);
             } else {
