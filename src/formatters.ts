@@ -3065,6 +3065,7 @@ export function formatMetavaultSummary(
   merklByPool?: Map<string, MerklCampaign[]>,
   vaultMerklRewards?: Array<{ symbol: string; amount: number }>,
   merklWarnings?: string[],
+  pendleEnrichment?: CuratorDashboardOpts["pendleEnrichment"],
 ): string {
   const lines: string[] = [];
 
@@ -3221,6 +3222,21 @@ export function formatMetavaultSummary(
         }
         if (parts.length > 0) {
           lines.push(`      LP: ${parts.join(" + ")}`);
+        }
+      }
+
+      // Pendle enrichment
+      if (pendleEnrichment && pool?.address) {
+        const pd = pendleEnrichment.get(pool.address.toLowerCase());
+        if (pd) {
+          const pParts: string[] = [];
+          if (pd.swapFeeApy > 0) pParts.push(`fees ${formatPct(pd.swapFeeApy)}`);
+          if (pd.pendleApy > 0) pParts.push(`PENDLE ${formatPct(pd.pendleApy)}`);
+          const baseApy = pd.aggregatedApy - pd.pendleApy;
+          if (baseApy > 0) pParts.push(`base ${formatPct(baseApy)}`);
+          if (pParts.length > 0) {
+            lines.push(`      Pendle LP: ${pParts.join(" + ")} | Liq ${formatUsd(pd.liquidity)} | Vol ${formatUsd(pd.volume)}/24h`);
+          }
         }
       }
 
@@ -3783,6 +3799,13 @@ export interface CuratorDashboardOpts {
   merklByPool?: Map<string, MerklCampaign[]>;
   vaultMerklRewards?: Array<{ symbol: string; amount: number }>;
   merklWarnings?: string[];
+
+  // Pendle enrichment (optional, for Pendle positions)
+  pendleEnrichment?: Map<string, {
+    swapFeeApy: number; pendleApy: number; impliedApy: number;
+    aggregatedApy: number; maxBoostedApy: number;
+    liquidity: number; tvl: number; volume: number;
+  }>;
 }
 
 export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
@@ -3862,6 +3885,24 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
       const protocolTag = `[${pos.protocol}]`;
       lines.push(`  ${protocolTag} ${pos.symbol} | ${matLabel}${urgencyFlag} | ${allocationStr} | PT APY ${formatPct(pos.ptApy)} | LP APY ${formatPct(pos.lpApyTotal)}${pos.lpApyBoostedTotal && pos.lpApyBoostedTotal > pos.lpApyTotal ? ` (boost: ${formatPct(pos.lpApyBoostedTotal)})` : ""}`);
       lines.push(`    PT: ${pos.ptAddress}${pos.poolAddress ? ` | Pool: ${pos.poolAddress}` : ""}`);
+
+      // Pendle enrichment for Pendle positions — LP breakdown, incentives, liquidity
+      if (opts.pendleEnrichment && pos.poolAddress) {
+        const pd = opts.pendleEnrichment.get(pos.poolAddress.toLowerCase());
+        if (pd) {
+          const parts: string[] = [];
+          if (pd.swapFeeApy > 0) parts.push(`fees ${formatPct(pd.swapFeeApy)}`);
+          if (pd.pendleApy > 0) parts.push(`PENDLE ${formatPct(pd.pendleApy)}`);
+          const baseApy = pd.aggregatedApy - pd.pendleApy;
+          if (baseApy > 0) parts.push(`base ${formatPct(baseApy)}`);
+          if (parts.length > 0) {
+            lines.push(`    Pendle LP: ${parts.join(" + ")} | Liq ${formatUsd(pd.liquidity)} | Vol ${formatUsd(pd.volume)}/24h`);
+          }
+          if (pd.maxBoostedApy > pd.aggregatedApy) {
+            lines.push(`    Pendle LP (Max vePENDLE Boost): ${formatPct(pd.maxBoostedApy)}`);
+          }
+        }
+      }
 
       // Merkl campaigns for this position's pool
       if (opts.merklByPool && pos.poolAddress) {

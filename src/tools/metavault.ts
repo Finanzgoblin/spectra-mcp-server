@@ -40,8 +40,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { MetavaultLoopRow, MetavaultCuratorEconomics, MetavaultPerformanceMetrics, SpectraMetavault, SpectraMetavaultEpoch } from "../types.js";
-import { CHAIN_ENUM, EVM_ADDRESS } from "../config.js";
-import { fetchMetavaults, scanAllMetavaults, fetchChainPoolAddresses, fetchMerklCampaigns } from "../api.js";
+import { CHAIN_ENUM, EVM_ADDRESS, SUPPORTED_CHAINS } from "../config.js";
+import { fetchMetavaults, scanAllMetavaults, fetchChainPoolAddresses, fetchMerklCampaigns, fetchPendleMarketDetail, lookupMerklCampaigns, fetchMerkl, parseMerklRewards } from "../api.js";
 import type { MerklCampaign } from "../types.js";
 import {
   formatPct,
@@ -728,6 +728,55 @@ Use spectra_get_address_activity on the curator's EOA for cross-pool curator act
           };
         });
 
+        // Shared warnings array for Merkl + Pendle enrichment (non-silent failure)
+        const dashMerklWarnings: string[] = [];
+
+        // ── Pendle enrichment for Pendle positions ──────────────
+        // Fetch full Pendle market data for positions tagged as Pendle.
+        // This surfaces PENDLE incentives, LP APY breakdown, liquidity, and volume
+        // that the Spectra API doesn't carry for cross-protocol positions.
+        const pendleEnrichment = new Map<string, { swapFeeApy: number; pendleApy: number; impliedApy: number; aggregatedApy: number; maxBoostedApy: number; liquidity: number; tvl: number; volume: number }>();
+        const pendlePositions = positions.filter(p => p.protocol === "Pendle" && p.poolAddress);
+        if (pendlePositions.length > 0) {
+          const pendleResults = await Promise.allSettled(
+            pendlePositions.map(async (pos) => {
+              // Resolve position chain for Pendle API call
+              const posChainEntry = Object.entries(SUPPORTED_CHAINS).find(([, v]) => {
+                const posObj = (mv.positions || []).find(p => p.address === pos.ptAddress);
+                return posObj?.chainId === v.id || posObj?.pools?.[0]?.chainId === v.id;
+              });
+              const posChain = posChainEntry?.[0] || chain;
+              const market = await fetchPendleMarketDetail(posChain, pos.poolAddress!);
+              if (market) {
+                return { poolAddress: pos.poolAddress!, detail: market.details };
+              }
+              return null;
+            })
+          );
+          for (let pi = 0; pi < pendleResults.length; pi++) {
+            const r = pendleResults[pi];
+            if (r.status === "fulfilled" && r.value) {
+              const d = r.value.detail;
+              pendleEnrichment.set(r.value.poolAddress.toLowerCase(), {
+                swapFeeApy: d.swapFeeApy * 100,
+                pendleApy: d.pendleApy * 100,
+                impliedApy: d.impliedApy * 100,
+                aggregatedApy: d.aggregatedApy * 100,
+                maxBoostedApy: d.maxBoostedApy * 100,
+                liquidity: d.liquidity,
+                tvl: d.totalTvl,
+                volume: d.tradingVolume,
+              });
+            } else {
+              // Non-silent: log failed Pendle enrichment
+              const failedPos = pendlePositions[pi];
+              const reason = r.status === "rejected" ? r.reason?.message?.slice(0, 80) : "null response";
+              console.error(`[Pendle enrichment] failed for ${failedPos?.symbol || failedPos?.poolAddress}: ${reason}`);
+              dashMerklWarnings.push(`⚠ Pendle data unavailable for ${failedPos?.symbol || "position"} — LP breakdown incomplete`);
+            }
+          }
+        }
+
         // ── Epoch flow analysis ────────────────────────────────
         const epochFlows: CuratorDashboardOpts["epochFlows"] = [];
         let lifetimeNetFlowUsd = 0;
@@ -864,11 +913,10 @@ Use spectra_get_address_activity on the curator's EOA for cross-pool curator act
           if (cid) posChainIds.add(cid);
         }
         // Also include the vault's home chain
-        const homeChainId = (await import("../config.js")).SUPPORTED_CHAINS[chain]?.id;
+        const homeChainId = SUPPORTED_CHAINS[chain]?.id;
         if (homeChainId) posChainIds.add(homeChainId);
 
         const merklCampaignMaps = new Map<number, Map<string, MerklCampaign[]>>();
-        const dashMerklWarnings: string[] = [];
         const merklCampResults = await Promise.allSettled(
           [...posChainIds].map(async (chainId) => {
             const result = await fetchMerklCampaigns(chainId).catch(() => ({
@@ -895,7 +943,6 @@ Use spectra_get_address_activity on the curator's EOA for cross-pool curator act
           if (posChainId && pool?.address) {
             const chainMap = merklCampaignMaps.get(posChainId);
             if (chainMap) {
-              const { lookupMerklCampaigns } = await import("../api.js");
               const campaigns = lookupMerklCampaigns(chainMap, [pool.address]);
               if (campaigns.length > 0) {
                 dashMerklByPool.set(pool.address.toLowerCase(), campaigns);
@@ -905,7 +952,6 @@ Use spectra_get_address_activity on the curator's EOA for cross-pool curator act
         }
 
         // Fetch unclaimed Merkl rewards for the vault address on each position chain
-        const { fetchMerkl, parseMerklRewards } = await import("../api.js");
         const poolAddressSet = new Set(
           (mv.positions || [])
             .map(p => p.pools?.[0]?.address?.toLowerCase())
@@ -977,6 +1023,7 @@ Use spectra_get_address_activity on the curator's EOA for cross-pool curator act
           merklByPool: dashMerklByPool.size > 0 ? dashMerklByPool : undefined,
           vaultMerklRewards: vaultMerklRewards.length > 0 ? vaultMerklRewards : undefined,
           merklWarnings: dashMerklWarnings.length > 0 ? dashMerklWarnings : undefined,
+          pendleEnrichment: pendleEnrichment.size > 0 ? pendleEnrichment : undefined,
         };
 
         let text = formatCuratorDashboard(dashOpts);
