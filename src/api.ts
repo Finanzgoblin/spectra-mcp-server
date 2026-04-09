@@ -20,6 +20,7 @@ import {
   VE_PENDLE,
   CHAIN_RPC_URLS,
   MAX_LOG_BLOCK_RANGE,
+  resolveRpcUrlsWithFallbacks,
 } from "./config.js";
 import type { MorphoMarket, MorphoMarketSupplier, MorphoVault, MorphoVaultAllocation, MorphoHistoricalDataPoint, SpectraPt, SpectraPool, SpectraMetavault, PendleMarket, RawPoolOpportunity, ChainScanResult, MerklTokenReward, MerklChainRewards, MerklCampaign, LiquidationAlert, RiskAlertLevel } from "./types.js";
 
@@ -1132,7 +1133,32 @@ export async function fetchSpectraPtAddresses(): Promise<Set<string>> {
 }
 
 // =============================================================================
-// veSPECTRA On-Chain Reads (Base RPC)
+// RPC Call with Fallback
+// =============================================================================
+// Tries an async operation across a list of RPC URLs. On failure (429, timeout,
+// RPC error), retries with the next URL. For multi-call sequences (like
+// fetchVeBalance's 2N+1 calls), the ENTIRE sequence is retried on a new RPC
+// to avoid cross-RPC inconsistency.
+
+async function withRpcFallback<T>(
+  rpcs: string[],
+  operation: (rpcUrl: string) => Promise<T>,
+  label: string,
+): Promise<T> {
+  let lastError: Error | null = null;
+  for (const rpc of rpcs) {
+    try {
+      return await operation(rpc);
+    } catch (e: any) {
+      lastError = e;
+      // Continue to next RPC on any error (429, timeout, parse error, etc.)
+    }
+  }
+  throw lastError || new Error(`${label}: all ${rpcs.length} RPCs failed`);
+}
+
+// =============================================================================
+// veSPECTRA On-Chain Reads (Base RPC with fallback)
 // =============================================================================
 
 // Cache: totalSupply changes slowly (locks/unlocks), 5-minute TTL is reasonable.
@@ -1159,48 +1185,28 @@ export async function fetchVeTotalSupply(): Promise<number> {
 
   _veTotalSupplyInflight = (async () => {
     try {
-      const res = await fetchWithRetry(() =>
-        fetch(VE_SPECTRA.rpcUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: 1,
-            method: "eth_call",
-            params: [
-              { to: VE_SPECTRA.address, data: VE_SPECTRA.selectors.totalSupply },
-              "latest",
-            ],
-          }),
-          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-        })
-      );
-
-      if (!res.ok) {
-        throw new Error(`Base RPC error: ${res.status} ${res.statusText}`);
-      }
-
-      let json: any;
-      try {
-        json = await res.json();
-      } catch {
-        throw new Error("Base RPC returned invalid JSON");
-      }
-      if (json.error) {
-        throw new Error(`Base RPC error: ${json.error.message || JSON.stringify(json.error)}`);
-      }
-
-      const hex: string = json.result;
-      if (!hex || hex === "0x") {
-        throw new Error("veSPECTRA totalSupply returned empty");
-      }
-
-      // Parse hex -> BigInt -> Number (divide by 10^decimals)
-      const raw = BigInt(hex);
-      const divisor = 10n ** BigInt(VE_SPECTRA.decimals);
-      const intPart = raw / divisor;
-      const fracPart = raw % divisor;
-      const value = Number(intPart) + Number(fracPart) / Number(divisor);
+      const rpcs = resolveRpcUrlsWithFallbacks("base", process.env.VE_SPECTRA_RPC_URL);
+      const value = await withRpcFallback(rpcs, async (rpcUrl) => {
+        const res = await fetchWithRetry(() =>
+          fetch(rpcUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0", id: 1, method: "eth_call",
+              params: [{ to: VE_SPECTRA.address, data: VE_SPECTRA.selectors.totalSupply }, "latest"],
+            }),
+            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+          })
+        );
+        if (!res.ok) throw new Error(`Base RPC error: ${res.status} ${res.statusText}`);
+        const json = await res.json() as any;
+        if (json.error) throw new Error(json.error.message || "RPC error");
+        const hex: string = json.result;
+        if (!hex || hex === "0x") throw new Error("veSPECTRA totalSupply returned empty");
+        const raw = BigInt(hex);
+        const divisor = 10n ** BigInt(VE_SPECTRA.decimals);
+        return Number(raw / divisor) + Number(raw % divisor) / Number(divisor);
+      }, "veSPECTRA totalSupply");
 
       _veTotalSupplyCache = { value, expiresAt: Date.now() + VE_CACHE_TTL_MS };
       return value;
@@ -1235,59 +1241,51 @@ export async function fetchVeBalance(walletAddress: string): Promise<{
 }> {
   const addr = walletAddress.toLowerCase().replace("0x", "");
   const paddedAddr = "000000000000000000000000" + addr;
+  const rpcs = resolveRpcUrlsWithFallbacks("base", process.env.VE_SPECTRA_RPC_URL);
 
-  // Helper: make a single eth_call to the veSPECTRA contract
-  async function veCall(data: string): Promise<string> {
-    const res = await fetchWithRetry(() =>
-      fetch(VE_SPECTRA.rpcUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0", id: 1, method: "eth_call",
-          params: [{ to: VE_SPECTRA.address, data }, "latest"],
-        }),
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      })
-    );
-    const json = await res.json() as any;
-    if (json.error) throw new Error(json.error.message || "RPC error");
-    return json.result || "0x0";
-  }
+  // Entire 2N+1 call sequence retries on a new RPC (Breaker finding:
+  // call-by-call fallback produces inconsistent data across RPCs)
+  return withRpcFallback(rpcs, async (rpcUrl) => {
+    async function veCall(data: string): Promise<string> {
+      const res = await fetchWithRetry(() =>
+        fetch(rpcUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0", id: 1, method: "eth_call",
+            params: [{ to: VE_SPECTRA.address, data }, "latest"],
+          }),
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        })
+      );
+      const json = await res.json() as any;
+      if (json.error) throw new Error(json.error.message || "RPC error");
+      return json.result || "0x0";
+    }
 
-  // Step 1: How many veNFTs does this wallet own?
-  const countHex = await veCall(VE_SPECTRA.selectors.balanceOf + paddedAddr);
-  const nftCount = Number(BigInt(countHex));
+    const countHex = await veCall(VE_SPECTRA.selectors.balanceOf + paddedAddr);
+    const nftCount = Number(BigInt(countHex));
+    if (nftCount === 0) return { votingPower: 0, nftCount: 0, nfts: [] };
 
-  if (nftCount === 0) {
-    return { votingPower: 0, nftCount: 0, nfts: [] };
-  }
+    const divisor = 10n ** BigInt(VE_SPECTRA.decimals);
+    const nfts: Array<{ tokenId: string; votingPower: number }> = [];
 
-  // Step 2+3: For each NFT, get tokenId then voting power
-  const divisor = 10n ** BigInt(VE_SPECTRA.decimals);
-  const nfts: Array<{ tokenId: string; votingPower: number }> = [];
+    for (let i = 0; i < nftCount && i < 20; i++) {
+      const indexHex = i.toString(16).padStart(64, "0");
+      const tokenIdHex = await veCall(
+        VE_SPECTRA.selectors.ownerToNFTokenIdList + paddedAddr + indexHex
+      );
+      const tokenId = BigInt(tokenIdHex);
+      const tokenIdPadded = tokenId.toString(16).padStart(64, "0");
+      const powerHex = await veCall(VE_SPECTRA.selectors.balanceOfNFT + tokenIdPadded);
+      const powerRaw = BigInt(powerHex);
+      const power = Number(powerRaw / divisor) + Number(powerRaw % divisor) / Number(divisor);
+      nfts.push({ tokenId: tokenId.toString(), votingPower: power });
+    }
 
-  for (let i = 0; i < nftCount && i < 20; i++) { // cap at 20 NFTs to prevent abuse
-    const indexHex = i.toString(16).padStart(64, "0");
-
-    // ownerToNFTokenIdList(address, index)
-    const tokenIdHex = await veCall(
-      VE_SPECTRA.selectors.ownerToNFTokenIdList + paddedAddr + indexHex
-    );
-    const tokenId = BigInt(tokenIdHex);
-
-    // balanceOfNFT(tokenId)
-    const tokenIdPadded = tokenId.toString(16).padStart(64, "0");
-    const powerHex = await veCall(
-      VE_SPECTRA.selectors.balanceOfNFT + tokenIdPadded
-    );
-    const powerRaw = BigInt(powerHex);
-    const power = Number(powerRaw / divisor) + Number(powerRaw % divisor) / Number(divisor);
-
-    nfts.push({ tokenId: tokenId.toString(), votingPower: power });
-  }
-
-  const totalPower = nfts.reduce((sum, n) => sum + n.votingPower, 0);
-  return { votingPower: totalPower, nftCount, nfts };
+    const totalPower = nfts.reduce((sum, n) => sum + n.votingPower, 0);
+    return { votingPower: totalPower, nftCount, nfts };
+  }, "veSPECTRA balance");
 }
 
 // =============================================================================
@@ -1314,26 +1312,28 @@ export async function fetchVePendleTotalSupply(): Promise<number> {
 
   _vePendleTotalSupplyInflight = (async () => {
     try {
-      const res = await fetchWithRetry(() =>
-        fetch(VE_PENDLE.rpcUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            jsonrpc: "2.0", id: 1, method: "eth_call",
-            params: [{ to: VE_PENDLE.address, data: VE_PENDLE.selectors.totalSupply }, "latest"],
-          }),
-          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-        })
-      );
-      if (!res.ok) throw new Error(`Ethereum RPC error: ${res.status}`);
-      const json = await res.json() as any;
-      if (json.error) throw new Error(json.error.message || "RPC error");
-      const hex: string = json.result;
-      if (!hex || hex === "0x") throw new Error("vePENDLE totalSupply returned empty");
-
-      const raw = BigInt(hex);
-      const divisor = 10n ** BigInt(VE_PENDLE.decimals);
-      const value = Number(raw / divisor) + Number(raw % divisor) / Number(divisor);
+      const rpcs = resolveRpcUrlsWithFallbacks("mainnet", process.env.VE_PENDLE_RPC_URL);
+      const value = await withRpcFallback(rpcs, async (rpcUrl) => {
+        const res = await fetchWithRetry(() =>
+          fetch(rpcUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0", id: 1, method: "eth_call",
+              params: [{ to: VE_PENDLE.address, data: VE_PENDLE.selectors.totalSupply }, "latest"],
+            }),
+            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+          })
+        );
+        if (!res.ok) throw new Error(`Ethereum RPC error: ${res.status}`);
+        const json = await res.json() as any;
+        if (json.error) throw new Error(json.error.message || "RPC error");
+        const hex: string = json.result;
+        if (!hex || hex === "0x") throw new Error("vePENDLE totalSupply returned empty");
+        const raw = BigInt(hex);
+        const divisor = 10n ** BigInt(VE_PENDLE.decimals);
+        return Number(raw / divisor) + Number(raw % divisor) / Number(divisor);
+      }, "vePENDLE totalSupply");
 
       _vePendleTotalSupplyCache = { value, expiresAt: Date.now() + VE_CACHE_TTL_MS };
       return value;
@@ -1363,49 +1363,47 @@ export async function fetchVePendleBalance(walletAddress: string): Promise<{
 }> {
   const addr = walletAddress.toLowerCase().replace("0x", "");
   const paddedAddr = "000000000000000000000000" + addr;
+  const rpcs = resolveRpcUrlsWithFallbacks("mainnet", process.env.VE_PENDLE_RPC_URL);
 
-  async function veCall(data: string): Promise<string> {
-    const res = await fetchWithRetry(() =>
-      fetch(VE_PENDLE.rpcUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0", id: 1, method: "eth_call",
-          params: [{ to: VE_PENDLE.address, data }, "latest"],
-        }),
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      })
-    );
-    const json = await res.json() as any;
-    if (json.error) throw new Error(json.error.message || "RPC error");
-    return json.result || "0x0";
-  }
-
-  const divisor = 10n ** BigInt(VE_PENDLE.decimals);
-
-  // One call for voting power — the beauty of standard ve-tokens
-  const powerHex = await veCall(VE_PENDLE.selectors.balanceOf + paddedAddr);
-  const powerRaw = BigInt(powerHex);
-  const votingPower = Number(powerRaw / divisor) + Number(powerRaw % divisor) / Number(divisor);
-
-  // Try to get lock info via positionData(address) → (uint128 amount, uint128 expiry)
-  // The selector for positionData(address) is 0xb6b55f25 but may vary — graceful fallback
-  let lockedAmount = 0;
-  let lockExpiry = 0;
-  try {
-    // positionData uses the same address encoding
-    const posHex = await veCall("0xb6b55f25" + paddedAddr);
-    if (posHex && posHex.length >= 130) { // 0x + 64 chars (amount) + 64 chars (expiry)
-      const amountRaw = BigInt("0x" + posHex.slice(2, 66));
-      const expiryRaw = BigInt("0x" + posHex.slice(66, 130));
-      lockedAmount = Number(amountRaw / divisor) + Number(amountRaw % divisor) / Number(divisor);
-      lockExpiry = Number(expiryRaw);
+  return withRpcFallback(rpcs, async (rpcUrl) => {
+    async function veCall(data: string): Promise<string> {
+      const res = await fetchWithRetry(() =>
+        fetch(rpcUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0", id: 1, method: "eth_call",
+            params: [{ to: VE_PENDLE.address, data }, "latest"],
+          }),
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        })
+      );
+      const json = await res.json() as any;
+      if (json.error) throw new Error(json.error.message || "RPC error");
+      return json.result || "0x0";
     }
-  } catch {
-    // positionData selector may be wrong — voting power still valid
-  }
 
-  return { votingPower, lockedAmount, lockExpiry };
+    const divisor = 10n ** BigInt(VE_PENDLE.decimals);
+    const powerHex = await veCall(VE_PENDLE.selectors.balanceOf + paddedAddr);
+    const powerRaw = BigInt(powerHex);
+    const votingPower = Number(powerRaw / divisor) + Number(powerRaw % divisor) / Number(divisor);
+
+    let lockedAmount = 0;
+    let lockExpiry = 0;
+    try {
+      const posHex = await veCall("0xb6b55f25" + paddedAddr);
+      if (posHex && posHex.length >= 130) {
+        const amountRaw = BigInt("0x" + posHex.slice(2, 66));
+        const expiryRaw = BigInt("0x" + posHex.slice(66, 130));
+        lockedAmount = Number(amountRaw / divisor) + Number(amountRaw % divisor) / Number(divisor);
+        lockExpiry = Number(expiryRaw);
+      }
+    } catch {
+      // positionData selector may be wrong — voting power still valid
+    }
+
+    return { votingPower, lockedAmount, lockExpiry };
+  }, "vePENDLE balance");
 }
 
 // =============================================================================

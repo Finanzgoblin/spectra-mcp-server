@@ -203,6 +203,19 @@ Use spectra_list_expiring_pools to check gauge status for expiring pools.`,
         } else if (topVotesPct > 0) {
           lines.push(`  Top 3 gauges: ${formatPct(topVotesPct)} of votes — ${topVotesPct < 30 ? "distributed" : "moderately concentrated"}`);
         }
+
+        // Merkl coverage metric — quick pre-pass over all gauges with emissions
+        const gaugesWithEmissions = gauges.filter(g => (g.lpIncentives?.value || 0) > 0);
+        if (gaugesWithEmissions.length > 0) {
+          let coveredCount = 0;
+          for (const g of gaugesWithEmissions) {
+            const chainMap = merklMaps.get(g.chainId);
+            if (!chainMap || merklAvailability.get(g.chainId) === false) continue;
+            const exact = lookupMerklCampaigns(chainMap, [g.address]);
+            if (exact.length > 0) coveredCount++;
+          }
+          lines.push(`  Merkl coverage: ${coveredCount}/${gaugesWithEmissions.length} gauges with active campaigns (${Math.round(coveredCount / gaugesWithEmissions.length * 100)}%)`);
+        }
         lines.push(``);
 
         // Per-gauge detail

@@ -12,7 +12,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, SUPPORTED_CHAINS } from "../config.js";
-import { scanAllChainPools, fetchSpectra } from "../api.js";
+import { scanAllChainPools, fetchSpectra, fetchMerklCampaigns, lookupMerklCampaigns } from "../api.js";
+import type { MerklCampaign } from "../types.js";
 import { formatDate, daysToMaturity, formatPct, formatUsd } from "../formatters.js";
 import type { RawPoolOpportunity } from "../types.js";
 
@@ -95,10 +96,11 @@ function urgencyIcon(days: number): string {
   return "!";
 }
 
-/** Assess transition readiness: successor pool + gauge + timing */
+/** Assess transition readiness: successor pool + gauge + Merkl campaign + timing */
 function assessReadiness(
   p: ExpiringPool,
-  succs: SuccessorPool[]
+  succs: SuccessorPool[],
+  merklMap?: Map<string, MerklCampaign[]>,
 ): ReadinessSignal {
   const messages: string[] = [];
   let level: "OK" | "CAUTION" | "WARNING" = "OK";
@@ -129,6 +131,17 @@ function assessReadiness(
     messages.push(
       `Successor ${s.name} — gauge status unknown (governance API unavailable), verify manually`
     );
+  }
+
+  // Merkl campaign check — gauge without Merkl means emissions don't reach LPs
+  if (s.hasGauge === true && merklMap) {
+    const campaigns = lookupMerklCampaigns(merklMap, [s.poolAddress]);
+    if (campaigns.length === 0) {
+      if (level !== "WARNING") level = "CAUTION";
+      messages.push(
+        `Successor has gauge but no Merkl campaign at ${s.poolAddress.slice(0, 10)}... — emissions allocated but not distributed to LPs`
+      );
+    }
   }
 
   // Successor has very low TVL (< $1K) — not seeded yet
@@ -328,13 +341,30 @@ Use spectra_list_pools to check if a successor pool has already been created.`,
         );
         const alert = expiring.filter((p) => p.daysLeft > 14);
 
+        // Fetch Merkl campaigns for readiness assessment (best-effort, parallel)
+        const expiringChains = [...new Set(expiring.map(p => p.chain))];
+        const merklByChain = new Map<string, Map<string, MerklCampaign[]>>();
+        const merklFetches = await Promise.allSettled(
+          expiringChains.map(async (ch) => {
+            const chainId = SUPPORTED_CHAINS[ch]?.id;
+            if (!chainId) return null;
+            const result = await fetchMerklCampaigns(chainId).catch(() => null);
+            if (result?.available) merklByChain.set(ch, result.campaigns);
+            return null;
+          })
+        );
+
         // Readiness counts
         let okCount = 0;
         let cautionCount = 0;
         let warningCount = 0;
         const poolReadiness = new Map<string, ReadinessSignal>();
         for (const p of expiring) {
-          const r = assessReadiness(p, getSuccessors(p));
+          const succs = getSuccessors(p);
+          // Pass Merkl map for the successor's chain (successor may be on same chain)
+          const succChain = succs[0]?.chain;
+          const merklMap = succChain ? merklByChain.get(succChain) : undefined;
+          const r = assessReadiness(p, succs, merklMap);
           poolReadiness.set(p.ptAddress, r);
           if (r.level === "OK") okCount++;
           else if (r.level === "CAUTION") cautionCount++;
