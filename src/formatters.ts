@@ -4,6 +4,7 @@
 
 import type { SpectraPt, SpectraPool, SpectraMetavault, SpectraMetavaultPosition, MorphoMarket, MorphoVault, MorphoVaultAllocation, MorphoMarketSupplier, PendleMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavaultBridgeTx, MerklTokenReward, CrossProtocolMatch, CuratorOpportunity, MerklCampaign, MorphoUserPositions, MorphoHistoricalAnalysis, MorphoRateStats, MorphoPublicAllocatorLiquidity, CuratorRiskSummary, LiquidationAlert, RiskAlertLevel } from "./types.js";
 import { SUPPORTED_CHAINS } from "./config.js";
+import { lookupMerklCampaigns } from "./api.js";
 
 // =============================================================================
 // Primitive Formatters
@@ -3058,7 +3059,13 @@ function chainIdToName(id: number): string {
   return `Chain ${id}`;
 }
 
-export function formatMetavaultSummary(mv: SpectraMetavault, chain: string): string {
+export function formatMetavaultSummary(
+  mv: SpectraMetavault,
+  chain: string,
+  merklByPool?: Map<string, MerklCampaign[]>,
+  vaultMerklRewards?: Array<{ symbol: string; amount: number }>,
+  merklWarnings?: string[],
+): string {
   const lines: string[] = [];
 
   lines.push(`-- ${mv.metadata?.title || mv.name} (${mv.symbol}) --`);
@@ -3216,6 +3223,17 @@ export function formatMetavaultSummary(mv: SpectraMetavault, chain: string): str
           lines.push(`      LP: ${parts.join(" + ")}`);
         }
       }
+
+      // Merkl campaigns for this position's pool
+      if (merklByPool && pool?.address) {
+        const campaigns = lookupMerklCampaigns(merklByPool, [pool.address]);
+        if (campaigns.length > 0) {
+          const existing = new Set<string>();
+          if (lpDetails?.rewards) for (const t of Object.keys(lpDetails.rewards)) existing.add(t.toUpperCase());
+          const mLines = formatMerklCampaignLines(campaigns, existing, "        ");
+          for (const ml of mLines) lines.push(ml);
+        }
+      }
     }
     // Idle liquidity line
     if (knownAllocCount > 0 && vaultTvlUsd > 0) {
@@ -3316,6 +3334,22 @@ export function formatMetavaultSummary(mv: SpectraMetavault, chain: string): str
     const pending = mv.bridge?.totalPendingUsd || 0;
     if (pending > 0) {
       lines.push(`    Pending: ${formatUsd(pending)}`);
+    }
+  }
+
+  // Unclaimed Merkl rewards at the vault address
+  if (vaultMerklRewards && vaultMerklRewards.length > 0) {
+    lines.push(``);
+    lines.push(`  Unclaimed Merkl Rewards (at vault address):`);
+    for (const r of vaultMerklRewards) {
+      lines.push(`    ${r.symbol}: ${r.amount.toLocaleString("en-US", { maximumFractionDigits: 4 })}`);
+    }
+  }
+
+  // Merkl warnings (non-silent failure)
+  if (merklWarnings && merklWarnings.length > 0) {
+    for (const w of merklWarnings) {
+      lines.push(`  ${w}`);
     }
   }
 
@@ -3449,6 +3483,8 @@ export function formatMetavaultScanSection(
 export function formatMetavaultList(
   entries: Array<{ metavault: SpectraMetavault; chain: string }>,
   chainFilter: string | undefined,
+  merklMaps?: Map<number, Map<string, MerklCampaign[]>>,
+  merklWarnings?: string[],
 ): string {
   const lines: string[] = [];
 
@@ -3465,7 +3501,25 @@ export function formatMetavaultList(
 
   for (let i = 0; i < entries.length; i++) {
     const { metavault, chain } = entries[i];
-    lines.push(formatMetavaultSummary(metavault, chain));
+    // Build per-position Merkl lookup from position chain IDs
+    let positionMerklMap: Map<string, MerklCampaign[]> | undefined;
+    if (merklMaps) {
+      positionMerklMap = new Map();
+      for (const pos of metavault.positions || []) {
+        const pool = pos.pools?.[0];
+        const posChainId = pool?.chainId || pos.chainId;
+        if (posChainId && pool?.address) {
+          const chainMap = merklMaps.get(posChainId);
+          if (chainMap) {
+            const campaigns = lookupMerklCampaigns(chainMap, [pool.address]);
+            if (campaigns.length > 0) {
+              positionMerklMap.set(pool.address.toLowerCase(), campaigns);
+            }
+          }
+        }
+      }
+    }
+    lines.push(formatMetavaultSummary(metavault, chain, positionMerklMap, undefined, merklWarnings));
     if (i < entries.length - 1) lines.push(``);
   }
 
@@ -3724,6 +3778,11 @@ export interface CuratorDashboardOpts {
 
   // Revenue estimate
   estimatedAnnualFeeRevenueUsd: number | null;
+
+  // Merkl (optional, best-effort)
+  merklByPool?: Map<string, MerklCampaign[]>;
+  vaultMerklRewards?: Array<{ symbol: string; amount: number }>;
+  merklWarnings?: string[];
 }
 
 export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
@@ -3803,7 +3862,31 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
       const protocolTag = `[${pos.protocol}]`;
       lines.push(`  ${protocolTag} ${pos.symbol} | ${matLabel}${urgencyFlag} | ${allocationStr} | PT APY ${formatPct(pos.ptApy)} | LP APY ${formatPct(pos.lpApyTotal)}${pos.lpApyBoostedTotal && pos.lpApyBoostedTotal > pos.lpApyTotal ? ` (boost: ${formatPct(pos.lpApyBoostedTotal)})` : ""}`);
       lines.push(`    PT: ${pos.ptAddress}${pos.poolAddress ? ` | Pool: ${pos.poolAddress}` : ""}`);
+
+      // Merkl campaigns for this position's pool
+      if (opts.merklByPool && pos.poolAddress) {
+        const campaigns = lookupMerklCampaigns(opts.merklByPool, [pos.poolAddress]);
+        if (campaigns.length > 0) {
+          const mLines = formatMerklCampaignLines(campaigns, new Set(), "      ");
+          for (const ml of mLines) lines.push(ml);
+        }
+      }
     }
+
+    // Unclaimed Merkl rewards at the vault address
+    if (opts.vaultMerklRewards && opts.vaultMerklRewards.length > 0) {
+      lines.push(``);
+      lines.push(`  Unclaimed Merkl Rewards (at vault address):`);
+      for (const r of opts.vaultMerklRewards) {
+        lines.push(`    ${r.symbol}: ${r.amount.toLocaleString("en-US", { maximumFractionDigits: 4 })}`);
+      }
+    }
+
+    // Merkl warnings
+    if (opts.merklWarnings && opts.merklWarnings.length > 0) {
+      for (const w of opts.merklWarnings) lines.push(`  ${w}`);
+    }
+
     // Idle liquidity: vault TVL minus sum of known position allocations
     if (opts.tvlUsd > 0) {
       const idleLiquidity = Math.max(0, opts.tvlUsd - knownAllocationTotal);

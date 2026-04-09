@@ -41,7 +41,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { MetavaultLoopRow, MetavaultCuratorEconomics, MetavaultPerformanceMetrics, SpectraMetavault, SpectraMetavaultEpoch } from "../types.js";
 import { CHAIN_ENUM, EVM_ADDRESS } from "../config.js";
-import { fetchMetavaults, scanAllMetavaults, fetchChainPoolAddresses } from "../api.js";
+import { fetchMetavaults, scanAllMetavaults, fetchChainPoolAddresses, fetchMerklCampaigns } from "../api.js";
+import type { MerklCampaign } from "../types.js";
 import {
   formatPct,
   formatUsd,
@@ -257,7 +258,36 @@ the vault contract address won't appear in pool activity data.`,
           failedChains = result.failedChains;
         }
 
-        let text = formatMetavaultList(entries, chain);
+        // Fetch Merkl campaigns for all position chains (parallel, best-effort)
+        const positionChainIds = new Set<number>();
+        for (const { metavault: mv } of entries) {
+          for (const pos of mv.positions || []) {
+            const pool = pos.pools?.[0];
+            const cid = pool?.chainId || pos.chainId;
+            if (cid) positionChainIds.add(cid);
+          }
+        }
+        const merklMaps = new Map<number, Map<string, MerklCampaign[]>>();
+        const merklWarnings: string[] = [];
+        const merklResults = await Promise.allSettled(
+          [...positionChainIds].map(async (chainId) => {
+            const result = await fetchMerklCampaigns(chainId).catch(() => ({
+              campaigns: new Map<string, MerklCampaign[]>(),
+              available: false,
+            }));
+            return { chainId, campaigns: result.campaigns, available: result.available };
+          })
+        );
+        for (const r of merklResults) {
+          if (r.status === "fulfilled" && r.value.available) {
+            merklMaps.set(r.value.chainId, r.value.campaigns);
+          } else if (r.status === "fulfilled" && !r.value.available) {
+            console.error(`[Merkl fallback] campaigns unavailable for chain ${r.value.chainId}`);
+            merklWarnings.push(`⚠ Merkl campaign data unavailable for chain ${r.value.chainId} — reward sustainability unknown`);
+          }
+        }
+
+        let text = formatMetavaultList(entries, chain, merklMaps.size > 0 ? merklMaps : undefined, merklWarnings.length > 0 ? merklWarnings : undefined);
         if (failedChains.length > 0) {
           text += `\nNote: ${failedChains.length} chain(s) unreachable: ${failedChains.join(", ")}. MetaVaults on those chains may be missing.`;
         }
@@ -825,6 +855,88 @@ Use spectra_get_address_activity on the curator's EOA for cross-pool curator act
           }
         }
 
+        // ── Merkl campaigns + unclaimed vault rewards ──────────
+        // Fetch campaigns for all position chains (parallel, best-effort)
+        const posChainIds = new Set<number>();
+        for (const pos of mv.positions || []) {
+          const pool = pos.pools?.[0];
+          const cid = pool?.chainId || pos.chainId;
+          if (cid) posChainIds.add(cid);
+        }
+        // Also include the vault's home chain
+        const homeChainId = (await import("../config.js")).SUPPORTED_CHAINS[chain]?.id;
+        if (homeChainId) posChainIds.add(homeChainId);
+
+        const merklCampaignMaps = new Map<number, Map<string, MerklCampaign[]>>();
+        const dashMerklWarnings: string[] = [];
+        const merklCampResults = await Promise.allSettled(
+          [...posChainIds].map(async (chainId) => {
+            const result = await fetchMerklCampaigns(chainId).catch(() => ({
+              campaigns: new Map<string, MerklCampaign[]>(),
+              available: false,
+            }));
+            return { chainId, campaigns: result.campaigns, available: result.available };
+          })
+        );
+        for (const r of merklCampResults) {
+          if (r.status === "fulfilled" && r.value.available) {
+            merklCampaignMaps.set(r.value.chainId, r.value.campaigns);
+          } else if (r.status === "fulfilled" && !r.value.available) {
+            console.error(`[Merkl fallback] campaigns unavailable for chain ${r.value.chainId}`);
+            dashMerklWarnings.push(`⚠ Merkl campaign data unavailable for chain ${r.value.chainId} — reward sustainability unknown`);
+          }
+        }
+
+        // Build per-position campaign lookup
+        const dashMerklByPool = new Map<string, MerklCampaign[]>();
+        for (const pos of mv.positions || []) {
+          const pool = pos.pools?.[0];
+          const posChainId = pool?.chainId || pos.chainId;
+          if (posChainId && pool?.address) {
+            const chainMap = merklCampaignMaps.get(posChainId);
+            if (chainMap) {
+              const { lookupMerklCampaigns } = await import("../api.js");
+              const campaigns = lookupMerklCampaigns(chainMap, [pool.address]);
+              if (campaigns.length > 0) {
+                dashMerklByPool.set(pool.address.toLowerCase(), campaigns);
+              }
+            }
+          }
+        }
+
+        // Fetch unclaimed Merkl rewards for the vault address on each position chain
+        const { fetchMerkl, parseMerklRewards } = await import("../api.js");
+        const poolAddressSet = new Set(
+          (mv.positions || [])
+            .map(p => p.pools?.[0]?.address?.toLowerCase())
+            .filter(Boolean) as string[]
+        );
+        const vaultMerklRewards: Array<{ symbol: string; amount: number }> = [];
+        const rewardFetchResults = await Promise.allSettled(
+          [...posChainIds].map(async (chainId) => {
+            const raw = await fetchMerkl(metavault_address, chainId);
+            return { chainId, raw };
+          })
+        );
+        for (const r of rewardFetchResults) {
+          if (r.status === "fulfilled" && r.value.raw && Object.keys(r.value.raw).length > 0) {
+            const parsed = parseMerklRewards(r.value.raw, poolAddressSet, chain);
+            // Collect all matched + unmatched rewards
+            for (const rewards of parsed.matched.values()) {
+              for (const reward of rewards) {
+                if (reward.unclaimed > 0) {
+                  vaultMerklRewards.push({ symbol: reward.symbol, amount: reward.unclaimed });
+                }
+              }
+            }
+            for (const reward of parsed.unmatched) {
+              if (reward.unclaimed > 0) {
+                vaultMerklRewards.push({ symbol: reward.symbol, amount: reward.unclaimed });
+              }
+            }
+          }
+        }
+
         // ── Fee revenue estimate ───────────────────────────────
         let estimatedAnnualFeeRevenueUsd: number | null = null;
         if (mv.tvl?.usd && liveApyTotal > 0) {
@@ -862,6 +974,9 @@ Use spectra_get_address_activity on the curator's EOA for cross-pool curator act
           actionItems,
           curatorFeePct: curator_fee_pct,
           estimatedAnnualFeeRevenueUsd,
+          merklByPool: dashMerklByPool.size > 0 ? dashMerklByPool : undefined,
+          vaultMerklRewards: vaultMerklRewards.length > 0 ? vaultMerklRewards : undefined,
+          merklWarnings: dashMerklWarnings.length > 0 ? dashMerklWarnings : undefined,
         };
 
         let text = formatCuratorDashboard(dashOpts);
