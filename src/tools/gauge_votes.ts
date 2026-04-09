@@ -188,7 +188,8 @@ Use spectra_list_expiring_pools to check gauge status for expiring pools.`,
         lines.push(`  Snapshot: Block ${raw.block.number} (${snapshotDate})`);
         lines.push(`  Total Voting Power: ${totalVotingPower.toLocaleString("en-US", { maximumFractionDigits: 0 })} veSPECTRA`);
         lines.push(`  Total Votes Cast: ${totalVotes.toLocaleString("en-US", { maximumFractionDigits: 0 })} veSPECTRA (${formatPct(participation)} participation)`);
-        lines.push(`  Weekly Emissions: ${parseFloat(raw.totalEmissions.amount || "0").toLocaleString("en-US", { maximumFractionDigits: 0 })} SPECTRA (${formatUsd(raw.totalEmissions.value)})`);
+        const totalEmAmt = parseFloat(raw.totalEmissions.amount || "0") / 1e18;
+        lines.push(`  Weekly Emissions: ${totalEmAmt.toLocaleString("en-US", { maximumFractionDigits: 0 })} SPECTRA (${formatUsd(raw.totalEmissions.value)})`);
         lines.push(`  SPECTRA Price: $${raw.reduceIncentives?.price?.toFixed(6) || "?"}`);
         lines.push(`  Avg Voting APR: ${formatPct(raw.avgVotingApr.total)} (rewards ${formatPct(raw.avgVotingApr.rewards)} + fees ${formatPct(raw.avgVotingApr.fees)})`);
         lines.push(`  Total Voting Rewards: ${formatUsd(raw.totalVotingRewards)} | Fees: ${formatUsd(raw.totalVotingFees)}`);
@@ -250,7 +251,7 @@ Use spectra_list_expiring_pools to check gauge status for expiring pools.`,
 
           // SPECTRA emissions to this gauge
           if (g.lpIncentives) {
-            const emAmt = parseFloat(g.lpIncentives.amount || "0");
+            const emAmt = parseFloat(g.lpIncentives.amount || "0") / 1e18;
             lines.push(`    LP Emissions: ${emAmt.toLocaleString("en-US", { maximumFractionDigits: 0 })} SPECTRA/wk (${formatUsd(g.lpIncentives.value)})`);
           }
 
