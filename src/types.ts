@@ -477,9 +477,10 @@ export interface SpectraMetavaultPosition {
     chainId?: number;
     ptApy: number;
     lpApy: SpectraPoolLpApy;
+    ytPrice?: { usd?: number };
     lpt?: {
-      balance?: string;    // MetaVault's LP token balance (BigInt string, 18 decimals)
-      supply?: string;     // total LP supply (BigInt string)
+      balance?: string;
+      supply?: string;
       decimals?: number;
       price?: { underlying?: number; usd?: number };
     };

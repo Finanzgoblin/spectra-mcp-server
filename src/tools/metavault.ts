@@ -712,16 +712,25 @@ Use spectra_get_address_activity on the curator's EOA for cross-pool curator act
             protocol = "Pendle";
           }
 
-          // Parse YT data from API (balance + claimable/claimed yield)
-          let ytData: { balance: number; claimable: number; claimed: number } | undefined;
+          // Parse YT data from API (balance + claimable/claimed yield + USD values)
+          let ytData: { balance: number; claimable: number; claimed: number; valueUsd: number; claimableUsd: number; claimedUsd: number; ibtSymbol?: string } | undefined;
           if (pos.yt?.balance) {
             const ytDec = pos.yt.decimals || 18;
             const d = 10n ** BigInt(ytDec);
             const bal = BigInt(pos.yt.balance);
+            const ytBalance = Number(bal / d) + Number(bal % d) / Number(d);
+            const ytPriceUsd = pool?.ytPrice?.usd || 0;
+            const ibtPriceUsd = (pos as any).ibt?.price?.usd || 0;
+            const claimableTokens = pos.yt.yield?.claimable ? (() => { const v = BigInt(pos.yt.yield!.claimable); return Number(v / d) + Number(v % d) / Number(d); })() : 0;
+            const claimedTokens = pos.yt.yield?.claimed ? (() => { const v = BigInt(pos.yt.yield!.claimed); return Number(v / d) + Number(v % d) / Number(d); })() : 0;
             ytData = {
-              balance: Number(bal / d) + Number(bal % d) / Number(d),
-              claimable: pos.yt.yield?.claimable ? (() => { const v = BigInt(pos.yt.yield!.claimable); return Number(v / d) + Number(v % d) / Number(d); })() : 0,
-              claimed: pos.yt.yield?.claimed ? (() => { const v = BigInt(pos.yt.yield!.claimed); return Number(v / d) + Number(v % d) / Number(d); })() : 0,
+              balance: ytBalance,
+              claimable: claimableTokens,
+              claimed: claimedTokens,
+              valueUsd: ytBalance * ytPriceUsd,
+              claimableUsd: claimableTokens * ibtPriceUsd,
+              claimedUsd: claimedTokens * ibtPriceUsd,
+              ibtSymbol: (pos as any).ibt?.symbol,
             };
           }
 
