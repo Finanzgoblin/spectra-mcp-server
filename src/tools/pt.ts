@@ -175,8 +175,7 @@ Use spectra_get_pool_activity to see trading patterns on this pool.`,
           `• Capital-aware ranking: spectra_scan_opportunities(capital_usd=YOUR_AMOUNT) to see where this PT ranks at your size`,
         ];
 
-        const feeNotice = `\n  Protocol YT Fee: 3% on all yield + points (docs.spectra.finance/tokenomics/fees)\n`;
-        let text = summary + feeNotice + nextSteps.join("\n");
+        let text = summary + "\n" + nextSteps.join("\n");
         if (!merklResult.available) {
           text += `\nNote: Merkl incentive data unavailable — external campaign APR may be missing.`;
         }
@@ -577,8 +576,8 @@ check your current positions. Use spectra_scan_opportunities for multi-chain com
         const lpData = extractLpApyBreakdown(pool, boostInfo?.boostFraction ?? 0);
         const lpParts: string[] = [];
         if (lpData.lpApyBreakdown.fees > 0) lpParts.push(`fees ${formatPct(lpData.lpApyBreakdown.fees)}`);
-        if (lpData.lpApyBreakdown.pt > 0) lpParts.push(`PT ${formatPct(lpData.lpApyBreakdown.pt)}`);
-        if (lpData.lpApyBreakdown.ibt > 0) lpParts.push(`IBT ${formatPct(lpData.lpApyBreakdown.ibt)}`);
+        if (lpData.lpApyBreakdown.pt > 0) lpParts.push(`PT convergence ${formatPct(lpData.lpApyBreakdown.pt)}`);
+        if (lpData.lpApyBreakdown.ibt > 0) lpParts.push(`IBT accrual ${formatPct(lpData.lpApyBreakdown.ibt)}`);
         for (const [token, apy] of Object.entries(lpData.lpApyBreakdown.rewards)) {
           lpParts.push(`${token} ${formatPct(apy)}`);
         }

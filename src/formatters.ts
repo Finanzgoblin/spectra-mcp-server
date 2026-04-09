@@ -470,9 +470,9 @@ export function formatPoolSummary(pt: SpectraPt, pool: SpectraPool, chain: strin
 
   lines.push(
     `  LP APY: ${formatPct(pool.lpApy?.total || 0)}`,
-    `    +-- Fees: ${formatPct(pool.lpApy?.details?.fees || 0)}`,
-    `    +-- PT: ${formatPct(pool.lpApy?.details?.pt || 0)}`,
-    `    +-- IBT: ${formatPct(pool.lpApy?.details?.ibt || 0)}`,
+    `    +-- Swap Fees: ${formatPct(pool.lpApy?.details?.fees || 0)}`,
+    `    +-- PT Discount Convergence: ${formatPct(pool.lpApy?.details?.pt || 0)}`,
+    `    +-- IBT Yield Accrual: ${formatPct(pool.lpApy?.details?.ibt || 0)}`,
   );
 
   // External token rewards (e.g. KAT, rFLR, wAVAX)
@@ -1998,8 +1998,8 @@ export function formatLpApyLines(
   // Build compact breakdown parts
   const parts: string[] = [];
   parts.push(`fees ${formatPct(breakdown.fees)}`);
-  if (breakdown.pt > 0) parts.push(`PT ${formatPct(breakdown.pt)}`);
-  if (breakdown.ibt > 0) parts.push(`IBT ${formatPct(breakdown.ibt)}`);
+  if (breakdown.pt > 0) parts.push(`PT convergence ${formatPct(breakdown.pt)}`);
+  if (breakdown.ibt > 0) parts.push(`IBT accrual ${formatPct(breakdown.ibt)}`);
 
   for (const [token, apy] of Object.entries(breakdown.rewards)) {
     parts.push(`${token} ${formatPct(apy)}`);
@@ -3105,7 +3105,7 @@ export function formatMetavaultSummary(mv: SpectraMetavault, chain: string): str
   const apyDetails = mv.liveApy?.details;
   if (apyDetails) {
     if (apyDetails.base != null) {
-      lines.push(`    +-- Base (fees + PT + IBT): ${formatPct(apyDetails.base)}`);
+      lines.push(`    +-- Base (fees + PT convergence + IBT accrual): ${formatPct(apyDetails.base)}`);
     }
     if (apyDetails.ibtRewards && Object.keys(apyDetails.ibtRewards).length > 0) {
       for (const [token, apy] of Object.entries(apyDetails.ibtRewards)) {
@@ -3199,8 +3199,8 @@ export function formatMetavaultSummary(mv: SpectraMetavault, chain: string): str
       if (lpDetails) {
         const parts: string[] = [];
         if (lpDetails.fees) parts.push(`fees ${formatPct(lpDetails.fees)}`);
-        if (lpDetails.pt) parts.push(`PT ${formatPct(lpDetails.pt)}`);
-        if (lpDetails.ibt) parts.push(`IBT ${formatPct(lpDetails.ibt)}`);
+        if (lpDetails.pt) parts.push(`PT convergence ${formatPct(lpDetails.pt)}`);
+        if (lpDetails.ibt) parts.push(`IBT accrual ${formatPct(lpDetails.ibt)}`);
         if (lpDetails.rewards) {
           for (const [token, apy] of Object.entries(lpDetails.rewards)) {
             parts.push(`${token} ${formatPct(apy)}`);
@@ -3762,7 +3762,7 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
   if (opts.apyDetails) {
     lines.push(`--- APY Composition ---`);
     if (opts.apyDetails.base != null) {
-      lines.push(`  Base (fees + PT + IBT): ${formatPct(opts.apyDetails.base)}`);
+      lines.push(`  Base (fees + PT convergence + IBT accrual): ${formatPct(opts.apyDetails.base)}`);
     }
     if (opts.apyDetails.ibtRewards) {
       for (const [token, apy] of Object.entries(opts.apyDetails.ibtRewards)) {
@@ -4318,8 +4318,8 @@ export function formatCuratorOpportunity(opp: CuratorOpportunity, rank: number):
     const bd = opp.lpApyBreakdown;
     const parts: string[] = [];
     if (bd.fees) parts.push(`fees ${formatPct(bd.fees)}`);
-    if (bd.pt) parts.push(`PT ${formatPct(bd.pt)}`);
-    if (bd.ibt) parts.push(`IBT ${formatPct(bd.ibt)}`);
+    if (bd.pt) parts.push(`PT convergence ${formatPct(bd.pt)}`);
+    if (bd.ibt) parts.push(`IBT accrual ${formatPct(bd.ibt)}`);
     for (const [k, v] of Object.entries(bd.rewards)) parts.push(`${k} ${formatPct(v)}`);
     lines.push(`      LP:       ${formatPct(opp.lpApy)}${parts.length > 0 ? ` (${parts.join(" + ")})` : ""}`);
   } else {
