@@ -1146,12 +1146,20 @@ async function withRpcFallback<T>(
   label: string,
 ): Promise<T> {
   let lastError: Error | null = null;
-  for (const rpc of rpcs) {
+  for (let i = 0; i < rpcs.length; i++) {
     try {
-      return await operation(rpc);
+      const result = await operation(rpcs[i]);
+      if (i > 0) {
+        // Succeeded on fallback — log so operators know primary is degraded
+        const host = new URL(rpcs[i]).host;
+        console.error(`[RPC fallback] ${label}: primary failed, succeeded on ${host} (attempt ${i + 1}/${rpcs.length})`);
+      }
+      return result;
     } catch (e: any) {
       lastError = e;
-      // Continue to next RPC on any error (429, timeout, parse error, etc.)
+      const host = new URL(rpcs[i]).host;
+      const reason = e?.message?.slice(0, 80) || "unknown";
+      console.error(`[RPC fallback] ${label}: ${host} failed (${reason})${i < rpcs.length - 1 ? " — trying next" : " — no more RPCs"}`);
     }
   }
   throw lastError || new Error(`${label}: all ${rpcs.length} RPCs failed`);
