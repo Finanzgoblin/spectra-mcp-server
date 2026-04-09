@@ -712,6 +712,19 @@ Use spectra_get_address_activity on the curator's EOA for cross-pool curator act
             protocol = "Pendle";
           }
 
+          // Parse YT data from API (balance + claimable/claimed yield)
+          let ytData: { balance: number; claimable: number; claimed: number } | undefined;
+          if (pos.yt?.balance) {
+            const ytDec = pos.yt.decimals || 18;
+            const d = 10n ** BigInt(ytDec);
+            const bal = BigInt(pos.yt.balance);
+            ytData = {
+              balance: Number(bal / d) + Number(bal % d) / Number(d),
+              claimable: pos.yt.yield?.claimable ? (() => { const v = BigInt(pos.yt.yield!.claimable); return Number(v / d) + Number(v % d) / Number(d); })() : 0,
+              claimed: pos.yt.yield?.claimed ? (() => { const v = BigInt(pos.yt.yield!.claimed); return Number(v / d) + Number(v % d) / Number(d); })() : 0,
+            };
+          }
+
           return {
             symbol: pos.symbol,
             ptAddress: pos.address,
@@ -725,6 +738,7 @@ Use spectra_get_address_activity on the curator's EOA for cross-pool curator act
             lpApyTotal: pool?.lpApy?.total || 0,
             lpApyBoostedTotal: pool?.lpApy?.boostedTotal || null,
             protocol,
+            yt: ytData,
           };
         });
 

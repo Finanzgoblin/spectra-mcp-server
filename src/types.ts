@@ -462,6 +462,16 @@ export interface SpectraMetavaultPosition {
   chainId?: number;        // chain where the position lives (may differ from MetaVault home chain)
   balance?: string;        // MetaVault's LP token balance (BigInt string) — fallback when lpt.balance is missing
   tvl: { underlying: number; usd: number };
+  yt?: {                   // YT held by the vault (minted alongside PT for LP entry)
+    address: string;
+    decimals: number;
+    chainId?: number;
+    balance: string;       // BigInt string — vault's YT balance
+    yield?: {
+      claimable: string;   // BigInt string — unclaimed yield in IBT terms
+      claimed: string;     // BigInt string — already claimed yield
+    };
+  };
   pools: Array<{
     address: string;
     chainId?: number;

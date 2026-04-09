@@ -3225,6 +3225,23 @@ export function formatMetavaultSummary(
         }
       }
 
+      // YT position — the vault holds YT from minting PT+YT for LP entry
+      if (pos.yt?.balance) {
+        const ytDec = pos.yt.decimals || 18;
+        const ytBal = Number(BigInt(pos.yt.balance) / (10n ** BigInt(ytDec)));
+        if (ytBal > 0) {
+          let ytLine = `      YT: ${ytBal.toLocaleString("en-US", { maximumFractionDigits: 2 })} held`;
+          if (pos.yt.yield) {
+            const claimable = Number(BigInt(pos.yt.yield.claimable) / (10n ** BigInt(ytDec)));
+            const claimed = Number(BigInt(pos.yt.yield.claimed) / (10n ** BigInt(ytDec)));
+            if (claimable > 0 || claimed > 0) {
+              ytLine += ` | Yield: ${claimable.toLocaleString("en-US", { maximumFractionDigits: 2 })} claimable, ${claimed.toLocaleString("en-US", { maximumFractionDigits: 2 })} claimed`;
+            }
+          }
+          lines.push(ytLine);
+        }
+      }
+
       // Pendle enrichment
       if (pendleEnrichment && pool?.address) {
         const pd = pendleEnrichment.get(pool.address.toLowerCase());
@@ -3258,6 +3275,20 @@ export function formatMetavaultSummary(
         const idlePct = (idleLiquidity / vaultTvlUsd * 100).toFixed(1);
         lines.push(`    ${mv.underlying?.symbol || "?"} Idle Liquidity -- ${idlePct}% | ${formatUsd(idleLiquidity)}`);
       }
+    }
+
+    // Total claimable YT yield across all positions
+    let totalClaimable = 0;
+    for (const { pos } of allocatedPositions) {
+      if (pos.yt?.yield?.claimable) {
+        const ytDec = pos.yt.decimals || 18;
+        totalClaimable += Number(BigInt(pos.yt.yield.claimable) / (10n ** BigInt(ytDec)));
+      }
+    }
+    if (totalClaimable > 0) {
+      const ibtPrice = mv.underlying?.price?.usd || 0;
+      const claimableUsd = totalClaimable * ibtPrice;
+      lines.push(`    Claimable YT Yield: ${totalClaimable.toLocaleString("en-US", { maximumFractionDigits: 2 })} ${mv.underlying?.symbol || "tokens"}${ibtPrice > 0 ? ` (~${formatUsd(claimableUsd)})` : ""} — compound into LP to boost share price`);
     }
   }
 
@@ -3766,6 +3797,7 @@ export interface CuratorDashboardOpts {
     lpApyTotal: number;
     lpApyBoostedTotal: number | null;
     protocol: "Spectra" | "Pendle" | "Unknown";
+    yt?: { balance: number; claimable: number; claimed: number };
   }>;
 
   // Epoch flow analysis
@@ -3886,6 +3918,15 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
       lines.push(`  ${protocolTag} ${pos.symbol} | ${matLabel}${urgencyFlag} | ${allocationStr} | PT APY ${formatPct(pos.ptApy)} | LP APY ${formatPct(pos.lpApyTotal)}${pos.lpApyBoostedTotal && pos.lpApyBoostedTotal > pos.lpApyTotal ? ` (boost: ${formatPct(pos.lpApyBoostedTotal)})` : ""}`);
       lines.push(`    PT: ${pos.ptAddress}${pos.poolAddress ? ` | Pool: ${pos.poolAddress}` : ""}`);
 
+      // YT held by the vault — shows variable yield exposure + claimable/claimed
+      if (pos.yt && pos.yt.balance > 0) {
+        let ytLine = `    YT: ${pos.yt.balance.toLocaleString("en-US", { maximumFractionDigits: 2 })} held`;
+        if (pos.yt.claimable > 0 || pos.yt.claimed > 0) {
+          ytLine += ` | Yield: ${pos.yt.claimable.toLocaleString("en-US", { maximumFractionDigits: 2 })} claimable, ${pos.yt.claimed.toLocaleString("en-US", { maximumFractionDigits: 2 })} claimed`;
+        }
+        lines.push(ytLine);
+      }
+
       // Pendle enrichment for Pendle positions — LP breakdown, incentives, liquidity
       if (opts.pendleEnrichment && pos.poolAddress) {
         const pd = opts.pendleEnrichment.get(pos.poolAddress.toLowerCase());
@@ -3935,6 +3976,16 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
       if (idleLiquidity > 0) {
         lines.push(`  ${opts.underlyingSymbol} Idle Liquidity | ${idlePct}% | ${formatUsd(idleLiquidity)}`);
       }
+      // Total claimable YT yield
+      let totalYtClaimable = 0;
+      for (const pos of allocated) {
+        if (pos.yt && pos.yt.claimable > 0) totalYtClaimable += pos.yt.claimable;
+      }
+      if (totalYtClaimable > 0) {
+        const claimableUsd = totalYtClaimable * opts.underlyingPriceUsd;
+        lines.push(`  Claimable YT Yield: ${totalYtClaimable.toLocaleString("en-US", { maximumFractionDigits: 2 })} ${opts.underlyingSymbol}${claimableUsd > 0 ? ` (~${formatUsd(claimableUsd)})` : ""} — compound into LP to boost share price`);
+      }
+
       lines.push(`  ──`);
       lines.push(`  Deployed: ${formatUsd(knownAllocationTotal)} (${(knownAllocationTotal / opts.tvlUsd * 100).toFixed(1)}%) | Idle: ${formatUsd(idleLiquidity)} (${idlePct}%) | Total: ${formatUsd(opts.tvlUsd)}`);
     }
