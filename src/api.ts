@@ -1157,6 +1157,43 @@ async function withRpcFallback<T>(
   throw lastError || new Error(`${label}: all ${rpcs.length} RPCs failed`);
 }
 
+/**
+ * Make an eth_call with RPC fallback for a given chain. Returns raw hex result
+ * or null if all RPCs fail. Used by fetchCurveGetDy, fetchTokenDecimals, etc.
+ */
+async function ethCallWithFallback(
+  chainSlug: string,
+  to: string,
+  data: string,
+): Promise<string | null> {
+  const network = resolveNetwork(chainSlug);
+  const rpcs = resolveRpcUrlsWithFallbacks(network);
+  if (rpcs.length === 0) return null;
+  try {
+    return await withRpcFallback(rpcs, async (rpcUrl) => {
+      const res = await fetchWithRetry(() =>
+        fetch(rpcUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0", id: 1, method: "eth_call",
+            params: [{ to, data }, "latest"],
+          }),
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        })
+      );
+      if (!res.ok) throw new Error(`RPC ${res.status}`);
+      const json = await res.json() as any;
+      if (json.error) throw new Error(json.error.message || "RPC error");
+      const hex: string = json.result;
+      if (!hex || hex === "0x" || hex === "0x0") throw new Error("empty result");
+      return hex;
+    }, `eth_call ${to.slice(0, 10)}`);
+  } catch {
+    return null;
+  }
+}
+
 // =============================================================================
 // veSPECTRA On-Chain Reads (Base RPC with fallback)
 // =============================================================================
@@ -1500,47 +1537,9 @@ export async function fetchCurveGetDy(
   dx: bigint,
   chainSlug: string,
 ): Promise<bigint | null> {
-  const network = resolveNetwork(chainSlug);
-  const rpcUrl = CHAIN_RPC_URLS[network];
-  if (!rpcUrl) return null;
-
-  try {
-    const calldata = encodeCurveGetDy(i, j, dx);
-    const res = await fetchWithRetry(() =>
-      fetch(rpcUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "eth_call",
-          params: [
-            { to: poolAddress, data: calldata },
-            "latest",
-          ],
-        }),
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      })
-    );
-
-    if (!res.ok) return null;
-
-    let json: any;
-    try {
-      json = await res.json();
-    } catch {
-      return null;
-    }
-
-    if (json.error) return null;
-
-    const hex: string = json.result;
-    if (!hex || hex === "0x" || hex === "0x0") return null;
-
-    return BigInt(hex);
-  } catch {
-    return null; // Best-effort — fall back to math estimate
-  }
+  const calldata = encodeCurveGetDy(i, j, dx);
+  const hex = await ethCallWithFallback(chainSlug, poolAddress, calldata);
+  return hex ? BigInt(hex) : null;
 }
 
 // =============================================================================
@@ -1598,57 +1597,18 @@ export async function fetchCurveCalcTokenAmount(
   isDeposit: boolean,
   chainSlug: string,
 ): Promise<bigint | null> {
-  const network = resolveNetwork(chainSlug);
-  const rpcUrl = CHAIN_RPC_URLS[network];
-  if (!rpcUrl) return null;
-
   // Try both selectors: dynamic array (NG) first, then fixed 2-coin (legacy)
-  const calldatas = [
+  for (const calldata of [
     encodeCurveCalcTokenAmountDynamic(amounts, isDeposit),
     encodeCurveCalcTokenAmountFixed2(amounts, isDeposit),
-  ];
-
-  for (const calldata of calldatas) {
-    try {
-      const res = await fetchWithRetry(() =>
-        fetch(rpcUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: 1,
-            method: "eth_call",
-            params: [
-              { to: poolAddress, data: calldata },
-              "latest",
-            ],
-          }),
-          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-        })
-      );
-
-      if (!res.ok) continue;
-
-      let json: any;
-      try {
-        json = await res.json();
-      } catch {
-        continue;
-      }
-
-      if (json.error) continue;
-
-      const hex: string = json.result;
-      if (!hex || hex === "0x" || hex === "0x0") continue;
-
+  ]) {
+    const hex = await ethCallWithFallback(chainSlug, poolAddress, calldata);
+    if (hex) {
       const result = BigInt(hex);
-      if (result > 0n) return result; // Valid result — return it
-    } catch {
-      continue; // Try next selector
+      if (result > 0n) return result;
     }
   }
-
-  return null; // Both selectors failed — fall back to math estimate
+  return null;
 }
 
 // =============================================================================
@@ -1664,50 +1624,10 @@ export async function fetchTokenDecimals(
   tokenAddress: string,
   chainSlug: string,
 ): Promise<number | null> {
-  const network = resolveNetwork(chainSlug);
-  const rpcUrl = CHAIN_RPC_URLS[network];
-  if (!rpcUrl) return null;
-
-  try {
-    // decimals() selector: 0x313ce567
-    const res = await fetchWithRetry(() =>
-      fetch(rpcUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "eth_call",
-          params: [
-            { to: tokenAddress, data: "0x313ce567" },
-            "latest",
-          ],
-        }),
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      })
-    );
-
-    if (!res.ok) return null;
-
-    let json: any;
-    try {
-      json = await res.json();
-    } catch {
-      return null;
-    }
-
-    if (json.error) return null;
-
-    const hex: string = json.result;
-    if (!hex || hex === "0x" || hex === "0x0") return null;
-
-    const val = Number(BigInt(hex));
-    // Sanity check — decimals should be 0-36
-    if (val < 0 || val > 36) return null;
-    return val;
-  } catch {
-    return null;
-  }
+  const hex = await ethCallWithFallback(chainSlug, tokenAddress, "0x313ce567");
+  if (!hex) return null;
+  const val = Number(BigInt(hex));
+  return (val >= 0 && val <= 36) ? val : null;
 }
 
 // =============================================================================
@@ -1741,57 +1661,13 @@ export async function fetchIbtConversionRate(
   chainSlug: string,
   underlyingDecimals?: number,
 ): Promise<number | null> {
-  const network = resolveNetwork(chainSlug);
-  const rpcUrl = CHAIN_RPC_URLS[network];
-  if (!rpcUrl) return null;
-
   const outDecimals = underlyingDecimals ?? ibtDecimals;
-
-  try {
-    // Encode: convertToAssets(10^ibtDecimals) — "how much underlying does 1 full IBT token equal?"
-    const oneToken = (10n ** BigInt(ibtDecimals)).toString(16).padStart(64, "0");
-    const calldata = ERC4626_SELECTORS.convertToAssets + oneToken;
-
-    const res = await fetchWithRetry(() =>
-      fetch(rpcUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "eth_call",
-          params: [
-            { to: ibtAddress, data: calldata },
-            "latest",
-          ],
-        }),
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      })
-    );
-
-    if (!res.ok) return null;
-
-    let json: any;
-    try {
-      json = await res.json();
-    } catch {
-      return null;
-    }
-
-    if (json.error) return null;
-
-    const hex: string = json.result;
-    if (!hex || hex === "0x" || hex === "0x0") return null;
-
-    const raw = BigInt(hex);
-    // Divide by underlying decimals — convertToAssets returns in underlying's decimal space
-    const divisor = 10n ** BigInt(outDecimals);
-    const intPart = raw / divisor;
-    const fracPart = raw % divisor;
-    return Number(intPart) + Number(fracPart) / Number(divisor);
-  } catch {
-    return null; // Best-effort — graceful degradation
-  }
+  const oneToken = (10n ** BigInt(ibtDecimals)).toString(16).padStart(64, "0");
+  const hex = await ethCallWithFallback(chainSlug, ibtAddress, ERC4626_SELECTORS.convertToAssets + oneToken);
+  if (!hex) return null;
+  const raw = BigInt(hex);
+  const divisor = 10n ** BigInt(outDecimals);
+  return Number(raw / divisor) + Number(raw % divisor) / Number(divisor);
 }
 
 // =============================================================================
@@ -1816,51 +1692,11 @@ export async function fetchSyExchangeRate(
   syAddress: string,
   chainSlug: string,
 ): Promise<number | null> {
-  const network = resolveNetwork(chainSlug);
-  const rpcUrl = CHAIN_RPC_URLS[network];
-  if (!rpcUrl) return null;
-
-  try {
-    const res = await fetchWithRetry(() =>
-      fetch(rpcUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "eth_call",
-          params: [
-            { to: syAddress, data: PENDLE_SY_SELECTORS.exchangeRate },
-            "latest",
-          ],
-        }),
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      })
-    );
-
-    if (!res.ok) return null;
-
-    let json: any;
-    try {
-      json = await res.json();
-    } catch {
-      return null;
-    }
-
-    if (json.error) return null;
-
-    const hex: string = json.result;
-    if (!hex || hex === "0x" || hex === "0x0") return null;
-
-    const raw = BigInt(hex);
-    // exchangeRate() always returns in 18-decimal fixed point
-    const divisor = 10n ** 18n;
-    const intPart = raw / divisor;
-    const fracPart = raw % divisor;
-    return Number(intPart) + Number(fracPart) / Number(divisor);
-  } catch {
-    return null; // Best-effort — graceful degradation
-  }
+  const hex = await ethCallWithFallback(chainSlug, syAddress, PENDLE_SY_SELECTORS.exchangeRate);
+  if (!hex) return null;
+  const raw = BigInt(hex);
+  const divisor = 10n ** 18n;
+  return Number(raw / divisor) + Number(raw % divisor) / Number(divisor);
 }
 
 // =============================================================================
@@ -2482,42 +2318,33 @@ export async function fetchAddressType(
   const cached = _addressTypeCache.get(cacheKey);
   if (cached) return cached;
 
-  const rpcUrl = CHAIN_RPC_URLS[network];
-  if (!rpcUrl) return "unknown"; // No RPC configured for this chain
+  const rpcs = resolveRpcUrlsWithFallbacks(network);
+  if (rpcs.length === 0) return "unknown";
 
   try {
-    const res = await fetchWithRetry(() =>
-      fetch(rpcUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "eth_getCode",
-          params: [address, "latest"],
-        }),
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      })
-    );
+    const code = await withRpcFallback(rpcs, async (rpcUrl) => {
+      const res = await fetchWithRetry(() =>
+        fetch(rpcUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0", id: 1, method: "eth_getCode",
+            params: [address, "latest"],
+          }),
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        })
+      );
+      if (!res.ok) throw new Error(`RPC ${res.status}`);
+      const json = await res.json() as any;
+      if (json.error) throw new Error(json.error.message || "RPC error");
+      return (json.result as string) || "0x";
+    }, "eth_getCode");
 
-    if (!res.ok) return "unknown";
-
-    let json: any;
-    try {
-      json = await res.json();
-    } catch {
-      return "unknown";
-    }
-
-    if (json.error) return "unknown";
-
-    const code: string = json.result || "0x";
-    // "0x" or empty means no contract code (EOA)
     const result: "contract" | "eoa" = code.length > 2 ? "contract" : "eoa";
     _addressTypeCache.set(cacheKey, result);
     return result;
   } catch {
-    return "unknown"; // Best-effort — don't block the caller
+    return "unknown";
   }
 }
 
