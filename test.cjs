@@ -171,8 +171,30 @@ class McpTestClient {
       res.result.content &&
       res.result.content[0] &&
       res.result.content[0].text;
-    return { text: text || "", raw: res.result };
+    const isError = !!(res.result && res.result.isError);
+    return { text: text || "", raw: res.result, isError };
   }
+}
+
+// Reject responses that represent a server-side failure. Catches:
+//   - MCP isError flag set true
+//   - text body starting with "Error" / "Error:" / "Error fetching"
+//   - crash-signature substrings from historical BigInt / null-access bugs
+// Use this anywhere you'd otherwise only check a substring-in-text and risk
+// matching both success and failure output (e.g. "MetaVaults" appears in both
+// "== MetaVaults (base) ==" and "Error fetching MetaVaults: ...").
+function assertNotError(result, name) {
+  if (result.isError) {
+    fail(name, `MCP isError=true; text="${(result.text || "").slice(0, 200)}"`);
+    return false;
+  }
+  const t = result.text || "";
+  if (/^\s*Error\b/i.test(t) || /Cannot convert (undefined|null) to a BigInt/.test(t)) {
+    fail(name, `error-shaped response: "${t.slice(0, 200)}"`);
+    return false;
+  }
+  pass(name);
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -1799,9 +1821,16 @@ async function testGetMetavaults(client) {
   console.log("\n--- spectra_list_metavaults ---");
 
   // Single chain: base (known to have MetaVaults from OpenAPI example)
-  const { text } = await client.callTool("spectra_list_metavaults", {
+  const baseResult = await client.callTool("spectra_list_metavaults", {
     chain: "base",
   }, 30_000);
+  const { text } = baseResult;
+
+  // Crash-guard FIRST — error text like "Error fetching MetaVaults: ..." contains
+  // the substring "MetaVaults", so the naive include() check below would pass
+  // a broken response. This is exactly the regression that let the April 2026
+  // Base-Flare BigInt crash ship silently.
+  assertNotError(baseResult, "spectra_list_metavaults(base) did not return an error");
 
   assert(
     text.includes("MetaVaults") || text.includes("MetaVault"),
@@ -1822,7 +1851,10 @@ async function testGetMetavaults(client) {
   }
 
   // All chains scan
-  const { text: allChains } = await client.callTool("spectra_list_metavaults", {}, 60_000);
+  const allResult = await client.callTool("spectra_list_metavaults", {}, 60_000);
+  const { text: allChains } = allResult;
+
+  assertNotError(allResult, "spectra_list_metavaults() all-chains did not return an error");
 
   assert(
     allChains.includes("MetaVaults (all chains)"),

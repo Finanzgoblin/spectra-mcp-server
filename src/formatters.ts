@@ -3527,15 +3527,26 @@ export function formatMetavaultScanSection(
   // Sort by live APY descending
   const sorted = [...entries].sort((a, b) => (b.metavault.liveApy?.total || 0) - (a.metavault.liveApy?.total || 0));
 
+  // Per-MV isolation: one bad MV must not take the whole scan section down.
   if (compact) {
     for (let i = 0; i < sorted.length; i++) {
       const { metavault, chain } = sorted[i];
-      lines.push(`MV#${i + 1} ${formatMetavaultCompact(metavault, chain)}`);
+      try {
+        lines.push(`MV#${i + 1} ${formatMetavaultCompact(metavault, chain)}`);
+      } catch (e: any) {
+        console.error(`[formatMetavaultScanSection/compact] failed for ${metavault?.address || "?"} on ${chain}: ${e?.message || e}`);
+        lines.push(`MV#${i + 1} ⚠ render failed (${chain}, ${metavault?.address || "?"})`);
+      }
     }
   } else {
     for (let i = 0; i < sorted.length; i++) {
       const { metavault, chain } = sorted[i];
-      lines.push(formatMetavaultScanEntry(metavault, chain, i + 1));
+      try {
+        lines.push(formatMetavaultScanEntry(metavault, chain, i + 1));
+      } catch (e: any) {
+        console.error(`[formatMetavaultScanSection] failed for ${metavault?.address || "?"} on ${chain}: ${e?.message || e}`);
+        lines.push(`  MV#${i + 1} ⚠ render failed (${chain}, ${metavault?.address || "?"})`);
+      }
       if (i < sorted.length - 1) lines.push(``);
     }
   }
@@ -3583,7 +3594,20 @@ export function formatMetavaultList(
         }
       }
     }
-    lines.push(formatMetavaultSummary(metavault, chain, positionMerklMap, undefined, merklWarnings));
+    // Per-MV isolation: one bad MV must not take the whole list down.
+    // If formatting throws (unexpected API shape, missing field, etc.), log to stderr
+    // and surface a clear skip line so the user sees the gap but still gets the rest.
+    try {
+      lines.push(formatMetavaultSummary(metavault, chain, positionMerklMap, undefined, merklWarnings));
+    } catch (e: any) {
+      const msg = e?.message || String(e);
+      console.error(`[formatMetavaultList] failed to format ${metavault?.name || metavault?.address || "?"} on ${chain}: ${msg}`);
+      lines.push(`-- ${metavault?.name || "?"} (${metavault?.symbol || "?"}) --`);
+      lines.push(`  Chain: ${chain}`);
+      lines.push(`  MetaVault: ${metavault?.address || "?"}`);
+      lines.push(`  ⚠ Rendering failed: ${msg}`);
+      lines.push(`  Raw data present but formatter hit an unexpected shape. Other MetaVaults still shown below.`);
+    }
     if (i < entries.length - 1) lines.push(``);
   }
 
