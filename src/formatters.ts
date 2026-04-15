@@ -3232,8 +3232,14 @@ export function formatMetavaultSummary(
         if (ytBal > 0) {
           let ytLine = `      YT: ${ytBal.toLocaleString("en-US", { maximumFractionDigits: 2 })} held`;
           if (pos.yt.yield) {
-            const claimable = Number(BigInt(pos.yt.yield.claimable) / (10n ** BigInt(ytDec)));
-            const claimed = Number(BigInt(pos.yt.yield.claimed) / (10n ** BigInt(ytDec)));
+            // Guard each field — API may return yield object with one of claimable/claimed missing.
+            // BigInt(null|undefined) throws; we've observed this on Base and Flare MetaVaults.
+            const claimable = pos.yt.yield.claimable
+              ? Number(BigInt(pos.yt.yield.claimable) / (10n ** BigInt(ytDec)))
+              : 0;
+            const claimed = pos.yt.yield.claimed
+              ? Number(BigInt(pos.yt.yield.claimed) / (10n ** BigInt(ytDec)))
+              : 0;
             if (claimable > 0 || claimed > 0) {
               ytLine += ` | Yield: ${claimable.toLocaleString("en-US", { maximumFractionDigits: 2 })} claimable, ${claimed.toLocaleString("en-US", { maximumFractionDigits: 2 })} claimed`;
             }
