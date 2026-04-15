@@ -23,6 +23,7 @@ import {
   resolveRpcUrlsWithFallbacks,
 } from "./config.js";
 import type { MorphoMarket, MorphoMarketSupplier, MorphoVault, MorphoVaultAllocation, MorphoHistoricalDataPoint, SpectraPt, SpectraPool, SpectraMetavault, PendleMarket, RawPoolOpportunity, ChainScanResult, MerklTokenReward, MerklChainRewards, MerklCampaign, LiquidationAlert, RiskAlertLevel } from "./types.js";
+import { MetavaultSchema } from "./schemas/spectra.js";
 
 // =============================================================================
 // Retry Logic
@@ -73,6 +74,12 @@ async function fetchWithRetry(fn: () => Promise<Response>): Promise<Response> {
 // Spectra API
 // =============================================================================
 
+// This function returns `unknown` on purpose. If you want a typed response,
+// use `fetchSpectraValidated` (soft — warns on shape drift, preserves output)
+// or `fetchSpectraValidatedArray` (soft — drops malformed elements, logs each).
+// Do not widen this signature. The shape of the Spectra API is not your type
+// system's problem — it is the validator's problem. Keep them separate so the
+// blast radius stays small.
 export async function fetchSpectra(path: string): Promise<unknown> {
   const url = `${SPECTRA_API}${path}`;
   const res = await fetchWithRetry(() =>
@@ -90,6 +97,94 @@ export async function fetchSpectra(path: string): Promise<unknown> {
   } catch {
     throw new Error(`Spectra API returned invalid JSON for ${url}: ${body.slice(0, 120)}`);
   }
+}
+
+// =============================================================================
+// Schema-validated Spectra fetch
+// =============================================================================
+//
+// These wrappers layer zod schema validation on top of `fetchSpectra`.
+// They never throw on shape drift — instead they return `{data, warnings}` so
+// the caller can decide whether to degrade output, surface a warning to the
+// user, or drop the record. This is critical for tools Richard runs live
+// during client calls: a single drifted field must not detonate the entire
+// tool output.
+//
+// Hard throws remain for (a) HTTP failures, (b) JSON parse failures — both
+// already happen in `fetchSpectra` and are NOT shape-drift concerns.
+//
+// ⚠ Scope: only wire new callers through these. Existing callers keep using
+// `fetchSpectra` until they're migrated deliberately. Validation coverage
+// expands one endpoint at a time.
+// =============================================================================
+
+export interface ValidatedResponse<T> {
+  data: T;
+  warnings: Array<{ path: string; message: string }>;
+}
+
+function summarizeIssues(issues: import("zod").ZodIssue[]): Array<{ path: string; message: string }> {
+  return issues.map((i) => ({
+    path: i.path.join("."),
+    message: i.message,
+  }));
+}
+
+/**
+ * Fetch and validate a single-object Spectra response against a zod schema.
+ * On schema mismatch, logs to stderr and returns the raw data cast to T
+ * alongside a list of warnings. Never throws on shape drift.
+ */
+export async function fetchSpectraValidated<T>(
+  path: string,
+  schema: import("zod").ZodType<T>,
+): Promise<ValidatedResponse<T>> {
+  const raw = await fetchSpectra(path); // hard-throws on HTTP/JSON failure; that's fine
+  const parsed = schema.safeParse(raw);
+  if (parsed.success) return { data: parsed.data, warnings: [] };
+  const warnings = summarizeIssues(parsed.error.issues);
+  console.error(
+    `[schema] ${path}: ${warnings.length} issue(s); first: ${warnings[0].path} — ${warnings[0].message}`,
+  );
+  return { data: raw as T, warnings };
+}
+
+/**
+ * Fetch and validate an array Spectra response, element-by-element.
+ * Malformed elements are DROPPED (not returned) with per-element warnings
+ * accumulated. The caller gets back only the valid survivors plus the
+ * warnings list — so a list tool can still render the healthy records
+ * while surfacing the drift to the user.
+ *
+ * Use this for endpoints that return arrays (/metavaults, /pools, etc.).
+ * For single-object endpoints, use `fetchSpectraValidated`.
+ */
+export async function fetchSpectraValidatedArray<T>(
+  path: string,
+  elementSchema: import("zod").ZodType<T>,
+): Promise<ValidatedResponse<T[]>> {
+  const raw = await fetchSpectra(path);
+  if (!Array.isArray(raw)) {
+    const warnings = [{ path: "$root", message: `Expected array, got ${typeof raw}` }];
+    console.error(`[schema] ${path}: response is not an array (got ${typeof raw})`);
+    return { data: [] as T[], warnings };
+  }
+  const survivors: T[] = [];
+  const warnings: Array<{ path: string; message: string }> = [];
+  for (let i = 0; i < raw.length; i++) {
+    const parsed = elementSchema.safeParse(raw[i]);
+    if (parsed.success) {
+      survivors.push(parsed.data);
+    } else {
+      const issues = summarizeIssues(parsed.error.issues);
+      // Prefix each issue's path with the array index so the caller can trace it back
+      for (const iss of issues) warnings.push({ path: `[${i}].${iss.path}`, message: iss.message });
+      console.error(
+        `[schema] ${path} element ${i}: dropped — ${issues.length} issue(s); first: ${issues[0].path} — ${issues[0].message}`,
+      );
+    }
+  }
+  return { data: survivors, warnings };
 }
 
 export async function fetchSpectraAppNumber(path: string): Promise<number> {
@@ -1742,15 +1837,33 @@ function validateMetavaultEntries(raw: any[], chain: string): SpectraMetavault[]
  * Returns an empty array if the endpoint returns no data or errors.
  */
 export async function fetchMetavaults(chain: string): Promise<SpectraMetavault[]> {
+  const result = await fetchMetavaultsWithWarnings(chain);
+  return result.data;
+}
+
+/**
+ * Same as `fetchMetavaults` but also returns schema-drift warnings.
+ * Use this when you want to surface drift to the user (e.g. in the
+ * MetaVault list output footer). Warnings are already logged to stderr
+ * either way; this just exposes them for rendering.
+ */
+export async function fetchMetavaultsWithWarnings(
+  chain: string,
+): Promise<ValidatedResponse<SpectraMetavault[]>> {
   const network = resolveNetwork(chain);
   try {
-    const raw = await fetchSpectra(`/${network}/metavaults`) as any;
-    const arr = Array.isArray(raw) ? raw : (raw?.data || []);
-    if (!Array.isArray(arr)) return [];
-    return validateMetavaultEntries(arr, chain);
+    const { data, warnings } = await fetchSpectraValidatedArray(
+      `/${network}/metavaults`,
+      MetavaultSchema,
+    );
+    // Hand-rolled top-level validator remains as a belt-and-braces check.
+    // z.safeParse handles structural correctness; validateMetavaultEntries
+    // enforces our own identity-field expectations independently.
+    const survivors = validateMetavaultEntries(data as any[], chain);
+    return { data: survivors as SpectraMetavault[], warnings };
   } catch (err) {
     console.error(`MetaVault fetch failed for ${chain}:`, err instanceof Error ? err.message : err);
-    return [];
+    return { data: [], warnings: [{ path: "$fetch", message: err instanceof Error ? err.message : String(err) }] };
   }
 }
 
@@ -1808,12 +1921,15 @@ export async function resolvePtFromPoolAddress(chain: string, poolAddress: strin
 export async function scanAllMetavaults(): Promise<{
   metavaults: Array<{ metavault: SpectraMetavault; chain: string }>;
   failedChains: string[];
+  warningsByChain: Map<string, Array<{ path: string; message: string }>>;
 }> {
   const failedChains: string[] = [];
+  const warningsByChain = new Map<string, Array<{ path: string; message: string }>>();
   const results = await Promise.allSettled(
     API_NETWORKS.map(async (chain) => {
-      const mvs = await fetchMetavaults(chain);
-      return mvs.map((metavault) => ({ metavault, chain }));
+      const { data, warnings } = await fetchMetavaultsWithWarnings(chain);
+      if (warnings.length > 0) warningsByChain.set(chain, warnings);
+      return data.map((metavault) => ({ metavault, chain }));
     })
   );
 
@@ -1827,7 +1943,7 @@ export async function scanAllMetavaults(): Promise<{
     }
   }
 
-  return { metavaults, failedChains };
+  return { metavaults, failedChains, warningsByChain };
 }
 
 // =============================================================================

@@ -41,7 +41,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { MetavaultLoopRow, MetavaultCuratorEconomics, MetavaultPerformanceMetrics, SpectraMetavault, SpectraMetavaultEpoch } from "../types.js";
 import { CHAIN_ENUM, EVM_ADDRESS, SUPPORTED_CHAINS } from "../config.js";
-import { fetchMetavaults, scanAllMetavaults, fetchChainPoolAddresses, fetchMerklCampaigns, fetchPendleMarketDetail, lookupMerklCampaigns, fetchMerkl, parseMerklRewards } from "../api.js";
+import { fetchMetavaults, fetchMetavaultsWithWarnings, scanAllMetavaults, fetchChainPoolAddresses, fetchMerklCampaigns, fetchPendleMarketDetail, lookupMerklCampaigns, fetchMerkl, parseMerklRewards } from "../api.js";
 import type { MerklCampaign } from "../types.js";
 import {
   formatPct,
@@ -249,13 +249,19 @@ the vault contract address won't appear in pool activity data.`,
         let entries: Array<{ metavault: any; chain: string }>;
 
         let failedChains: string[] = [];
+        // Schema-drift warnings keyed by chain — surfaced in the output footer
+        // so Richard sees shape changes the moment they happen, instead of
+        // discovering them when a formatter crashes three weeks later.
+        const schemaWarningsByChain = new Map<string, Array<{ path: string; message: string }>>();
         if (chain) {
-          const mvs = await fetchMetavaults(chain);
-          entries = mvs.map((metavault) => ({ metavault, chain }));
+          const { data, warnings } = await fetchMetavaultsWithWarnings(chain);
+          entries = data.map((metavault) => ({ metavault, chain }));
+          if (warnings.length > 0) schemaWarningsByChain.set(chain, warnings);
         } else {
           const result = await scanAllMetavaults();
           entries = result.metavaults;
           failedChains = result.failedChains;
+          for (const [c, w] of result.warningsByChain) schemaWarningsByChain.set(c, w);
         }
 
         // Fetch Merkl campaigns for all position chains (parallel, best-effort)
@@ -290,6 +296,22 @@ the vault contract address won't appear in pool activity data.`,
         let text = formatMetavaultList(entries, chain, merklMaps.size > 0 ? merklMaps : undefined, merklWarnings.length > 0 ? merklWarnings : undefined);
         if (failedChains.length > 0) {
           text += `\nNote: ${failedChains.length} chain(s) unreachable: ${failedChains.join(", ")}. MetaVaults on those chains may be missing.`;
+        }
+        // Surface schema drift to the user. This footer is the product —
+        // it tells Richard the moment Spectra's response shape changes,
+        // rather than letting the drift hide until a formatter crashes.
+        if (schemaWarningsByChain.size > 0) {
+          const totalIssues = [...schemaWarningsByChain.values()].reduce((a, w) => a + w.length, 0);
+          const chainList = [...schemaWarningsByChain.keys()].join(", ");
+          text += `\n\n⚠ Schema drift: ${totalIssues} field(s) did not match expected shape on ${chainList}.`;
+          text += `\n  Output above may be incomplete where validation dropped malformed records.`;
+          // Show up to 3 issues per chain so Richard can eyeball the class of drift
+          for (const [c, warnings] of schemaWarningsByChain) {
+            const sample = warnings.slice(0, 3).map((w) => `${w.path}: ${w.message}`).join("; ");
+            const more = warnings.length > 3 ? ` (+${warnings.length - 3} more)` : "";
+            text += `\n    ${c}: ${sample}${more}`;
+          }
+          text += `\n  If this persists, the Spectra API shape changed — update src/schemas/spectra.ts.`;
         }
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
