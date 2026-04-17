@@ -8,6 +8,7 @@ import { CHAIN_ENUM, EVM_ADDRESS, SUPPORTED_CHAINS, resolveNetwork } from "../co
 import type { SpectraPt, SpectraPool, MerklCampaign } from "../types.js";
 import { fetchSpectraPtValidated, fetchSpectraPoolsValidated, fetchVeTotalSupply, scanAllChainPools, fetchMerklCampaigns, lookupMerklCampaigns, resolvePtFromPoolAddress } from "../api.js";
 import {
+  formatSchemaWarningFooter,
   formatUsd,
   formatPct,
   formatDate,
@@ -63,12 +64,14 @@ Use spectra_get_pool_activity to see trading patterns on this pool.`,
 
         // Fetch PT data and Merkl campaigns in parallel
         let effectivePtAddr = pt_address;
+        const schemaWarnings: Array<{ path: string; message: string }> = [];
         const [ptResult, merklResult] = await Promise.all([
           fetchSpectraPtValidated(chain, effectivePtAddr),
           chainInfo ? fetchMerklCampaigns(chainInfo.id).catch(() => ({ campaigns: new Map<string, MerklCampaign[]>(), available: false })) : Promise.resolve({ campaigns: new Map<string, MerklCampaign[]>(), available: true }),
         ]);
         const merklMap = merklResult.campaigns;
         let pt = ptResult.data as SpectraPt | undefined;
+        schemaWarnings.push(...ptResult.warnings);
 
         // If not found, the address might be a pool address — try resolving
         if (!pt) {
@@ -77,6 +80,7 @@ Use spectra_get_pool_activity to see trading patterns on this pool.`,
             effectivePtAddr = resolved;
             const retry = await fetchSpectraPtValidated(chain, effectivePtAddr);
             pt = retry.data as SpectraPt | undefined;
+            schemaWarnings.push(...retry.warnings);
           }
         }
 
@@ -178,6 +182,7 @@ Use spectra_get_pool_activity to see trading patterns on this pool.`,
         if (!merklResult.available) {
           text += `\nNote: Merkl incentive data unavailable — external campaign APR may be missing.`;
         }
+        text += formatSchemaWarningFooter(schemaWarnings, "pt details");
 
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
@@ -247,6 +252,7 @@ Use spectra_get_pool_activity on a specific pool to see recent trading patterns.
         ]);
         const merklMap = merklResult.campaigns;
         const pts = poolsResult.data as SpectraPt[];
+        const poolsWarnings = poolsResult.warnings;
 
         if (!Array.isArray(pts) || pts.length === 0) {
           const text = `No pools found on ${chain}. The endpoint may use a different format -- try spectra_get_pt_details with a specific address.`;
@@ -351,6 +357,7 @@ Use spectra_get_pool_activity on a specific pool to see recent trading patterns.
         if (!merklResult.available) {
           text += `\nNote: Merkl incentive data unavailable — external campaign APR may be missing.`;
         }
+        text += formatSchemaWarningFooter(poolsWarnings, `pools on ${chain}`);
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
         const text = `Error listing pools: ${e.message}`;
@@ -522,12 +529,14 @@ check your current positions. Use spectra_scan_opportunities for multi-chain com
 
         // Fetch PT data and Merkl campaigns in parallel
         let effectivePtAddr = pt_address;
+        const schemaWarnings: Array<{ path: string; message: string }> = [];
         const [ptResult, merklResult] = await Promise.all([
           fetchSpectraPtValidated(chain, effectivePtAddr),
           chainInfo ? fetchMerklCampaigns(chainInfo.id).catch(() => ({ campaigns: new Map<string, MerklCampaign[]>(), available: false })) : Promise.resolve({ campaigns: new Map<string, MerklCampaign[]>(), available: true }),
         ]);
         const merklMap = merklResult.campaigns;
         let pt = ptResult.data as SpectraPt | undefined;
+        schemaWarnings.push(...ptResult.warnings);
 
         // If not found, the address might be a pool address — try resolving
         if (!pt) {
@@ -536,6 +545,7 @@ check your current positions. Use spectra_scan_opportunities for multi-chain com
             effectivePtAddr = resolved;
             const retry = await fetchSpectraPtValidated(chain, effectivePtAddr);
             pt = retry.data as SpectraPt | undefined;
+            schemaWarnings.push(...retry.warnings);
           }
         }
 
@@ -724,7 +734,7 @@ check your current positions. Use spectra_scan_opportunities for multi-chain com
           lines.push(`Note: veSPECTRA data unavailable (Base RPC unreachable) — boost calculations omitted. LP APY shown without boost.`);
         }
 
-        const text = lines.join("\n");
+        const text = lines.join("\n") + formatSchemaWarningFooter(schemaWarnings, "compare yield");
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
         const text = `Error comparing yields: ${e.message}`;

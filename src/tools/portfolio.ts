@@ -6,7 +6,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { CHAIN_ENUM, EVM_ADDRESS, API_NETWORKS, SUPPORTED_CHAINS, resolveNetwork } from "../config.js";
 import type { SpectraPt, MerklTokenReward, MerklChainRewards } from "../types.js";
 import { fetchSpectraPortfolioValidated, findMorphoMarketsForPts, fetchMerkl, parseMerklRewards, fetchMorphoUserAddresses } from "../api.js";
-import { formatUsd, formatPositionSummary, formatPortfolioHints, formatMerklRewards, formatUnmatchedMerklRewards, daysToMaturity, formatBalance } from "../formatters.js";
+import { formatUsd, formatPositionSummary, formatPortfolioHints, formatMerklRewards, formatUnmatchedMerklRewards, daysToMaturity, formatBalance, formatSchemaWarningFooter } from "../formatters.js";
 import type { SpectraPool } from "../types.js";
 
 export function register(server: McpServer): void {
@@ -49,15 +49,20 @@ Protocol context:
           : API_NETWORKS;
 
         type Position = { pos: SpectraPt; chain: string };
+        type PortfolioChainResult = { positions: Position[]; warnings: Array<{ path: string; message: string }> };
         const failedChains: string[] = [];
         const merklFailedChains: string[] = [];
+        const schemaWarningsByChain = new Map<string, Array<{ path: string; message: string }>>();
 
         // Fire portfolio + Merkl + Morpho address fetches in parallel (no added latency)
         const [portfolioResults, merklSettled, morphoAddressResults] = await Promise.all([
           Promise.allSettled(
-            networks.map(async (net): Promise<Position[]> => {
-              const { data: items } = await fetchSpectraPortfolioValidated(net, address);
-              return (items as SpectraPt[]).map((pos) => ({ pos, chain: net }));
+            networks.map(async (net): Promise<PortfolioChainResult> => {
+              const { data: items, warnings } = await fetchSpectraPortfolioValidated(net, address);
+              return {
+                positions: (items as SpectraPt[]).map((pos) => ({ pos, chain: net })),
+                warnings,
+              };
             })
           ),
           Promise.allSettled(
@@ -82,7 +87,10 @@ Protocol context:
         const allPositions: Position[] = [];
         portfolioResults.forEach((result, i) => {
           if (result.status === "fulfilled") {
-            allPositions.push(...result.value);
+            allPositions.push(...result.value.positions);
+            if (result.value.warnings.length > 0) {
+              schemaWarningsByChain.set(networks[i], result.value.warnings);
+            }
           } else {
             failedChains.push(networks[i]);
           }
@@ -273,6 +281,10 @@ Protocol context:
         nextSteps.push(`• Cross-pool scan: spectra_get_address_activity(address="${address}") for multi-pool overview`);
 
         text += nextSteps.join("\n");
+
+        // Schema drift footer — surface shape changes so Richard sees them live,
+        // not three weeks later when a formatter crashes.
+        text += formatSchemaWarningFooter(schemaWarningsByChain);
 
         return { content: [{ type: "text" as const, text }] };
       } catch (e: any) {
