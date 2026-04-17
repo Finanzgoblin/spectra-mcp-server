@@ -28,7 +28,7 @@ import {
   fetchPendleHistoricalData,
   fetchIbtConversionRate,
   computePercentiles,
-  fetchSpectra,
+  fetchSpectraPtValidated,
   fetchMorpho,
   fetchMerklCampaigns,
 } from "../api.js";
@@ -343,12 +343,12 @@ or export knowledge about what normal looks like.`,
 
           // Try to get PT details for historical context
           try {
-            const ptData = await fetchSpectra(`/${network}/pt/${addr}`) as any;
-            if (ptData?.name) targetName = ptData.name;
-            if (ptData?.pools?.[0]?.impliedApy != null) {
+            const { data: pt } = await fetchSpectraPtValidated(chain, addr);
+            if (pt?.name) targetName = pt.name;
+            const pool0ApyRaw = pt?.pools?.[0]?.impliedApy;
+            if (pool0ApyRaw != null) {
               // Single-point — not enough for calibration, but we can note current state
-              const pool = ptData.pools[0];
-              const singleMetric = buildMetric("Implied APY (current only)", "%", [pool.impliedApy * 100], pool.impliedApy * 100);
+              const singleMetric = buildMetric("Implied APY (current only)", "%", [pool0ApyRaw * 100], pool0ApyRaw * 100);
               if (singleMetric) {
                 singleMetric.dataPoints = 1;
                 metrics.push(singleMetric);

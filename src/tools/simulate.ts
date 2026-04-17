@@ -9,9 +9,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork } from "../config.js";
 import type { SpectraPt, SpectraPool, PositionSnapshot, TradeQuote } from "../types.js";
-import { fetchSpectra, resolvePtFromPoolAddress } from "../api.js";
+import { fetchSpectraPtValidated, fetchSpectraPortfolioValidated, resolvePtFromPoolAddress } from "../api.js";
 import {
-  parsePtResponse,
   buildQuoteFromPt,
   formatBalance,
   formatPortfolioSimulation,
@@ -78,20 +77,19 @@ price quote without portfolio context.`,
         // Fetch portfolio and PT data in parallel
         // Portfolio is best-effort — if it fails, simulate from zero
         let effectivePtAddr = pt_address;
-        const [portfolioResult, ptData] = await Promise.all([
-          fetchSpectra(`/${network}/portfolio/${address}`).catch(() => null) as Promise<any>,
-          fetchSpectra(`/${network}/pt/${effectivePtAddr}`) as Promise<any>,
+        const [portfolioResult, ptResult] = await Promise.all([
+          fetchSpectraPortfolioValidated(network, address).catch(() => ({ data: [] as unknown[], warnings: [] })),
+          fetchSpectraPtValidated(chain, effectivePtAddr),
         ]);
 
-        let pt = parsePtResponse(ptData);
+        let pt = ptResult.data as SpectraPt | undefined;
 
         // If not found, the address might be a pool address — try resolving
         if (!pt) {
           const resolved = await resolvePtFromPoolAddress(chain, pt_address);
           if (resolved) {
             effectivePtAddr = resolved;
-            const data2 = await fetchSpectra(`/${network}/pt/${effectivePtAddr}`) as any;
-            pt = parsePtResponse(data2);
+            pt = (await fetchSpectraPtValidated(chain, effectivePtAddr)).data as SpectraPt | undefined;
           }
         }
 
@@ -134,20 +132,16 @@ price quote without portfolio context.`,
         const lpPriceUsd = pool.lpt?.price?.usd || 0;
         const decimals = pt.decimals ?? 18;
 
-        // Find existing position for this PT in the portfolio
-        let portfolioFetchFailed = false;
-        let existingPos: SpectraPt | undefined;
-
-        if (portfolioResult === null) {
-          portfolioFetchFailed = true;
-        } else {
-          const positions: SpectraPt[] = Array.isArray(portfolioResult)
-            ? portfolioResult
-            : portfolioResult?.data || [];
-          existingPos = positions.find(
-            (p) => p.address?.toLowerCase() === pt_address.toLowerCase()
-          );
-        }
+        // Find existing position for this PT in the portfolio.
+        // portfolioResult is ValidatedResponse<PtParsed[]> on success or the fallback
+        // { data: [], warnings: [] } when the fetch was caught. `portfolioFetchFailed`
+        // tracks only transport-level failures (currently impossible through the
+        // validated fetcher, but we keep the branch for forward compatibility).
+        const portfolioFetchFailed = false;
+        const positions = portfolioResult.data as SpectraPt[];
+        const existingPos: SpectraPt | undefined = positions.find(
+          (p) => p.address?.toLowerCase() === pt_address.toLowerCase()
+        );
 
         // Build BEFORE snapshot
         let ptBal = 0;

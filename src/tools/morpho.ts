@@ -7,8 +7,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, MORPHO_CHAIN_IDS, resolveNetwork } from "../config.js";
 import type { MorphoMarket, MorphoVault, MorphoUserPositions, MorphoUserMarketPosition, MorphoUserVaultPosition, MorphoHistoricalAnalysis, MorphoHistoricalDataPoint, MorphoRateStats, MerklCampaign } from "../types.js";
-import { fetchMorpho, sanitizeGraphQL, MORPHO_MARKET_FIELDS, fetchSpectraPtAddresses, fetchPtMaturityIndex, fetchMorphoMarketSuppliers, fetchMorphoVaults, fetchMorphoMarketRates, fetchMorphoUserPositions, fetchMorphoMarketHistory, fetchMerklCampaigns, lookupMerklCampaigns, fetchSpectra } from "../api.js";
-import { formatPct, formatUsd, formatMorphoLltv, formatMorphoMarketSummary, formatMorphoMarketHints, formatMorphoSupplierAnalysis, formatMorphoVaultSummary, formatMorphoVaultSummaryEnriched, formatMorphoUserPositions, formatMorphoHistoricalAnalysis, formatMorphoHistoryHints, parsePtResponse } from "../formatters.js";
+import { fetchMorpho, sanitizeGraphQL, MORPHO_MARKET_FIELDS, fetchSpectraPtAddresses, fetchPtMaturityIndex, fetchMorphoMarketSuppliers, fetchMorphoVaults, fetchMorphoMarketRates, fetchMorphoUserPositions, fetchMorphoMarketHistory, fetchMerklCampaigns, lookupMerklCampaigns, fetchSpectraPtValidated } from "../api.js";
+import { formatPct, formatUsd, formatMorphoLltv, formatMorphoMarketSummary, formatMorphoMarketHints, formatMorphoSupplierAnalysis, formatMorphoVaultSummary, formatMorphoVaultSummaryEnriched, formatMorphoUserPositions, formatMorphoHistoricalAnalysis, formatMorphoHistoryHints } from "../formatters.js";
 
 export function register(server: McpServer): void {
   // ===========================================================================
@@ -368,8 +368,7 @@ Use spectra_get_looping_strategy with these rates to calculate leveraged yield p
         try {
           const ptAddress = market.collateralAsset?.address;
           if (ptAddress) {
-            const ptData = await fetchSpectra(`/${network}/pt/${ptAddress}`).catch(() => null) as any;
-            const pt = ptData ? parsePtResponse(ptData) : null;
+            const { data: pt } = await fetchSpectraPtValidated(network, ptAddress).catch(() => ({ data: undefined, warnings: [] }));
             const impliedApy = pt?.pools?.[0]?.impliedApy;
             if (impliedApy !== undefined && impliedApy > 0) {
               ptSpreadAvailable = true;

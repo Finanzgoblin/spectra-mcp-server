@@ -6,7 +6,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, SUPPORTED_CHAINS, resolveNetwork } from "../config.js";
 import type { SpectraPt, SpectraPool, MerklCampaign } from "../types.js";
-import { fetchSpectra, fetchVeTotalSupply, scanAllChainPools, fetchMerklCampaigns, lookupMerklCampaigns, resolvePtFromPoolAddress } from "../api.js";
+import { fetchSpectraPtValidated, fetchSpectraPoolsValidated, fetchVeTotalSupply, scanAllChainPools, fetchMerklCampaigns, lookupMerklCampaigns, resolvePtFromPoolAddress } from "../api.js";
 import {
   formatUsd,
   formatPct,
@@ -15,7 +15,6 @@ import {
   formatPoolSummary,
   formatPoolCompact,
   formatPtSummary,
-  parsePtResponse,
   extractLpApyBreakdown,
   computeSpectraBoost,
   estimatePriceImpact,
@@ -64,20 +63,20 @@ Use spectra_get_pool_activity to see trading patterns on this pool.`,
 
         // Fetch PT data and Merkl campaigns in parallel
         let effectivePtAddr = pt_address;
-        const [data, merklResult] = await Promise.all([
-          fetchSpectra(`/${network}/pt/${effectivePtAddr}`) as Promise<any>,
+        const [ptResult, merklResult] = await Promise.all([
+          fetchSpectraPtValidated(chain, effectivePtAddr),
           chainInfo ? fetchMerklCampaigns(chainInfo.id).catch(() => ({ campaigns: new Map<string, MerklCampaign[]>(), available: false })) : Promise.resolve({ campaigns: new Map<string, MerklCampaign[]>(), available: true }),
         ]);
         const merklMap = merklResult.campaigns;
-        let pt = parsePtResponse(data);
+        let pt = ptResult.data as SpectraPt | undefined;
 
         // If not found, the address might be a pool address — try resolving
         if (!pt) {
           const resolved = await resolvePtFromPoolAddress(chain, pt_address);
           if (resolved) {
             effectivePtAddr = resolved;
-            const data2 = await fetchSpectra(`/${network}/pt/${effectivePtAddr}`) as any;
-            pt = parsePtResponse(data2);
+            const retry = await fetchSpectraPtValidated(chain, effectivePtAddr);
+            pt = retry.data as SpectraPt | undefined;
           }
         }
 
@@ -242,12 +241,12 @@ Use spectra_get_pool_activity on a specific pool to see recent trading patterns.
         const chainInfo = SUPPORTED_CHAINS[network];
 
         // Fetch pools and Merkl campaigns in parallel
-        const [raw, merklResult] = await Promise.all([
-          fetchSpectra(`/${network}/pools`) as Promise<any>,
+        const [poolsResult, merklResult] = await Promise.all([
+          fetchSpectraPoolsValidated(chain),
           chainInfo ? fetchMerklCampaigns(chainInfo.id).catch(() => ({ campaigns: new Map<string, MerklCampaign[]>(), available: false })) : Promise.resolve({ campaigns: new Map<string, MerklCampaign[]>(), available: true }),
         ]);
         const merklMap = merklResult.campaigns;
-        const pts: SpectraPt[] = raw?.data || raw || [];
+        const pts = poolsResult.data as SpectraPt[];
 
         if (!Array.isArray(pts) || pts.length === 0) {
           const text = `No pools found on ${chain}. The endpoint may use a different format -- try spectra_get_pt_details with a specific address.`;
@@ -523,20 +522,20 @@ check your current positions. Use spectra_scan_opportunities for multi-chain com
 
         // Fetch PT data and Merkl campaigns in parallel
         let effectivePtAddr = pt_address;
-        const [data, merklResult] = await Promise.all([
-          fetchSpectra(`/${network}/pt/${effectivePtAddr}`) as Promise<any>,
+        const [ptResult, merklResult] = await Promise.all([
+          fetchSpectraPtValidated(chain, effectivePtAddr),
           chainInfo ? fetchMerklCampaigns(chainInfo.id).catch(() => ({ campaigns: new Map<string, MerklCampaign[]>(), available: false })) : Promise.resolve({ campaigns: new Map<string, MerklCampaign[]>(), available: true }),
         ]);
         const merklMap = merklResult.campaigns;
-        let pt = parsePtResponse(data);
+        let pt = ptResult.data as SpectraPt | undefined;
 
         // If not found, the address might be a pool address — try resolving
         if (!pt) {
           const resolved = await resolvePtFromPoolAddress(chain, pt_address);
           if (resolved) {
             effectivePtAddr = resolved;
-            const data2 = await fetchSpectra(`/${network}/pt/${effectivePtAddr}`) as any;
-            pt = parsePtResponse(data2);
+            const retry = await fetchSpectraPtValidated(chain, effectivePtAddr);
+            pt = retry.data as SpectraPt | undefined;
           }
         }
 

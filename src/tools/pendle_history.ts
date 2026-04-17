@@ -236,7 +236,7 @@ Use pendle_list_markets to find market addresses.`,
           for (const point of recent) {
             const ts = (point.timestamp as string)?.split("T")[0] || "?";
             const vals = requestedFields
-              .filter((f) => point[f] !== undefined)
+              .filter((f) => point[f] != null)
               .map((f) => {
                 const v = typeof point[f] === "number" ? point[f] as number : parseFloat(point[f] as string);
                 return `${f}: ${formatFieldValue(f, v)}`;

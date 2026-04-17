@@ -5,14 +5,13 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, PROTOCOL_CONSTANTS, MORPHO_CHAIN_IDS, resolveNetwork } from "../config.js";
-import { fetchSpectra, findMorphoMarketForPt, fetchMorphoMarketHistory, resolvePtFromPoolAddress } from "../api.js";
+import { fetchSpectraPtValidated, findMorphoMarketForPt, fetchMorphoMarketHistory, resolvePtFromPoolAddress } from "../api.js";
 import type { BorrowRateRisk } from "../types.js";
 import {
   formatPct,
   formatUsd,
   formatDate,
   daysToMaturity,
-  parsePtResponse,
   formatMorphoLltv,
   getEffectiveLiquidityUsd,
   cumulativeLeverageAtLoop,
@@ -93,16 +92,14 @@ discover the best looping opportunities across all chains with capital-aware siz
       try {
         const network = resolveNetwork(chain);
         let effectivePtAddr = pt_address;
-        let data = await fetchSpectra(`/${network}/pt/${effectivePtAddr}`) as any;
-        let pt = parsePtResponse(data);
+        let pt = (await fetchSpectraPtValidated(chain, effectivePtAddr)).data;
 
         // If not found, the address might be a pool address — try resolving
         if (!pt) {
           const resolved = await resolvePtFromPoolAddress(chain, pt_address);
           if (resolved) {
             effectivePtAddr = resolved;
-            data = await fetchSpectra(`/${network}/pt/${effectivePtAddr}`) as any;
-            pt = parsePtResponse(data);
+            pt = (await fetchSpectraPtValidated(chain, effectivePtAddr)).data;
           }
         }
 
