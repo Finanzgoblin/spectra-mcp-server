@@ -4878,3 +4878,47 @@ export function formatCuratorRiskSummary(summary: CuratorRiskSummary): string {
 
   return lines.join("\n");
 }
+
+// ============================================================================
+// Schema drift footer
+// ============================================================================
+
+/**
+ * Build a footer that surfaces zod validation warnings the moment they happen.
+ * Pattern established in metavault.ts — makes shape drift visible to the user
+ * instead of hiding in stderr where MCP clients don't read it.
+ *
+ * @param warnings  Flat list of { path, message } pairs, or a per-chain Map.
+ * @param label     Short human label for context ("pt details", "portfolio"). Omit if obvious.
+ * @returns Empty string when no warnings (safe to concat unconditionally).
+ */
+export function formatSchemaWarningFooter(
+  warnings:
+    | Array<{ path: string; message: string }>
+    | Map<string, Array<{ path: string; message: string }>>,
+  label?: string,
+): string {
+  // Normalize to a per-chain map so the formatter is shape-agnostic.
+  const byChain: Map<string, Array<{ path: string; message: string }>> =
+    warnings instanceof Map ? warnings : new Map([["", warnings]]);
+
+  const totalIssues = [...byChain.values()].reduce((a, w) => a + w.length, 0);
+  if (totalIssues === 0) return "";
+
+  const chainList = [...byChain.keys()].filter(Boolean).join(", ");
+  const scope = chainList || label || "this call";
+
+  const lines: string[] = [];
+  lines.push(``);
+  lines.push(`⚠ Schema drift: ${totalIssues} field(s) did not match expected shape on ${scope}.`);
+  lines.push(`  Output above may be incomplete where validation dropped malformed records.`);
+  for (const [c, ws] of byChain) {
+    if (ws.length === 0) continue;
+    const sample = ws.slice(0, 3).map((w) => `${w.path}: ${w.message}`).join("; ");
+    const more = ws.length > 3 ? ` (+${ws.length - 3} more)` : "";
+    const prefix = c ? `    ${c}: ` : `    `;
+    lines.push(`${prefix}${sample}${more}`);
+  }
+  lines.push(`  If this persists, the Spectra API shape changed — update src/schemas/spectra.ts.`);
+  return lines.join("\n");
+}

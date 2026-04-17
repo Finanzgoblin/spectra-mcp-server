@@ -77,8 +77,16 @@ price quote without portfolio context.`,
         // Fetch portfolio and PT data in parallel
         // Portfolio is best-effort — if it fails, simulate from zero
         let effectivePtAddr = pt_address;
+        // Track transport-level failures separately. The validated fetcher absorbs
+        // the empty-portfolio 500 internally and re-throws everything else (timeouts,
+        // DNS, 503, etc.). The .catch here still needs to flip the flag so the
+        // formatter's "Portfolio data unavailable" branch renders during real outages.
+        let portfolioFetchFailed = false;
         const [portfolioResult, ptResult] = await Promise.all([
-          fetchSpectraPortfolioValidated(network, address).catch(() => ({ data: [] as unknown[], warnings: [] })),
+          fetchSpectraPortfolioValidated(network, address).catch(() => {
+            portfolioFetchFailed = true;
+            return { data: [] as unknown[], warnings: [] };
+          }),
           fetchSpectraPtValidated(chain, effectivePtAddr),
         ]);
 
@@ -133,11 +141,9 @@ price quote without portfolio context.`,
         const decimals = pt.decimals ?? 18;
 
         // Find existing position for this PT in the portfolio.
-        // portfolioResult is ValidatedResponse<PtParsed[]> on success or the fallback
-        // { data: [], warnings: [] } when the fetch was caught. `portfolioFetchFailed`
-        // tracks only transport-level failures (currently impossible through the
-        // validated fetcher, but we keep the branch for forward compatibility).
-        const portfolioFetchFailed = false;
+        // portfolioResult.data is empty on both real failure (flagged above via
+        // portfolioFetchFailed) and on a genuinely-empty portfolio. The formatter
+        // branches on portfolioFetchFailed to decide whether to warn.
         const positions = portfolioResult.data as SpectraPt[];
         const existingPos: SpectraPt | undefined = positions.find(
           (p) => p.address?.toLowerCase() === pt_address.toLowerCase()
