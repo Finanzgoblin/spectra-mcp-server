@@ -8,8 +8,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork, VE_SPECTRA } from "../config.js";
-import { fetchVeTotalSupply, fetchVeBalance, fetchSpectra } from "../api.js";
-import { formatUsd, formatPct, parsePtResponse, computeSpectraBoost } from "../formatters.js";
+import { fetchVeTotalSupply, fetchVeBalance, fetchSpectraPtValidated } from "../api.js";
+import { formatUsd, formatPct, computeSpectraBoost } from "../formatters.js";
 
 export function register(server: McpServer): void {
   server.tool(
@@ -101,9 +101,7 @@ pool at a given deposit size.`,
 
           // If pool specified, compute exact boost
           if (chain && pt_address) {
-            const network = resolveNetwork(chain);
-            const ptData = await fetchSpectra(`/${network}/pt/${pt_address}`) as any;
-            const pt = parsePtResponse(ptData);
+            const { data: pt } = await fetchSpectraPtValidated(chain, pt_address);
             const pool = pt?.pools?.[0];
             const tvlUsd = pt?.tvl?.usd || 0;
             // Use pool liquidity (total AMM depth) for boost, not PT TVL —

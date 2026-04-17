@@ -10,9 +10,9 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork } from "../config.js";
-import { fetchSpectra, fetchCurveGetDy, amountToBigInt, resolvePtFromPoolAddress } from "../api.js";
-import type { TradeQuote } from "../types.js";
-import { parsePtResponse, buildQuoteFromPt, formatTradeQuote, formatPct, formatBalance } from "../formatters.js";
+import { fetchSpectraPtValidated, fetchCurveGetDy, amountToBigInt, resolvePtFromPoolAddress } from "../api.js";
+import type { TradeQuote, SpectraPt } from "../types.js";
+import { buildQuoteFromPt, formatTradeQuote, formatPct, formatBalance } from "../formatters.js";
 
 /**
  * Try to build a TradeQuote from an on-chain Curve get_dy() call.
@@ -118,16 +118,14 @@ makes sense relative to variable rates.`,
       try {
         const network = resolveNetwork(chain);
         let effectivePtAddr = pt_address;
-        let data = await fetchSpectra(`/${network}/pt/${effectivePtAddr}`) as any;
-        let pt = parsePtResponse(data);
+        let pt = (await fetchSpectraPtValidated(chain, effectivePtAddr)).data as SpectraPt | undefined;
 
         // If not found, the address might be a pool address — try resolving
         if (!pt) {
           const resolved = await resolvePtFromPoolAddress(chain, pt_address);
           if (resolved) {
             effectivePtAddr = resolved;
-            data = await fetchSpectra(`/${network}/pt/${effectivePtAddr}`) as any;
-            pt = parsePtResponse(data);
+            pt = (await fetchSpectraPtValidated(chain, effectivePtAddr)).data as SpectraPt | undefined;
           }
         }
 

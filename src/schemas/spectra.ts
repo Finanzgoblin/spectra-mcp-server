@@ -11,10 +11,11 @@
 //   few weeks a field turns out to be nullable and the tool crashes.
 //
 // Scope discipline:
-//   THIS FILE COVERS ONE ENDPOINT: `/v1/{chain}/metavaults`.
-//   Other endpoints (/pt, /pools, /portfolio, /voting-incentives) are still
-//   fetched through the raw `fetchSpectra` and kept their old interfaces.
-//   Adding more schemas is a separate PR. Do not widen this file.
+//   THIS FILE COVERS: `/v1/{chain}/metavaults`, `/v1/{chain}/pt/{address}`,
+//   `/v1/{chain}/pools`, and `/v1/{chain}/portfolio/{address}`.
+//   `/voting-incentives` is still fetched through the raw `fetchSpectra`.
+//   Extending to more endpoints is incremental — one endpoint at a time,
+//   each grounded in live fixtures, each with tests.
 //
 // Design choices (from a four-lens dialectic — see memory/):
 //   1. `.passthrough()` at every object boundary. Spectra adds fields weekly
@@ -357,3 +358,65 @@ export type MetavaultPositionParsed = z.infer<typeof PositionSchema>;
 export type MetavaultYtParsed = z.infer<typeof YtSchema>;
 export type MetavaultEpochParsed = z.infer<typeof EpochSchema>;
 export type MetavaultBridgeParsed = z.infer<typeof BridgeSchema>;
+
+// ────────────────────────────────────────────────────────────────────────────
+// /v1/{chain}/pt/{address}
+// ────────────────────────────────────────────────────────────────────────────
+//
+// The PT endpoint returns a single PT object wrapped as { data: [pt] } or
+// { data: pt }, with { data: [] } when the PT does not exist on that chain.
+//
+// Shape parity with MetaVault positions:
+//   A PT on the /pt endpoint has the same fields as a PT held inside a
+//   MetaVault position (address, maturity, pools, yt, ibt, multipliers...).
+//   We reuse PositionSchema directly. If these ever diverge at the API
+//   level, split PtSchema out with its own definition.
+//
+// Live fixtures: test/fixtures/pt-{chain}-{symbol}.json captured from
+//   https://app.spectra.finance/api/v1/{chain}/pt/{address}
+//
+export const PtSchema = PositionSchema;
+export type PtParsed = MetavaultPositionParsed;
+
+/**
+ * Wrapper matching the endpoint's response shape.
+ *
+ * `data` may be:
+ *   - An array of PTs (typical — `[pt]`)
+ *   - A single PT object (legacy shape still observed)
+ *   - An empty array (`[]` — PT not found on this chain)
+ *   - Absent (`{}` — edge case from error responses)
+ *
+ * The existing `parsePtResponse` helper handles the unwrap.
+ */
+export const PtResponseSchema = z
+  .object({
+    data: z.union([z.array(PtSchema), PtSchema]).optional(),
+  })
+  .passthrough();
+
+// ────────────────────────────────────────────────────────────────────────────
+// /v1/{chain}/pools
+// ────────────────────────────────────────────────────────────────────────────
+//
+// Returns a bare array of PTs (each one includes its `pools` sub-array with
+// AMM state). Same shape as the /pt endpoint's inner payload, so we reuse
+// PtSchema at the element level.
+//
+// Observed keys across live fixtures (base/avalanche/katana): address, name,
+// symbol, decimals, chainId, rate, tvl, yt, ibt, baseIbt, underlying, maturity,
+// createdAt, maturityValue, tags, pools. Every key is already in PositionSchema
+// as optional (except the structural `address` + `maturity`).
+//
+export const PoolsResponseSchema = z.array(PtSchema);
+
+// ────────────────────────────────────────────────────────────────────────────
+// /v1/{chain}/portfolio/{address}
+// ────────────────────────────────────────────────────────────────────────────
+//
+// Returns a bare array of PTs held by the address (active and expired).
+// Same element shape as /pools, with `balance` populated. The endpoint
+// returns HTTP 500 when the address has no positions — api.ts treats that
+// as an empty result, so this schema only covers the success payload.
+//
+export const PortfolioResponseSchema = z.array(PtSchema);

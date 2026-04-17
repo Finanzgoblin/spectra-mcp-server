@@ -6,8 +6,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork, API_NETWORKS, CHAIN_GAS_ESTIMATES } from "../config.js";
 import type { SpectraPt } from "../types.js";
-import { fetchSpectra, fetchAddressType } from "../api.js";
-import { formatUsd, formatDate, formatActivityType, parsePtResponse, detectActivityCycles, formatCycleAnalysis, formatFlowAccounting, formatObservationCoverage, formatBalance, formatVolumeHints, ROUTER_BATCHABLE_TYPES, ROUTER_BATCH_FOOTNOTE } from "../formatters.js";
+import { fetchSpectra, fetchSpectraPtValidated, fetchSpectraPoolsValidated, fetchSpectraPortfolioValidated, fetchAddressType } from "../api.js";
+import { formatUsd, formatDate, formatActivityType, detectActivityCycles, formatCycleAnalysis, formatFlowAccounting, formatObservationCoverage, formatBalance, formatVolumeHints, ROUTER_BATCHABLE_TYPES, ROUTER_BATCH_FOOTNOTE } from "../formatters.js";
 
 /**
  * Resolve a PT address to its Curve pool address.
@@ -16,8 +16,7 @@ import { formatUsd, formatDate, formatActivityType, parsePtResponse, detectActiv
  */
 async function resolvePoolAddressFromPt(network: string, address: string): Promise<string | null> {
   try {
-    const data = await fetchSpectra(`/${network}/pt/${address}`) as any;
-    const pt = parsePtResponse(data);
+    const { data: pt } = await fetchSpectraPtValidated(network, address);
     if (!pt?.pools?.[0]?.address) return null;
     return pt.pools[0].address;
   } catch {
@@ -142,8 +141,7 @@ Use spectra_quote_trade to estimate price impact for a specific trade size.`,
 
         // Layer 3: Volume context hints (best-effort liquidity fetch)
         try {
-          const ptData = await fetchSpectra(`/${network}/pt/${pool_address}`).catch(() => null) as any;
-          const ptParsed = ptData ? parsePtResponse(ptData) : null;
+          const { data: ptParsed } = await fetchSpectraPtValidated(network, pool_address).catch(() => ({ data: undefined, warnings: [] }));
           const poolLiq = ptParsed?.pools?.[0]?.liquidity?.usd || 0;
 
           const volumeHints = formatVolumeHints({
@@ -498,15 +496,14 @@ has interacted with in a single call.`,
           let addressType: "contract" | "eoa" | "unknown" = "unknown";
 
           const [poolResult, portfolioResult, addrTypeResult] = await Promise.allSettled([
-            fetchSpectra(`/${network}/pt/${effectivePoolAddr}`).catch(() => null),
-            fetchSpectra(`/${network}/portfolio/${address}`).catch(() => null),
+            fetchSpectraPtValidated(network, effectivePoolAddr),
+            fetchSpectraPortfolioValidated(network, address!),
             fetchAddressType(address!, network),
           ]);
 
           // Extract pool context (Feature 6)
-          if (poolResult.status === "fulfilled" && poolResult.value) {
-            const ptRaw = poolResult.value as any;
-            const pt = ptRaw?.data || ptRaw;
+          if (poolResult.status === "fulfilled" && poolResult.value.data) {
+            const pt = poolResult.value.data;
             if (pt?.pools?.[0]) {
               poolData = pt;
               poolLiquidityUsd = pt.pools[0].liquidity?.usd || 0;
@@ -514,9 +511,8 @@ has interacted with in a single call.`,
           }
 
           // Extract portfolio (Feature 2)
-          if (portfolioResult.status === "fulfilled" && portfolioResult.value) {
-            const raw = portfolioResult.value as any;
-            portfolioPositions = Array.isArray(raw) ? raw : raw?.data || [];
+          if (portfolioResult.status === "fulfilled") {
+            portfolioPositions = portfolioResult.value.data;
           }
 
           // Extract address type (Feature 1)
@@ -792,9 +788,9 @@ one chain. Position sizing should assume this scan is incomplete, not comprehens
             // Get active pools + portfolio (for expired pools) in parallel
             let poolsFailed = false;
             let portfolioFailed = false;
-            const [poolsRaw, portfolioRaw] = await Promise.all([
-              fetchSpectra(`/${net}/pools`).catch(() => { poolsFailed = true; return []; }),
-              fetchSpectra(`/${net}/portfolio/${address}`).catch(() => { portfolioFailed = true; return []; }),
+            const [poolsResult, portfolioResult] = await Promise.all([
+              fetchSpectraPoolsValidated(net).catch(() => { poolsFailed = true; return { data: [] as any[], warnings: [] }; }),
+              fetchSpectraPortfolioValidated(net, address).catch(() => { portfolioFailed = true; return { data: [] as any[], warnings: [] }; }),
             ]);
             if (poolsFailed && portfolioFailed) {
               // Both failed — can't discover any pools for this chain
@@ -804,11 +800,7 @@ one chain. Position sizing should assume this scan is incomplete, not comprehens
               partialChains.push(net + (poolsFailed ? " (pools API)" : " (portfolio API)"));
             }
 
-            const pts: any[] = (() => {
-              const r = poolsRaw as any;
-              const arr = Array.isArray(r) ? r : r?.data || [];
-              return Array.isArray(arr) ? arr : [];
-            })();
+            const pts: any[] = poolsResult.data;
 
             // Collect unique pool addresses from active pools
             const seen = new Set<string>();
@@ -830,11 +822,7 @@ one chain. Position sizing should assume this scan is incomplete, not comprehens
             }
 
             // Also include pools from the address's portfolio (catches expired/matured positions)
-            const positions: any[] = (() => {
-              const r = portfolioRaw as any;
-              const arr = Array.isArray(r) ? r : r?.data || [];
-              return Array.isArray(arr) ? arr : [];
-            })();
+            const positions: any[] = portfolioResult.data;
             for (const pos of positions) {
               for (const pool of (pos.pools || [])) {
                 if (pool.address) {

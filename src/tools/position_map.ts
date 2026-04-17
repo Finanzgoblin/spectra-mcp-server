@@ -23,7 +23,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { EVM_ADDRESS, CHAIN_ENUM, API_NETWORKS, SUPPORTED_CHAINS, resolveNetwork, MORPHO_CHAIN_IDS } from "../config.js";
-import { fetchSpectra, fetchMorphoUserPositions, scanAllPendleUserPositions, fetchVeTotalSupply, fetchVeBalance, fetchVePendleTotalSupply, fetchVePendleBalance } from "../api.js";
+import { fetchSpectraPortfolioValidated, fetchMorphoUserPositions, scanAllPendleUserPositions, fetchVeTotalSupply, fetchVeBalance, fetchVePendleTotalSupply, fetchVePendleBalance } from "../api.js";
 import { formatUsd, formatPct, daysToMaturity, formatBalance } from "../formatters.js";
 import type { SpectraPt, SpectraPool } from "../types.js";
 
@@ -74,16 +74,7 @@ before "what should I do?"`,
           // Spectra: portfolio across all chains
           Promise.allSettled(
             networks.map(async (net) => {
-              let raw: any;
-              try {
-                raw = await fetchSpectra(`/${net}/portfolio/${address}`) as any;
-              } catch (err: any) {
-                // Spectra API returns 500 "portfolioWithoutIbt is undefined" when wallet
-                // has no positions on a chain. This is an API bug, not a real failure.
-                if (err?.message?.includes("500")) return { chain: net, positions: [] as SpectraPt[] };
-                throw err;
-              }
-              const items = Array.isArray(raw) ? raw : raw?.data || [];
+              const { data: items } = await fetchSpectraPortfolioValidated(net, address);
               return { chain: net, positions: items as SpectraPt[] };
             })
           ),

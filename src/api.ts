@@ -23,7 +23,12 @@ import {
   resolveRpcUrlsWithFallbacks,
 } from "./config.js";
 import type { MorphoMarket, MorphoMarketSupplier, MorphoVault, MorphoVaultAllocation, MorphoHistoricalDataPoint, SpectraPt, SpectraPool, SpectraMetavault, PendleMarket, RawPoolOpportunity, ChainScanResult, MerklTokenReward, MerklChainRewards, MerklCampaign, LiquidationAlert, RiskAlertLevel } from "./types.js";
-import { MetavaultSchema } from "./schemas/spectra.js";
+import {
+  MetavaultSchema,
+  PtSchema,
+  PtResponseSchema,
+  type PtParsed,
+} from "./schemas/spectra.js";
 
 // =============================================================================
 // Retry Logic
@@ -185,6 +190,106 @@ export async function fetchSpectraValidatedArray<T>(
     }
   }
   return { data: survivors, warnings };
+}
+
+// =============================================================================
+// Validated fetchers for specific Spectra endpoints
+// =============================================================================
+//
+// These thin wrappers bind the generic `fetchSpectraValidated*` helpers to
+// concrete schemas. Callers get typed, schema-checked data without having
+// to care which helper to use or how to unwrap the response shape.
+//
+// Soft validation: shape drift produces warnings, never throws. The caller
+// still gets data — possibly cast — alongside the warning list.
+
+/**
+ * Pull the single PT out of the `/pt/{address}` response wrapper.
+ *
+ * The endpoint returns one of:
+ *   - `{ data: [pt] }`  (typical — first element is the PT)
+ *   - `{ data: pt }`    (legacy single-object)
+ *   - `{ data: [] }`    (PT not found on this chain — returns undefined)
+ *   - `{}`              (missing data field — treat as not found)
+ *
+ * Exported separately so this wrap/unwrap logic is independently unit-tested
+ * — without needing to mock the network to cover every branch.
+ */
+export function extractPtFromResponse(
+  wrapped: { data?: PtParsed | PtParsed[] } | null | undefined,
+): PtParsed | undefined {
+  if (!wrapped) return undefined;
+  const d = wrapped.data;
+  if (Array.isArray(d)) return d[0];
+  if (d) return d as PtParsed;
+  return undefined;
+}
+
+/**
+ * Fetch a single PT from `/v1/{chain}/pt/{address}` and validate.
+ *
+ * See `extractPtFromResponse` for the unwrap behavior.
+ * Returns `data: undefined` when the PT doesn't exist on the chain.
+ * Returns warnings accumulated during wrapper validation.
+ */
+export async function fetchSpectraPtValidated(
+  chain: string,
+  ptAddress: string,
+): Promise<ValidatedResponse<PtParsed | undefined>> {
+  const network = resolveNetwork(chain);
+  const { data, warnings } = await fetchSpectraValidated(
+    `/${network}/pt/${ptAddress}`,
+    PtResponseSchema,
+  );
+  return { data: extractPtFromResponse(data), warnings };
+}
+
+/**
+ * Fetch all active pools from `/v1/{chain}/pools` and validate element-wise.
+ * Malformed elements are dropped with warnings accumulated per element.
+ */
+export async function fetchSpectraPoolsValidated(
+  chain: string,
+): Promise<ValidatedResponse<PtParsed[]>> {
+  const network = resolveNetwork(chain);
+  return fetchSpectraValidatedArray(`/${network}/pools`, PtSchema);
+}
+
+/**
+ * True if the error represents the "no positions on this chain" case —
+ * Spectra's `/portfolio/{address}` returns HTTP 500 with a
+ * `portfolioWithoutIbt is undefined` message when the address holds nothing
+ * (see commit 5fae77a). Exported for unit testing; the fetcher below swallows
+ * these so callers don't see them as chain failures.
+ */
+export function isEmptyPortfolioError(err: unknown): boolean {
+  const msg = (err as { message?: unknown })?.message;
+  return typeof msg === "string" && msg.includes("500");
+}
+
+/**
+ * Fetch a user's portfolio from `/v1/{chain}/portfolio/{address}` and validate.
+ *
+ * Swallows the API's no-positions 500 (see `isEmptyPortfolioError`) and
+ * returns an empty array. Any other failure is re-thrown so callers can
+ * surface it as an unreachable-chain warning.
+ */
+export async function fetchSpectraPortfolioValidated(
+  chain: string,
+  address: string,
+): Promise<ValidatedResponse<PtParsed[]>> {
+  const network = resolveNetwork(chain);
+  try {
+    return await fetchSpectraValidatedArray(
+      `/${network}/portfolio/${address}`,
+      PtSchema,
+    );
+  } catch (err) {
+    if (isEmptyPortfolioError(err)) {
+      return { data: [], warnings: [] };
+    }
+    throw err;
+  }
 }
 
 export async function fetchSpectraAppNumber(path: string): Promise<number> {
@@ -1046,10 +1151,14 @@ async function fetchChainPools(chain: string): Promise<SpectraPt[]> {
 
   const promise = (async () => {
     try {
-      const raw = await fetchSpectra(`/${chain}/pools`) as any;
-      const arr: any[] = raw?.data || raw || [];
-      if (!Array.isArray(arr)) return [];
-      const pts = validatePtEntries(arr, chain);
+      // Element-level soft validation via PtSchema. Malformed elements are
+      // dropped with warnings; the remaining survivors pass through the
+      // same identity-field validator (validatePtEntries) as before.
+      const { data } = await fetchSpectraValidatedArray(
+        `/${chain}/pools`,
+        PtSchema,
+      );
+      const pts = validatePtEntries(data as any[], chain);
       _poolCache.set(chain, { pts, expiresAt: Date.now() + POOL_CACHE_TTL_MS });
       return pts;
     } finally {

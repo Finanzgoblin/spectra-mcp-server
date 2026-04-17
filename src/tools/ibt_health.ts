@@ -9,8 +9,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork } from "../config.js";
-import { fetchSpectra, fetchIbtConversionRate, fetchTokenDecimals, fetchSyExchangeRate, resolvePtFromPoolAddress } from "../api.js";
-import { parsePtResponse, formatUsd, formatPct, formatBalance } from "../formatters.js";
+import { fetchSpectraPtValidated, fetchIbtConversionRate, fetchTokenDecimals, fetchSyExchangeRate, resolvePtFromPoolAddress } from "../api.js";
+import { formatUsd, formatPct, formatBalance } from "../formatters.js";
 
 type Signal = "ok" | "caution" | "warning";
 
@@ -68,16 +68,14 @@ Use spectra_compare_yield for fixed-vs-variable rate analysis on the same PT.`,
         // ── Spectra mode: full analysis via Spectra API ──
         const network = resolveNetwork(chain);
         let effectivePtAddr = pt_address!;
-        let data = await fetchSpectra(`/${network}/pt/${effectivePtAddr}`) as any;
-        let pt = parsePtResponse(data);
+        let pt = (await fetchSpectraPtValidated(chain, effectivePtAddr)).data;
 
         // If not found, the address might be a pool address — try resolving
         if (!pt) {
           const resolved = await resolvePtFromPoolAddress(chain, pt_address!);
           if (resolved) {
             effectivePtAddr = resolved;
-            data = await fetchSpectra(`/${network}/pt/${effectivePtAddr}`) as any;
-            pt = parsePtResponse(data);
+            pt = (await fetchSpectraPtValidated(chain, effectivePtAddr)).data;
           }
         }
 

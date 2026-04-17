@@ -16,7 +16,7 @@ import {
   EVM_ADDRESS,
 } from "../config.js";
 import type { PendleMarket, SpectraPt, SpectraPool, MerklCampaign } from "../types.js";
-import { fetchPendleMarkets, scanAllPendleMarkets, fetchSpectra, fetchMerklCampaigns, lookupMerklCampaigns } from "../api.js";
+import { fetchPendleMarkets, scanAllPendleMarkets, fetchSpectraPoolsValidated, fetchMerklCampaigns, lookupMerklCampaigns } from "../api.js";
 import {
   formatUsd,
   formatPct,
@@ -24,7 +24,6 @@ import {
   formatPendleMarketSummary,
   formatPendleSpectraComparison,
   pendleDaysToMaturity,
-  parsePtResponse,
   daysToMaturity,
   matchByAssetAndMaturity,
 } from "../formatters.js";
@@ -244,13 +243,13 @@ Use spectra_scan_opportunities for Spectra-native capital-aware ranking.`,
         const assetUpper = asset_filter?.toUpperCase();
 
         // Fetch both in parallel
-        const [pendleResult, spectraRaw] = await Promise.all([
+        const [pendleResult, spectraResult] = await Promise.all([
           fetchPendleMarkets(chain),
-          fetchSpectra(`/${network}/pools`) as Promise<any>,
+          fetchSpectraPoolsValidated(network),
         ]);
 
-        // Parse Spectra pools
-        const spectraPts: SpectraPt[] = spectraRaw?.data || spectraRaw || [];
+        // Parse Spectra pools (schema-validated, malformed elements dropped)
+        const spectraPts = spectraResult.data as SpectraPt[];
         const now = Date.now();
 
         // Filter Pendle markets
