@@ -113,6 +113,8 @@ const GAS_REGIME: Record<string, "high" | "medium" | "low"> = {
   katana: "low",
   monad: "low",
   hemi: "low",
+  hyperevm: "low",
+  sei: "low",
 };
 
 /**

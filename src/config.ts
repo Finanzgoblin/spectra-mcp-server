@@ -92,6 +92,8 @@ const SUPPORTED_CHAINS_INTERNAL = {
   bsc:       { name: "BSC",       id: 56 },
   monad:     { name: "Monad",     id: 143 },
   hemi:      { name: "Hemi",      id: 43111 },
+  hyperevm:  { name: "HyperEVM",  id: 999 },
+  sei:       { name: "SEI",       id: 1329 },
   // user-facing alias -- NOT sent to the API directly
   ethereum:  { name: "Ethereum (alias for mainnet)", id: 1 },
 } as const satisfies Record<string, { name: string; id: number }>;
@@ -247,6 +249,8 @@ export const CHAIN_RPC_URLS: Partial<Record<string, string>> = {
   flare:     "https://flare-api.flare.network/ext/C/rpc",
   katana:    "https://rpc.katana.network",
   hemi:      "https://rpc.hemi.network/rpc",
+  hyperevm:  "https://rpc.hyperliquid.xyz/evm",
+  sei:       "https://evm-rpc.sei-apis.com",
   // monad: no well-known public RPC; will return "unknown"
 };
 
@@ -313,6 +317,8 @@ export const CHAIN_GAS_ESTIMATES: Record<string, number> = {
   bsc:       0.10,
   monad:     0.01,
   hemi:      0.01,
+  hyperevm:  0.01,
+  sei:       0.01,
 };
 
 // =============================================================================
@@ -334,6 +340,8 @@ export const CHAIN_BLOCK_TIMES: Record<string, number> = {
   bsc:       3,
   monad:     1,     // estimate — adjust when known
   hemi:      2,     // estimate — L2 on Bitcoin
+  hyperevm:  1,     // measured Apr 2026 (~0.98s avg over 1000 blocks)
+  sei:       0.5,   // measured Apr 2026 (~0.47s avg over 1000 blocks)
 };
 
 // Maximum block range per eth_getLogs request (public RPCs rate-limit large ranges)

@@ -32,7 +32,7 @@ describe("resolveNetwork", () => {
 
 describe("CHAIN_ENUM", () => {
   it("accepts all supported chains", () => {
-    const chains = ["mainnet", "base", "arbitrum", "optimism", "avalanche", "katana", "sonic", "flare", "bsc", "monad", "ethereum"];
+    const chains = ["mainnet", "base", "arbitrum", "optimism", "avalanche", "katana", "sonic", "flare", "bsc", "monad", "hemi", "hyperevm", "sei", "ethereum"];
     for (const chain of chains) {
       const result = CHAIN_ENUM.safeParse(chain);
       assert.ok(result.success, `Expected '${chain}' to be valid`);
@@ -109,8 +109,8 @@ describe("API_NETWORKS", () => {
     assert.ok(API_NETWORKS.includes("mainnet"));
   });
 
-  it("has 11 networks", () => {
-    assert.equal(API_NETWORKS.length, 11);
+  it("has 13 networks", () => {
+    assert.equal(API_NETWORKS.length, 13);
   });
 });
 
@@ -138,8 +138,8 @@ describe("MORPHO_CHAIN_IDS", () => {
 // =============================================================================
 
 describe("SUPPORTED_CHAINS", () => {
-  it("has 12 entries (11 chains + ethereum alias)", () => {
-    assert.equal(Object.keys(SUPPORTED_CHAINS).length, 12);
+  it("has 14 entries (13 chains + ethereum alias)", () => {
+    assert.equal(Object.keys(SUPPORTED_CHAINS).length, 14);
   });
 
   it("mainnet and ethereum alias have the same chain ID", () => {
