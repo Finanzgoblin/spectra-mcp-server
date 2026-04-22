@@ -1546,6 +1546,228 @@ describe("formatCuratorDashboard — protocol tags", () => {
     });
     assert.ok(result.includes("mv_scan_curator_opportunities"), "should mention cross-protocol scanner");
   });
+
+  // ──────────────────────────────────────────────────────────────
+  // externalPositions — idle math correctness + rendering
+  // ──────────────────────────────────────────────────────────────
+
+  it("subtracts externalPositions from unallocated math (Base Gami shape)", () => {
+    // Shape approximates Base Gami USDC: $7.29M TVL, $4.7K deployed LP,
+    // $3.65M external avant. Without the subtraction, unallocated reads ~99%.
+    // With the subtraction, unallocated is ~49.8%.
+    const result = formatCuratorDashboard({
+      ...baseDashOpts,
+      tvlUsd: 7_290_000,
+      tvlUnderlying: 7_290_000,
+      positions: [{
+        symbol: "PT-sw-avUSD",
+        ptAddress: "0xpt",
+        poolAddress: "0xpool",
+        maturityTimestamp: Math.floor(Date.now() / 1000) + 86400 * 20,
+        daysToMaturity: 20,
+        expired: false,
+        tvlUsd: 4_700,
+        vaultAllocationUsd: 4_700,
+        ptApy: 8,
+        lpApyTotal: 5,
+        lpApyBoostedTotal: null,
+        protocol: "Spectra",
+      }],
+      externalPositions: [
+        { protocol: "avant", chainId: 43114, valueUsd: 3_648_221, source: "avusdx-burn" } as any,
+      ],
+    });
+    // Expect headline to show ~50% unallocated, NOT ~99%.
+    assert.ok(
+      /4[89]% unallocated|50% unallocated/.test(result),
+      `expected ~50% unallocated headline; got first 400 chars: ${result.slice(0, 400)}`,
+    );
+    assert.ok(!/99% unallocated/.test(result), "must not mislabel external capital as unallocated");
+  });
+
+  it("renders External Positions section with avant branch", () => {
+    const result = formatCuratorDashboard({
+      ...baseDashOpts,
+      positions: [{
+        symbol: "PT-x",
+        ptAddress: "0xpt",
+        poolAddress: "0xpool",
+        maturityTimestamp: Math.floor(Date.now() / 1000) + 86400 * 30,
+        daysToMaturity: 30,
+        expired: false,
+        tvlUsd: 100_000,
+        vaultAllocationUsd: 100_000,
+        ptApy: 5,
+        lpApyTotal: 4,
+        lpApyBoostedTotal: null,
+        protocol: "Spectra",
+      }],
+      externalPositions: [
+        {
+          protocol: "avant",
+          chainId: 43114,
+          valueUsd: 200_000,
+          source: "avusdx-burn",
+          burnt: { address: "0x1", symbol: "avUSDx" },
+          claim: { address: "0x2", symbol: "avUSD" },
+          orderId: 42,
+          updatedAt: Date.now() - 86400 * 1000, // 1 day ago
+        } as any,
+      ],
+    });
+    assert.ok(result.includes("External Positions (1)"), "section header must appear");
+    assert.ok(result.includes("[avant]"), "avant branch must render");
+    assert.ok(result.includes("avUSDx → avUSD"), "burnt → claim symbols must render");
+    assert.ok(result.includes("order=42"), "orderId must render");
+  });
+
+  it("renders External Positions pendle branch with APY + maturity", () => {
+    const matSec = Math.floor(Date.now() / 1000) + 86400 * 14;
+    const result = formatCuratorDashboard({
+      ...baseDashOpts,
+      positions: [],
+      externalPositions: [
+        {
+          protocol: "pendle",
+          chainId: 1,
+          valueUsd: 50_000,
+          market: {
+            address: "0xmarket",
+            name: "fusnstETH-Jun",
+            maturity: matSec,
+            aggregatedApy: 0.0825,
+          },
+        } as any,
+      ],
+    });
+    assert.ok(result.includes("[pendle]"), "pendle branch must render");
+    assert.ok(result.includes("fusnstETH-Jun"), "market name must render");
+    assert.ok(result.includes("LP APY"), "aggregatedApy must render as LP APY");
+  });
+
+  it("renders Status line for HIDDEN vaults", () => {
+    const result = formatCuratorDashboard({
+      ...baseDashOpts,
+      status: "HIDDEN",
+      positions: [],
+    });
+    assert.ok(result.includes("Status: HIDDEN"), "Status label must appear for HIDDEN");
+  });
+
+  it("suppresses Status line for VISIBLE vaults (default)", () => {
+    const result = formatCuratorDashboard({
+      ...baseDashOpts,
+      status: "VISIBLE",
+      positions: [],
+    });
+    assert.ok(!/^\s*Status:/m.test(result), "Status label must NOT appear for VISIBLE");
+  });
+
+  it("renders 30d avg alongside Live APY when present", () => {
+    const result = formatCuratorDashboard({
+      ...baseDashOpts,
+      avgApy30dTotal: 8.5,
+      positions: [],
+    });
+    assert.ok(result.includes("30d avg"), "30d avg suffix must appear");
+  });
+
+  it("renders APY breakdown when base or incentive delta ≥ 0.5pp", () => {
+    const result = formatCuratorDashboard({
+      ...baseDashOpts,
+      liveApyTotal: 6.73,
+      liveApyBase: 6.73,
+      avgApy30dTotal: 11.74,
+      avgApy30dBase: 10.06,
+      positions: [],
+    });
+    // baseDelta = 6.73 - 10.06 = -3.33pp, incentDelta = 0 - 1.68 = -1.68pp.
+    // Both exceed 0.5pp threshold → APY breakdown must emit.
+    assert.ok(result.includes("APY breakdown"), "APY breakdown must appear when deltas significant");
+    // The line must NOT contain causal language (Inverter's correction).
+    assert.ok(!/falling|tapering|rising|compensating/i.test(result), "must not assert causality");
+  });
+
+  it("suppresses APY breakdown when both deltas < 0.5pp", () => {
+    const result = formatCuratorDashboard({
+      ...baseDashOpts,
+      liveApyTotal: 6.5,
+      liveApyBase: 6.5,
+      avgApy30dTotal: 6.7,
+      avgApy30dBase: 6.7,
+      positions: [],
+    });
+    assert.ok(!result.includes("APY breakdown"), "APY breakdown must NOT appear when stable");
+  });
+
+  it("emits Capital state decomposition when ≥2 non-LP buckets populated", () => {
+    const result = formatCuratorDashboard({
+      ...baseDashOpts,
+      tvlUsd: 7_290_000,
+      tvlUnderlying: 7_290_000,
+      positions: [
+        {
+          symbol: "PT-active",
+          ptAddress: "0xa",
+          poolAddress: "0xpa",
+          maturityTimestamp: Math.floor(Date.now() / 1000) + 86400 * 20,
+          daysToMaturity: 20,
+          expired: false,
+          tvlUsd: 130_000,
+          vaultAllocationUsd: 130_000,
+          ptApy: 5,
+          lpApyTotal: 4,
+          lpApyBoostedTotal: null,
+          protocol: "Spectra",
+        },
+        {
+          symbol: "PT-expired",
+          ptAddress: "0xb",
+          poolAddress: "0xpb",
+          maturityTimestamp: Math.floor(Date.now() / 1000) - 86400 * 3,
+          daysToMaturity: 0,
+          expired: true,
+          tvlUsd: 126_000,
+          vaultAllocationUsd: 126_000,
+          ptApy: 0,
+          lpApyTotal: 0,
+          lpApyBoostedTotal: null,
+          protocol: "Spectra",
+        },
+      ],
+      externalPositions: [
+        { protocol: "avant", chainId: 43114, valueUsd: 3_648_221 } as any,
+      ],
+    });
+    assert.ok(result.includes("Capital state:"), "Capital state line must appear");
+    assert.ok(/expired-stuck/.test(result), "expired bucket must render");
+    assert.ok(/external/.test(result), "external bucket must render");
+  });
+
+  it("suppresses Capital state for simple vaults (only 1 non-LP bucket)", () => {
+    const result = formatCuratorDashboard({
+      ...baseDashOpts,
+      tvlUsd: 130_000,
+      tvlUnderlying: 130_000,
+      positions: [{
+        symbol: "PT-active",
+        ptAddress: "0xa",
+        poolAddress: "0xpa",
+        maturityTimestamp: Math.floor(Date.now() / 1000) + 86400 * 60,
+        daysToMaturity: 60,
+        expired: false,
+        tvlUsd: 128_500,
+        vaultAllocationUsd: 128_500,
+        ptApy: 3,
+        lpApyTotal: 3,
+        lpApyBoostedTotal: null,
+        protocol: "Spectra",
+      }],
+    });
+    // Only ~1% unallocated (below threshold), 0 external, 0 expired.
+    // Should NOT emit Capital state line.
+    assert.ok(!result.includes("Capital state:"), "Capital state must be suppressed for simple vault");
+  });
 });
 
 // =============================================================================

@@ -3072,6 +3072,12 @@ export function formatMetavaultSummary(
   const lines: string[] = [];
 
   lines.push(`-- ${mv.metadata?.title || mv.name} (${mv.symbol}) --`);
+  // Surface status when it's anything other than the default VISIBLE.
+  // Label only — do NOT filter. The Spectra frontend hides HIDDEN vaults,
+  // but a curator looking at their own vault still needs to see it.
+  if (mv.status && mv.status !== "VISIBLE") {
+    lines.push(`  Status: ${mv.status}`);
+  }
   lines.push(`  Chain: ${chain}`);
   lines.push(`  MetaVault: ${mv.address}`);
   lines.push(`  Vault: ${mv.vault}`);
@@ -3083,10 +3089,11 @@ export function formatMetavaultSummary(
   // Underlying
   lines.push(`  Underlying: ${mv.underlying?.symbol || "?"} (${mv.underlying?.address || "?"})`);
 
-  // TVL & APY — compute idle ratio for headline visibility
+  // TVL & APY — compute unallocated ratio for headline visibility
   const decimals = mv.underlying?.decimals || 6;
   const vaultTvlUsd = mv.tvl?.usd || 0;
-  // Pre-compute idle ratio so it appears in the headline, not buried in allocations
+  // Pre-compute unallocated ratio so it appears in the headline, not buried in allocations.
+  // Subtract externalPositions so avant burns / pendle LP aren't mislabeled as idle.
   let headlineIdlePct: number | null = null;
   let headlineIdleUsd = 0;
   if (mv.positions && mv.positions.length > 0 && vaultTvlUsd > 0) {
@@ -3102,14 +3109,21 @@ export function formatMetavaultSummary(
         headlineAllocTotal += lpBalance * pool.lpt.price.usd;
       }
     }
-    headlineIdleUsd = Math.max(0, vaultTvlUsd - headlineAllocTotal);
+    const externalUsdTotal = (mv.externalPositions || []).reduce((s, e) => s + (e.valueUsd || 0), 0);
+    headlineIdleUsd = Math.max(0, vaultTvlUsd - headlineAllocTotal - externalUsdTotal);
     headlineIdlePct = (headlineIdleUsd / vaultTvlUsd) * 100;
   }
   const idleSuffix = headlineIdlePct !== null && headlineIdlePct > 5
-    ? ` — ${headlineIdlePct.toFixed(0)}% idle (${formatUsd(headlineIdleUsd)} undeployed)`
+    ? ` — ${headlineIdlePct.toFixed(0)}% unallocated (${formatUsd(headlineIdleUsd)})`
     : "";
   lines.push(`  TVL: ${formatUsd(vaultTvlUsd)} (${(mv.tvl?.underlying || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })} ${mv.underlying?.symbol || "tokens"})${idleSuffix}`);
-  lines.push(`  Live APY: ${formatPct(mv.liveApy?.total || 0)}`);
+  // Live APY with 30d avg suffix when available — lets a curator spot
+  // incentive ramp-down (live < 30d-avg) or ramp-up (live > 30d-avg).
+  const avg30dTotal = mv.avgApy30d?.total;
+  const avgSuffix = typeof avg30dTotal === "number"
+    ? ` | 30d avg ${formatPct(avg30dTotal)}`
+    : "";
+  lines.push(`  Live APY: ${formatPct(mv.liveApy?.total || 0)}${avgSuffix}`);
 
   // APY breakdown — surface composition so agents can reason about yield sources
   const apyDetails = mv.liveApy?.details;
@@ -3276,12 +3290,14 @@ export function formatMetavaultSummary(
         }
       }
     }
-    // Idle liquidity line
+    // Unallocated liquidity line — subtract external positions so external
+    // capital (avant burn, pendle LP) isn't mislabeled as idle.
     if (knownAllocCount > 0 && vaultTvlUsd > 0) {
-      const idleLiquidity = vaultTvlUsd - knownAllocTotal;
-      if (idleLiquidity > 0) {
-        const idlePct = (idleLiquidity / vaultTvlUsd * 100).toFixed(1);
-        lines.push(`    ${mv.underlying?.symbol || "?"} Idle Liquidity -- ${idlePct}% | ${formatUsd(idleLiquidity)}`);
+      const externalUsd = (mv.externalPositions || []).reduce((s, e) => s + (e.valueUsd || 0), 0);
+      const unallocated = vaultTvlUsd - knownAllocTotal - externalUsd;
+      if (unallocated > 0) {
+        const unallocPct = (unallocated / vaultTvlUsd * 100).toFixed(1);
+        lines.push(`    ${mv.underlying?.symbol || "?"} Unallocated -- ${unallocPct}% | ${formatUsd(unallocated)}`);
       }
     }
 
@@ -3308,6 +3324,79 @@ export function formatMetavaultSummary(
     }
     if (totalClaimableUsd > 0) {
       lines.push(`    Claimable YT Yield: ${formatUsd(totalClaimableUsd)} — compound into LP to boost share price`);
+    }
+  }
+
+  // External positions — value held OUTSIDE the Spectra LP structure.
+  // On Base Gami USDC, this is where $3.65M+ of avant avUSDx-burn
+  // redemption-in-flight lives — completely invisible to the Positions
+  // block above. Shape is a discriminated-by-convention union keyed on
+  // `protocol`; we render per branch and degrade gracefully for unknowns.
+  if (mv.externalPositions && mv.externalPositions.length > 0) {
+    lines.push(``);
+    lines.push(`  External Positions (${mv.externalPositions.length}):`);
+    let totalExtUsd = 0;
+    for (const e of mv.externalPositions) {
+      const proto = e.protocol || "unknown";
+      const cidName = typeof e.chainId === "number" ? chainIdToName(e.chainId) : "?";
+      const usd = e.valueUsd || 0;
+      totalExtUsd += usd;
+      if (proto === "avant" && (e.burnt || e.claim)) {
+        const burntSym = e.burnt?.symbol || "?";
+        const claimSym = e.claim?.symbol || "?";
+        const orderStr = e.orderId != null ? ` | orderId=${e.orderId}` : "";
+        const sourceStr = e.source ? ` | ${e.source}` : "";
+        lines.push(`    ${proto} (${cidName}) | ${formatUsd(usd)} | ${burntSym} → ${claimSym}${orderStr}${sourceStr}`);
+      } else if (proto === "pendle" && e.market) {
+        const mname = e.market.name || e.market.address;
+        const mat = e.market.maturity != null
+          ? ` | ${formatDate(e.market.maturity)}`
+          : "";
+        const mapy = typeof e.market.aggregatedApy === "number"
+          ? ` | LP APY ${formatPct(e.market.aggregatedApy * 100)}`
+          : "";
+        lines.push(`    ${proto} (${cidName}) | ${formatUsd(usd)} | ${mname}${mat}${mapy}`);
+      } else {
+        // Unknown protocol or missing sub-fields — surface proto + value,
+        // don't guess at shape. Agents can inspect the raw API if needed.
+        lines.push(`    ${proto} (${cidName}) | ${formatUsd(usd)} | shape not yet parsed — see raw API`);
+      }
+    }
+    if (totalExtUsd > 0) {
+      const pct = vaultTvlUsd > 0
+        ? ` (${(totalExtUsd / vaultTvlUsd * 100).toFixed(1)}% of TVL)`
+        : "";
+      lines.push(`    Total external: ${formatUsd(totalExtUsd)}${pct}`);
+    }
+  }
+
+  // Remote module whitelist — which protocols the vault is permitted to
+  // interact with on foreign chains. Base Gami USDC has avant+parallel
+  // enabled on Avalanche; UltraYield WETH carries the same entries but all
+  // set to false (configured but disabled). That distinction matters for
+  // assessing strategy scope vs current activity.
+  if (mv.remote && Object.keys(mv.remote).length > 0) {
+    let firstRemote = true;
+    for (const [cid, entry] of Object.entries(mv.remote)) {
+      const modules = entry?.modules;
+      if (!modules) continue;
+      const moduleNames = Object.keys(modules);
+      if (moduleNames.length === 0) continue;
+      if (firstRemote) {
+        lines.push(``);
+        firstRemote = false;
+      }
+      const chainName = chainIdToName(Number(cid));
+      const active = moduleNames.filter((name) => modules[name] === true);
+      const disabled = moduleNames.filter((name) => modules[name] !== true);
+      if (active.length > 0) {
+        const disabledSuffix = disabled.length > 0
+          ? ` (disabled: ${disabled.join(", ")})`
+          : "";
+        lines.push(`  Modules on ${chainName}: ${active.join(", ")}${disabledSuffix}`);
+      } else {
+        lines.push(`  Modules on ${chainName}: (none active) [configured but disabled: ${moduleNames.join(", ")}]`);
+      }
     }
   }
 
@@ -3430,7 +3519,11 @@ export function formatMetavaultCompact(mv: SpectraMetavault, chain: string): str
   const posCount = mv.positions?.length || 0;
   const baseApy = mv.liveApy?.details?.base;
   const baseNote = baseApy != null ? ` (base ${formatPct(baseApy)})` : "";
-  // Surface idle ratio in compact line — headline TVL alone masks deployment gaps
+  // Surface external position count — $3.65M of avant on Base Gami is otherwise invisible
+  const extCount = mv.externalPositions?.length || 0;
+  const extSuffix = extCount > 0 ? ` +${extCount} ext` : "";
+  // Surface unallocated ratio in compact line — headline TVL alone masks deployment gaps.
+  // Subtract externalPositions so avant/pendle external capital isn't mislabeled idle.
   let idleNote = "";
   if (mv.positions && mv.positions.length > 0 && tvlUsd > 0) {
     let allocTotal = 0;
@@ -3445,10 +3538,14 @@ export function formatMetavaultCompact(mv: SpectraMetavault, chain: string): str
         allocTotal += lpBalance * pool.lpt.price.usd;
       }
     }
-    const idlePct = ((tvlUsd - allocTotal) / tvlUsd) * 100;
-    if (idlePct > 20) idleNote = ` (${idlePct.toFixed(0)}% idle)`;
+    const externalUsd = (mv.externalPositions || []).reduce((s, e) => s + (e.valueUsd || 0), 0);
+    const unallocPct = ((tvlUsd - allocTotal - externalUsd) / tvlUsd) * 100;
+    if (unallocPct > 20) idleNote = ` (${unallocPct.toFixed(0)}% unalloc)`;
   }
-  return `${mv.metadata?.title || mv.name} (${chain}) | ${mv.underlying?.symbol || "?"} | APY ${apy}${baseNote} | TVL ${tvl}${idleNote} | ${posCount} position(s) | Curator: ${mv.curator?.name || "?"} | ${mv.address}`;
+  // P2: drop the [HIDDEN] compact prefix — status lives in detail view only.
+  // Editorializing the status flag in a headline risks miscommunication
+  // (a seeded, operational vault labeled [HIDDEN] reads as broken).
+  return `${mv.metadata?.title || mv.name} (${chain}) | ${mv.underlying?.symbol || "?"} | APY ${apy}${baseNote} | TVL ${tvl}${idleNote} | ${posCount} position(s)${extSuffix} | Curator: ${mv.curator?.name || "?"} | ${mv.address}`;
 }
 
 /** Concise per-MetaVault format for the spectra_scan_opportunities output section. */
@@ -3468,7 +3565,8 @@ export function formatMetavaultScanEntry(mv: SpectraMetavault, chain: string, ra
     if (lpApy > bestLpApy) bestLpApy = lpApy;
   }
 
-  // Compute idle ratio for scan entry headline
+  // Compute unallocated ratio for scan entry headline — subtract external
+  // positions so avant/pendle external capital isn't mislabeled idle.
   const tvlUsdVal = mv.tvl?.usd || 0;
   let scanIdleNote = "";
   if (mv.positions && mv.positions.length > 0 && tvlUsdVal > 0) {
@@ -3484,8 +3582,9 @@ export function formatMetavaultScanEntry(mv: SpectraMetavault, chain: string, ra
         scanAllocTotal += lpBalance * pool.lpt.price.usd;
       }
     }
-    const scanIdlePct = ((tvlUsdVal - scanAllocTotal) / tvlUsdVal) * 100;
-    if (scanIdlePct > 20) scanIdleNote = ` (${scanIdlePct.toFixed(0)}% idle)`;
+    const scanExternalUsd = (mv.externalPositions || []).reduce((s, e) => s + (e.valueUsd || 0), 0);
+    const scanUnallocPct = ((tvlUsdVal - scanAllocTotal - scanExternalUsd) / tvlUsdVal) * 100;
+    if (scanUnallocPct > 20) scanIdleNote = ` (${scanUnallocPct.toFixed(0)}% unalloc)`;
   }
 
   lines.push(`  MV#${rank}  ${mv.metadata?.title || mv.name} (${mv.symbol}) -- ${chain}`);
@@ -3826,6 +3925,18 @@ export interface CuratorDashboardOpts {
   sharePriceUsd: number;
   sharePriceUnderlying: number;
 
+  // UI visibility flag — surfaced as detail-view label, never as compact prefix
+  status?: string;
+
+  // 30-day trailing averages — enables live-vs-30d decomposition in APY section
+  avgApy30dTotal?: number;
+  avgApy30dBase?: number;
+
+  // External positions held OUTSIDE the Spectra LP structure (avant burns,
+  // pendle LP on other protocols). Must be subtracted from idle/unallocated
+  // math so external capital isn't mislabeled as undeployed.
+  externalPositions?: SpectraMetavault["externalPositions"];
+
   // Positions
   positions: Array<{
     symbol: string;
@@ -3889,27 +4000,55 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
   // ── Header ──────────────────────────────────────────────────
   lines.push(`== Curator Dashboard ==`);
   lines.push(`  ${opts.vaultName} (${opts.vaultSymbol})`);
+  if (opts.status && opts.status !== "VISIBLE") {
+    lines.push(`  Status: ${opts.status}`);
+  }
   lines.push(`  Chain: ${opts.chain} | MetaVault: ${opts.metavaultAddress}`);
   lines.push(`  Curator: ${opts.curatorName}${opts.curatorAddresses.length ? ` (${opts.curatorAddresses[0]})` : ""}`);
   lines.push(``);
 
   // ── Vault Health ────────────────────────────────────────────
   lines.push(`--- Vault Health ---`);
-  // Compute idle ratio for headline — agents anchor on TVL, so idle capital must be visible here
+  // Compute unallocated ratio for headline — subtract external positions
+  // (avant burns, pendle LP) so external capital isn't mislabeled idle.
   const knownAllocForHeadline = opts.positions
     .filter(p => p.vaultAllocationUsd != null)
     .reduce((sum, p) => sum + p.vaultAllocationUsd!, 0);
-  const idleForHeadline = opts.tvlUsd > 0 ? Math.max(0, opts.tvlUsd - knownAllocForHeadline) : 0;
-  const idlePctForHeadline = opts.tvlUsd > 0 ? (idleForHeadline / opts.tvlUsd) * 100 : 0;
-  const tvlIdleSuffix = idlePctForHeadline > 5
-    ? ` — ${idlePctForHeadline.toFixed(0)}% idle (${formatUsd(idleForHeadline)} undeployed)`
+  const externalUsdForHeadline = (opts.externalPositions || []).reduce((s, e) => s + (e.valueUsd || 0), 0);
+  const unallocForHeadline = opts.tvlUsd > 0 ? Math.max(0, opts.tvlUsd - knownAllocForHeadline - externalUsdForHeadline) : 0;
+  const unallocPctForHeadline = opts.tvlUsd > 0 ? (unallocForHeadline / opts.tvlUsd) * 100 : 0;
+  const tvlIdleSuffix = unallocPctForHeadline > 5
+    ? ` — ${unallocPctForHeadline.toFixed(0)}% unallocated (${formatUsd(unallocForHeadline)})`
     : "";
   lines.push(`  TVL: ${formatUsd(opts.tvlUsd)} (${opts.tvlUnderlying.toLocaleString("en-US", { maximumFractionDigits: 2 })} ${opts.underlyingSymbol})${tvlIdleSuffix}`);
-  lines.push(`  Live APY: ${formatPct(opts.liveApyTotal)}${opts.liveApyBoostedTotal && opts.liveApyBoostedTotal > opts.liveApyTotal ? ` (max boost: ${formatPct(opts.liveApyBoostedTotal)})` : ""}`);
+  // Live APY with optional 30d-avg suffix + boost. The 30d comparison lets a
+  // curator spot incentive ramp-up (live > 30d) or ramp-down (live < 30d).
+  const avgSuffix = typeof opts.avgApy30dTotal === "number"
+    ? ` | 30d avg ${formatPct(opts.avgApy30dTotal)}`
+    : "";
+  const boostSuffix = opts.liveApyBoostedTotal && opts.liveApyBoostedTotal > opts.liveApyTotal
+    ? ` (max boost: ${formatPct(opts.liveApyBoostedTotal)})`
+    : "";
+  lines.push(`  Live APY: ${formatPct(opts.liveApyTotal)}${avgSuffix}${boostSuffix}`);
   if (opts.liveApyBase != null) {
     const incentiveApy = opts.liveApyTotal - opts.liveApyBase;
     if (incentiveApy > 0) {
       lines.push(`  Yield Mix: ${formatPct(opts.liveApyBase)} base + ${formatPct(incentiveApy)} incentives (${((incentiveApy / opts.liveApyTotal) * 100).toFixed(0)}% incentive-dependent)`);
+    }
+  }
+  // P2: APY 4-number decomposition vs 30d avg. Surface liveBase / liveIncent /
+  // avgBase / avgIncent side-by-side so the reader sees WHERE the change came
+  // from, without asserting WHY. No "falling" / "tapering" language — the two
+  // snapshots alone cannot distinguish yield decay from capital rebalance or
+  // deposit dilution (Inverter's Indigo-trap correction).
+  if (typeof opts.avgApy30dTotal === "number" && opts.avgApy30dTotal > 0
+      && opts.liveApyBase != null && typeof opts.avgApy30dBase === "number") {
+    const liveIncent = Math.max(0, opts.liveApyTotal - opts.liveApyBase);
+    const avgIncent = Math.max(0, opts.avgApy30dTotal - opts.avgApy30dBase);
+    const baseDelta = opts.liveApyBase - opts.avgApy30dBase;
+    const incentDelta = liveIncent - avgIncent;
+    if (Math.abs(baseDelta) >= 0.5 || Math.abs(incentDelta) >= 0.5) {
+      lines.push(`  APY breakdown: live ${formatPct(opts.liveApyBase)} base + ${formatPct(liveIncent)} incentives vs 30d avg ${formatPct(opts.avgApy30dBase)} base + ${formatPct(avgIncent)} incentives`);
     }
   }
   lines.push(`  Share Price: ${formatUsd(opts.sharePriceUsd)} (${opts.sharePriceUnderlying.toFixed(6)} underlying)`);
@@ -4030,19 +4169,113 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
       lines.push(`  Claimable YT Yield: ${formatUsd(totalYtClaimableUsd)} — compound into LP to boost share price`);
     }
 
-    // Available Assets: TVL minus LP positions minus YT value
+    // Available Assets: TVL minus LP minus YT minus external (avant/pendle).
+    // External capital is committed (burn queue / LP on another protocol) —
+    // not available for immediate redeployment, so not counted as available.
     if (opts.tvlUsd > 0) {
-      const availableAssets = Math.max(0, opts.tvlUsd - knownAllocationTotal - totalYtValueUsd);
+      const externalTotal = (opts.externalPositions || []).reduce((s, e) => s + (e.valueUsd || 0), 0);
+      const availableAssets = Math.max(0, opts.tvlUsd - knownAllocationTotal - totalYtValueUsd - externalTotal);
       const availablePct = (availableAssets / opts.tvlUsd * 100).toFixed(1);
       if (availableAssets > 0) {
         lines.push(`  Available Assets | ${availablePct}% | ${formatUsd(availableAssets)}`);
       }
 
       lines.push(`  ──`);
-      lines.push(`  LP: ${formatUsd(knownAllocationTotal)} (${(knownAllocationTotal / opts.tvlUsd * 100).toFixed(1)}%)${totalYtValueUsd > 0 ? ` | YT: ${formatUsd(totalYtValueUsd)}` : ""} | Available: ${formatUsd(availableAssets)} (${availablePct}%) | Total: ${formatUsd(opts.tvlUsd)}`);
+      const extBreakdown = externalTotal > 0 ? ` | External: ${formatUsd(externalTotal)}` : "";
+      lines.push(`  LP: ${formatUsd(knownAllocationTotal)} (${(knownAllocationTotal / opts.tvlUsd * 100).toFixed(1)}%)${totalYtValueUsd > 0 ? ` | YT: ${formatUsd(totalYtValueUsd)}` : ""}${extBreakdown} | Available: ${formatUsd(availableAssets)} (${availablePct}%) | Total: ${formatUsd(opts.tvlUsd)}`);
     }
   }
   lines.push(``);
+
+  // ── External Positions — value held OUTSIDE Spectra LP ──────
+  // On Base Gami this is where $3.65M of avant avUSDx-burn redemption-in-flight
+  // lives, invisible to the Positions block above. Render per-protocol with
+  // graceful fallback for unknown protocols.
+  if (opts.externalPositions && opts.externalPositions.length > 0) {
+    lines.push(`--- External Positions (${opts.externalPositions.length}) ---`);
+    let totalExtUsd = 0;
+    const nowMs = Date.now();
+    for (const e of opts.externalPositions) {
+      const proto = e.protocol || "unknown";
+      const cidName = typeof e.chainId === "number" ? chainIdToName(e.chainId) : "?";
+      const usd = e.valueUsd || 0;
+      totalExtUsd += usd;
+      const pct = opts.tvlUsd > 0 ? `${(usd / opts.tvlUsd * 100).toFixed(1)}%` : "?";
+      if (proto === "avant" && (e.burnt || e.claim)) {
+        const burntSym = e.burnt?.symbol || "?";
+        const claimSym = e.claim?.symbol || "?";
+        const orderStr = e.orderId != null ? ` | order=${e.orderId}` : "";
+        const sourceStr = e.source ? ` | ${e.source}` : "";
+        // updatedAt is MILLISECONDS (observed live). Compute in-flight age.
+        let ageStr = "";
+        if (typeof e.updatedAt === "number") {
+          const ageDays = Math.floor((nowMs - e.updatedAt) / (86400 * 1000));
+          if (ageDays >= 0) ageStr = ` | in-flight ${ageDays}d`;
+        }
+        lines.push(`  [avant] ${pct} | ${formatUsd(usd)} | ${burntSym} → ${claimSym}${orderStr}${sourceStr}${ageStr}`);
+      } else if (proto === "pendle" && e.market) {
+        // market.maturity is SECONDS (observed live).
+        const mat = typeof e.market.maturity === "number"
+          ? ` | matures ${formatDate(e.market.maturity)}`
+          : "";
+        const mapy = typeof e.market.aggregatedApy === "number"
+          ? ` | LP APY ${formatPct(e.market.aggregatedApy * 100)}`
+          : "";
+        const mname = e.market.name || e.market.address || "?";
+        lines.push(`  [pendle] ${pct} | ${formatUsd(usd)} | ${mname}${mat}${mapy}`);
+      } else {
+        lines.push(`  [${proto}] ${pct} | ${formatUsd(usd)} | shape not yet parsed — see raw API`);
+      }
+    }
+    if (totalExtUsd > 0 && opts.tvlUsd > 0) {
+      lines.push(`  Total external: ${formatUsd(totalExtUsd)} (${(totalExtUsd / opts.tvlUsd * 100).toFixed(1)}% of TVL)`);
+    }
+    lines.push(``);
+  }
+
+  // ── Capital State Decomposition — P2 ammunition layer ───────
+  // One line showing how TVL splits across deployed / expired-stuck / external
+  // / unallocated. Emits ONLY when ≥2 non-idle buckets are populated — otherwise
+  // the headline TVL line already says everything (simple vault doesn't need a
+  // decomposition). deployed = all_LP − expired_LP to avoid double-count with
+  // the expired bucket (a stuck PT still carries LP balance).
+  if (opts.tvlUsd > 0 && opts.positions.length > 0) {
+    let allLpUsd = 0;
+    let expiredLpUsd = 0;
+    for (const p of opts.positions) {
+      if (p.vaultAllocationUsd == null) continue;
+      allLpUsd += p.vaultAllocationUsd;
+      if (p.expired) expiredLpUsd += p.vaultAllocationUsd;
+    }
+    const deployedUsd = Math.max(0, allLpUsd - expiredLpUsd);
+    const externalUsd = (opts.externalPositions || []).reduce((s, e) => s + (e.valueUsd || 0), 0);
+    const unallocated = Math.max(0, opts.tvlUsd - allLpUsd - externalUsd);
+    const buckets: string[] = [];
+    const deployedPct = (deployedUsd / opts.tvlUsd) * 100;
+    const expiredPct = (expiredLpUsd / opts.tvlUsd) * 100;
+    const externalPct = (externalUsd / opts.tvlUsd) * 100;
+    const idlePct = (unallocated / opts.tvlUsd) * 100;
+    if (deployedUsd > 0) buckets.push(`${deployedPct.toFixed(1)}% Spectra LP`);
+    if (expiredLpUsd > 0 && expiredPct >= 0.5) buckets.push(`${expiredPct.toFixed(1)}% expired-stuck`);
+    if (externalUsd > 0 && externalPct >= 0.5) buckets.push(`${externalPct.toFixed(1)}% external`);
+    if (unallocated > 0 && idlePct >= 1.0) buckets.push(`${idlePct.toFixed(1)}% unallocated`);
+    // Threshold: emit when ≥1 non-idle-non-LP bucket is populated AND total
+    // buckets ≥2. Non-idle-non-LP = {expired-stuck, external}. A simple
+    // LP + unallocated vault doesn't need the decomposition — headline
+    // already shows unallocated%. The line exists to resolve the Gami-style
+    // contradiction where non-obvious buckets (expired-stuck, external) coexist.
+    //
+    // Brittle string match on bucket labels: if labels are renamed or
+    // translated, this filter must update in lockstep. Acceptable today;
+    // track bucket kinds as an enum if we ever need to.
+    const nonIdleNonLpBuckets = buckets.filter(b =>
+      b.includes("expired-stuck") || b.includes("external")
+    ).length;
+    if (nonIdleNonLpBuckets >= 1 && buckets.length >= 2) {
+      lines.push(`  Capital state: ${buckets.join(" | ")}`);
+      lines.push(``);
+    }
+  }
 
   // ── Depositor Flows ─────────────────────────────────────────
   if (opts.epochFlows.length > 0) {

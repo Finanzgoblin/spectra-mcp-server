@@ -275,6 +275,117 @@ const ModifierSchema = z
   })
   .passthrough();
 
+// ────────────────────────────────────────────────────────────────────────────
+// External Positions
+// ────────────────────────────────────────────────────────────────────────────
+//
+// `metavault.externalPositions[]` surfaces value the vault holds OUTSIDE the
+// Spectra LP structure — e.g. avUSDx burn-for-redemption on Avalanche (Base
+// Gami: $3.65M across 3 entries as of 2026-04-22), or a Pendle LP position
+// on mainnet (WETH MetaVault: 1 entry). The field is UNDOCUMENTED in Spectra
+// public docs — shape is inferred from observed data.
+//
+// Design choice: z.union of three branches (avant, pendle, permissive
+// fallback) instead of z.discriminatedUnion. A discriminated union rejects
+// any `protocol` value not in its literal set — unacceptable here, because
+// Spectra can whitelist a new module tomorrow (Morpho, Midas, Aave) and the
+// fallback branch lets that round-trip cleanly while only the common spine
+// (protocol + chainId + valueUsd) is typed. Renderer then decides per-branch
+// what to show and degrades gracefully for unknown protocols.
+//
+// Observed protocols (2026-04-22): "avant" (redemption-in-flight), "pendle"
+// (LP position held inside vault).
+
+const ExternalPositionTokenSchema = z
+  .object({
+    address: z.string(),
+    symbol: z.string().optional(),
+    name: z.string().optional(),
+    decimals: z.number().optional(),
+    balance: z.string().optional(),
+    balanceUsd: z.number().optional(),
+    logoURI: z.string().optional(),
+  })
+  .passthrough();
+
+const AvantExternalPositionSchema = z
+  .object({
+    protocol: z.literal("avant"),
+    chainId: z.number(),
+    valueUsd: z.number(),
+    updatedAt: z.number().optional(),
+    source: z.string().optional(),                    // e.g. "avusdx-burn"
+    burnt: ExternalPositionTokenSchema.optional(),    // token being burned
+    claim: ExternalPositionTokenSchema.optional(),    // token to receive
+    orderId: z.number().optional(),
+    requestId: z.number().optional(),
+  })
+  .passthrough();
+
+const PendleExternalPositionSchema = z
+  .object({
+    protocol: z.literal("pendle"),
+    chainId: z.number(),
+    valueUsd: z.number(),
+    updatedAt: z.number().optional(),
+    market: z
+      .object({
+        address: z.string(),
+        name: z.string().optional(),
+        maturity: z.number().optional(),
+        impliedApy: z.number().optional(),
+        underlyingApy: z.number().optional(),
+        swapFeeApy: z.number().optional(),
+        aggregatedApy: z.number().optional(),
+        pendleApy: z.number().optional(),
+        pendleApyMax: z.number().optional(),
+        feeRate: z.number().optional(),
+      })
+      .passthrough()
+      .optional(),
+    lp: ExternalPositionTokenSchema.optional(),
+    pt: ExternalPositionTokenSchema.optional(),
+    yt: ExternalPositionTokenSchema.optional(),
+    sy: ExternalPositionTokenSchema.optional(),
+    underlying: ExternalPositionTokenSchema.optional(),
+  })
+  .passthrough();
+
+// Fallback — any protocol not yet modeled. Common spine typed; rest flows
+// through via .passthrough(). Keeps Spectra's NEXT module from crashing parse.
+const UnknownExternalPositionSchema = z
+  .object({
+    protocol: z.string(),                             // NOT a literal
+    chainId: z.number().optional(),
+    valueUsd: z.number().optional(),
+    updatedAt: z.number().optional(),
+  })
+  .passthrough();
+
+export const ExternalPositionSchema = z.union([
+  AvantExternalPositionSchema,
+  PendleExternalPositionSchema,
+  UnknownExternalPositionSchema,
+]);
+
+// ────────────────────────────────────────────────────────────────────────────
+// Remote (cross-chain module whitelist)
+// ────────────────────────────────────────────────────────────────────────────
+//
+// `metavault.remote` maps foreign-chain IDs (as decimal strings, e.g. "43114")
+// to an entry describing the MetaVault's remote deployment on that chain:
+// its address there, the modifier/timelock architecture, and the enabled
+// module flags. Inner `.passthrough()` keeps forward-compat; outer typing
+// lets downstream code reach `.modules` without an `as any` cast.
+
+const RemoteEntrySchema = z
+  .object({
+    address: z.string().optional(),
+    modifier: ModifierSchema.optional(),
+    modules: z.record(z.string(), z.boolean()).optional(),
+  })
+  .passthrough();
+
 /**
  * Full schema for a single MetaVault returned by `/v1/{chain}/metavaults`.
  *
@@ -333,11 +444,17 @@ export const MetavaultSchema = z
     epochs: z.array(EpochSchema).optional(),
     bridge: BridgeSchema.optional(),
 
-    // Modifier / modules / remote / swap / transactionQueue are surfaced
-    // elsewhere; keep them permissive here so the schema stays focused.
+    // UNDOCUMENTED live field — appeared after April 15 fixture capture.
+    // $3.65M of avant avUSDx-burn on Base Gami flows through here today.
+    externalPositions: z.array(ExternalPositionSchema).optional(),
+
+    // Every observed module map is Record<string, boolean> — flag-only.
+    // If Spectra adds metadata to module entries, the drift footer fires.
     modifier: ModifierSchema.optional(),
-    modules: z.record(z.string(), z.unknown()).optional(),
-    remote: z.record(z.string(), z.unknown()).optional(),
+    modules: z.record(z.string(), z.boolean()).optional(),
+    remote: z.record(z.string(), RemoteEntrySchema).optional(),
+
+    // Still permissive — not yet investigated for shape stability.
     swap: z.record(z.string(), z.unknown()).optional(),
     transactionQueue: z.record(z.string(), z.unknown()).optional(),
   })

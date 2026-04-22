@@ -226,15 +226,28 @@ YT yield back into LP positions. They are managed by curators who earn
 performance fees on depositor yield.
 
 Returns all MetaVaults with:
-  - Curator info, TVL (with idle ratio when >5% undeployed), live APY breakdown
-  - Active positions (PT markets the vault is deployed in)
+  - Curator info, TVL (with unallocated ratio when >5% undeployed, computed
+    AFTER subtracting external positions so avant/pendle externals aren't
+    mislabeled as idle)
+  - Live APY breakdown + 30d avg (when available)
+  - Active Spectra LP positions (PT markets the vault is deployed in)
+  - External Positions: value held OUTSIDE Spectra LP (avant avUSDx-burn
+    redemption-in-flight, pendle LP on other protocols). Surfaced per-protocol
+    with graceful fallback for unknown protocols. This field is UNDOCUMENTED
+    by Spectra — shape is inferred from observed data and may change.
+  - Cross-chain module whitelist (remote.{chainId}.modules) showing enabled
+    protocols per foreign chain (e.g., avant/parallel on Avalanche)
+  - Status flag (VISIBLE / HIDDEN) — HIDDEN vaults are surfaced here but
+    filtered out in the Spectra UI; the compact listing does not prefix the
+    name with a status label (detail view only)
   - Underlying asset details
   - Vault flows: epoch-by-epoch deposit/withdrawal analysis
   - Bridge transactions: cross-chain CCTP transfers
   - Epoch history (rate snapshots)
 
 Use this tool to discover which MetaVaults are live, then pass the address to
-spectra_model_metavault for detailed strategy modeling with live data.
+spectra_model_metavault for detailed strategy modeling or spectra_get_curator_dashboard
+for the full operational view with action items.
 
 To investigate curator activity (LP adds/removes, rebalancing), use spectra_get_address_activity
 on the curator's EOA address — MetaVault operations go through the Spectra Router, so
@@ -633,18 +646,33 @@ and actionable alerts into a single view. Designed for curators managing live
 MetaVaults who need a quick operational overview.
 
 Returns:
-  - Vault health: TVL with idle ratio (undeployed capital shown inline when >5%),
-    live APY with composition (base vs incentives), share price
+  - Vault health: TVL with unallocated ratio (undeployed capital AFTER subtracting
+    external positions — shown when >5%), Status label for non-VISIBLE vaults,
+    live APY with optional 30d avg suffix and APY composition (base vs incentives),
+    share price
+  - APY 4-number breakdown when live-vs-30d delta ≥ 0.5pp: shows base+incentive
+    decomposition for both snapshots WITHOUT asserting causality (agents draw
+    their own conclusions from the numbers)
   - Position status: each active PT position with maturity countdown, APY, and size.
     Positions approaching maturity are flagged (!!!=14d, !!=30d)
+  - External Positions: value held OUTSIDE Spectra LP structure (avant
+    avUSDx-burn redemption-in-flight, pendle LP on other protocols). Rendered
+    per-protocol with graceful fallback for unknown protocols
+  - Capital State decomposition line: when ≥1 of {expired-stuck, external}
+    buckets populated, emits a single line showing deployed/expired-stuck/
+    external/unallocated as % of TVL
   - Depositor flows: epoch-by-epoch net inflows/outflows with trend analysis
   - Fee revenue: estimated annual curator fee revenue (snapshot projection)
-  - Action items: auto-generated alerts for expiring positions, outflow trends,
-    pending bridges, high incentive dependency, Pendle rollover warnings, and missing positions
+  - Action items: auto-generated alerts including [UNALLOC] (softened when
+    external capital coexists), [STATUS] (HIDDEN vaults),
+    [PENDLE-EXT URGENT/UPCOMING/EXPIRED] (external Pendle maturity), [EXPIRED]
+    / [URGENT] / [SOON] / [UPCOMING] (Spectra LP maturity), [OUTFLOWS],
+    [BRIDGE], [INCENTIVE], [PENDLE ROLLOVER]
 
 Pool allocations show each position as a % of total vault TVL (e.g., "37.1% | $236K"),
 sorted by size, with protocol tags ([Spectra]/[Pendle]/[Unknown]) on each position.
-Idle liquidity (undeployed capital) is shown separately.
+Unallocated liquidity is shown separately (and excludes capital deployed in
+external positions — labeled as "unallocated" to distinguish from "idle").
 When the API doesn't provide LP balance data for a position, it shows "?%".
 
 Cross-chain positions: MetaVault positions may live on a different chain than the
@@ -886,19 +914,41 @@ Use spectra_get_address_activity on the curator's EOA for cross-pool curator act
         }
 
         // ── Compute known allocation total ─────────────────────
+        // externalPositions (avant burns, pendle LP) sit OUTSIDE the Spectra
+        // positions array but INSIDE mv.tvl — subtract them so truly
+        // unallocated cash is distinguishable from externally deployed capital.
         const knownAllocTotal = positions
           .filter(p => p.vaultAllocationUsd != null)
           .reduce((sum, p) => sum + p.vaultAllocationUsd!, 0);
+        const externalTotalUsd = (mv.externalPositions || []).reduce(
+          (s, e) => s + (e.valueUsd || 0),
+          0,
+        );
+        const hasExternal = externalTotalUsd > 0;
         const vaultTvl = mv.tvl?.usd || 0;
-        const idleLiquidityUsd = vaultTvl > 0 ? Math.max(0, vaultTvl - knownAllocTotal) : 0;
+        const idleLiquidityUsd = vaultTvl > 0
+          ? Math.max(0, vaultTvl - knownAllocTotal - externalTotalUsd)
+          : 0;
         const idlePct = vaultTvl > 0 ? idleLiquidityUsd / vaultTvl * 100 : 0;
 
         // ── Action items ───────────────────────────────────────
         const actionItems: string[] = [];
 
-        // Idle liquidity warning
+        // Status label — HIDDEN means not listed in the Spectra UI. Curators
+        // should confirm intent; prospects reading the dashboard see it too.
+        if (mv.status && mv.status !== "VISIBLE") {
+          actionItems.push(`[STATUS] Vault status is "${mv.status}" — not listed in Spectra frontend. Confirm intent.`);
+        }
+
+        // Unallocated liquidity warning — soften verb when external capital
+        // coexists. Without the softening, we'd tell curators to "deploy"
+        // capital that's already in an avant burn queue or pendle LP.
         if (idlePct > 20 && idleLiquidityUsd > 1000) {
-          actionItems.push(`[IDLE] ${idlePct.toFixed(0)}% of vault capital (${formatUsd(idleLiquidityUsd)}) is sitting idle. Deploy to active pools to generate yield.`);
+          if (hasExternal) {
+            actionItems.push(`[UNALLOC] ${idlePct.toFixed(0)}% of vault capital (${formatUsd(idleLiquidityUsd)}) is unallocated alongside ${formatUsd(externalTotalUsd)} in external positions. Consider whether to deploy the unallocated slice.`);
+          } else {
+            actionItems.push(`[UNALLOC] ${idlePct.toFixed(0)}% of vault capital (${formatUsd(idleLiquidityUsd)}) is sitting unallocated. Deploy to active pools to generate yield.`);
+          }
         }
 
         // Expiring positions
@@ -914,8 +964,10 @@ Use spectra_get_address_activity on the curator's EOA for cross-pool curator act
           }
         }
 
-        // No positions
-        if (positions.length === 0) {
+        // No positions — only flag as "idle" when there's also no external
+        // deployment. A vault with externalPositions but no Spectra positions
+        // is not idle, just externally deployed.
+        if (positions.length === 0 && !hasExternal) {
           actionItems.push(`[WARNING] No active positions. Vault capital may be sitting idle.`);
         }
 
@@ -946,6 +998,31 @@ Use spectra_get_address_activity on the curator's EOA for cross-pool curator act
         for (const pos of positions) {
           if (pos.protocol === "Pendle" && !pos.expired && pos.daysToMaturity <= 30) {
             actionItems.push(`[PENDLE ROLLOVER] ${pos.symbol} matures in ${pos.daysToMaturity}d — requires manual rollover (MetaVault auto-roll does not cover Pendle positions)`);
+          }
+        }
+
+        // External position warnings — pendle external maturity.
+        // CRITICAL: market.maturity is SECONDS (observed 1777507200 = 2026-04-30).
+        // The parallel avant staleness signal was removed: externalPositions[].updatedAt
+        // tracks Spectra's indexer-write time, NOT the burn-submission time. An avant
+        // burn stuck in Avant's queue for days still shows updatedAt=recent because
+        // Spectra reindexes the row periodically. Any threshold against updatedAt
+        // would be measuring indexer cadence, not redemption age. Real staleness
+        // detection would need burn submission block or orderId-vs-queue-head delta,
+        // neither of which the Spectra API exposes today.
+        const nowMs = Date.now();
+        for (const e of (mv.externalPositions || [])) {
+          if (e.protocol === "pendle" && typeof e.market?.maturity === "number") {
+            const maturityMs = e.market.maturity * 1000;
+            const daysUntil = Math.floor((maturityMs - nowMs) / (86400 * 1000));
+            const mname = e.market.name || e.market.address || "Pendle market";
+            if (maturityMs <= nowMs) {
+              actionItems.push(`[PENDLE-EXT EXPIRED] External Pendle ${mname} has matured — redeem LP and redeploy.`);
+            } else if (daysUntil <= 7) {
+              actionItems.push(`[PENDLE-EXT URGENT] External Pendle ${mname} matures in ${daysUntil}d — plan manual unwind.`);
+            } else if (daysUntil <= 30) {
+              actionItems.push(`[PENDLE-EXT UPCOMING] External Pendle ${mname} matures in ${daysUntil}d.`);
+            }
           }
         }
 
@@ -1052,6 +1129,10 @@ Use spectra_get_address_activity on the curator's EOA for cross-pool curator act
           apyDetails: mv.liveApy?.details,
           sharePriceUsd: mv.price?.usd || 0,
           sharePriceUnderlying: mv.price?.underlying || 0,
+          status: mv.status,
+          avgApy30dTotal: mv.avgApy30d?.total ?? undefined,
+          avgApy30dBase: mv.avgApy30d?.details?.base ?? undefined,
+          externalPositions: mv.externalPositions,
           positions,
           epochFlows,
           lifetimeNetFlowUsd,

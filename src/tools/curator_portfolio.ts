@@ -43,10 +43,16 @@ function summarizeVault(mv: SpectraMetavault, chain: string): CuratorVaultSummar
       knownAllocTotal += lpBalance * pool.lpt.price.usd;
     }
   }
-  const idleLiquidityUsd = tvlUsd > 0 ? Math.max(0, tvlUsd - knownAllocTotal) : 0;
+  // Subtract external positions (avant burns, pendle LP) from unallocated
+  // math so external capital isn't mislabeled idle.
+  const externalUsd = (mv.externalPositions || []).reduce((s, e) => s + (e.valueUsd || 0), 0);
+  const idleLiquidityUsd = tvlUsd > 0 ? Math.max(0, tvlUsd - knownAllocTotal - externalUsd) : 0;
   const idlePct = tvlUsd > 0 ? (idleLiquidityUsd / tvlUsd) * 100 : 0;
   if (idlePct > 20 && idleLiquidityUsd > 1000) {
-    actionItems.push(`[IDLE] ${idlePct.toFixed(0)}% idle capital (${formatUsd(idleLiquidityUsd)})`);
+    const suffix = externalUsd > 0
+      ? ` (alongside ${formatUsd(externalUsd)} in external positions)`
+      : "";
+    actionItems.push(`[UNALLOC] ${idlePct.toFixed(0)}% unallocated (${formatUsd(idleLiquidityUsd)})${suffix}`);
   }
 
   // Expiring / expired positions
@@ -64,8 +70,8 @@ function summarizeVault(mv: SpectraMetavault, chain: string): CuratorVaultSummar
     }
   }
 
-  // No positions
-  if (positions.length === 0) {
+  // No positions — only flag truly idle (no external deployment either)
+  if (positions.length === 0 && externalUsd === 0) {
     actionItems.push(`[WARNING] No active positions`);
   }
 

@@ -199,9 +199,23 @@ The observation coverage layer addresses a deeper problem: even perfect interpre
 
 ## Supported Chains
 
-**Spectra**: Ethereum (mainnet), Base, Arbitrum, Optimism, Avalanche, Katana, Sonic, Flare, BSC, Monad
+**Spectra**: Ethereum (mainnet), Base, Arbitrum, Optimism, Avalanche, Katana, Sonic, Flare, BSC, Monad, Hemi, HyperEVM, SEI
 
 **Pendle**: Ethereum, Optimism, BSC, Sonic, Base, Arbitrum, Mantle, Berachain, HyperEVM, Corn
+
+**Morpho PT markets**: Ethereum, Base, Arbitrum, Katana
+
+### Chain list maintenance (manual)
+
+All three lists are hardcoded in `src/config.ts` and must be updated by hand when a protocol deploys on a new chain:
+
+- **Spectra** — edit `SUPPORTED_CHAINS_INTERNAL` (+ `CHAIN_RPC_URLS`, `CHAIN_RPC_FALLBACKS`, `CHAIN_BLOCK_TIMES`, `CHAIN_GAS_ESTIMATES` per-chain tables). Every Spectra-native tool (metavault list, pool list, expiring pools, protocol pulse, curator dashboard, etc.) reads from this list — so one edit propagates everywhere.
+- **Pendle** — edit `PENDLE_CHAIN_IDS` + `PENDLE_CHAIN_NAMES`. Source of truth: `GET https://api-v2.pendle.finance/core/v1/chains`.
+- **Morpho** — edit `MORPHO_CHAIN_IDS`. Source of truth: Morpho GraphQL `morphoBlue` queries per chain.
+
+There is no automated canary. The `CONFIG_VERIFIED_DATES` map in `config.ts` emits a stderr warning at startup when a list is >120 days old, but that's a calendar alarm, not a "new chain appeared" alarm. Practical cadence: check monthly, or when a protocol team announces a new deployment.
+
+**Known drift to eventually reconcile**: the comment in `MORPHO_CHAIN_IDS` mentions Morpho markets on `hyperliquid(999)` — which is the same chain as our newly-added `hyperevm`. If Morpho ships PT markets on HyperEVM and we want them scanned, add `hyperevm: 999` to the Morpho map.
 
 ## veSPECTRA Boost
 

@@ -518,6 +518,51 @@ export interface SpectraMetavaultBridge {
   totalPendingUsd: number;
 }
 
+// External position held outside Spectra LP structure.
+// Surfaced by the Spectra API under `metavault.externalPositions[]`.
+// Shape is a discriminated-by-convention union — `protocol` names the branch.
+// "avant" and "pendle" observed live (2026-04-22); anything else round-trips
+// with only the common spine typed, matching the permissive zod fallback.
+export interface SpectraMetavaultExternalPosition {
+  protocol: string;
+  chainId?: number;
+  valueUsd?: number;
+  updatedAt?: number;
+  // avant-specific (burn-for-redemption)
+  source?: string;
+  burnt?: { address: string; symbol?: string; name?: string; decimals?: number; balance?: string; balanceUsd?: number };
+  claim?: { address: string; symbol?: string; name?: string; decimals?: number; balance?: string; balanceUsd?: number };
+  orderId?: number;
+  requestId?: number;
+  // pendle-specific (LP position held inside the vault)
+  market?: {
+    address: string;
+    name?: string;
+    maturity?: number;
+    impliedApy?: number;
+    underlyingApy?: number;
+    swapFeeApy?: number;
+    aggregatedApy?: number;
+    pendleApy?: number;
+    pendleApyMax?: number;
+    feeRate?: number;
+  };
+  lp?: { address: string; symbol?: string; name?: string; decimals?: number; balance?: string; balanceUsd?: number };
+  pt?: { address: string; symbol?: string; name?: string; decimals?: number; balance?: string; balanceUsd?: number };
+  yt?: { address: string; symbol?: string; name?: string; decimals?: number; balance?: string; balanceUsd?: number };
+  sy?: { address: string; symbol?: string; name?: string; decimals?: number; balance?: string; balanceUsd?: number };
+  underlying?: { address: string; symbol?: string; name?: string; decimals?: number; balance?: string; balanceUsd?: number };
+}
+
+export interface SpectraMetavaultRemoteEntry {
+  address?: string;
+  modifier?: {
+    roles?: Record<string, string>;
+    delay?: Record<string, string>;
+  };
+  modules?: Record<string, boolean>;  // module-name → enabled flag
+}
+
 export interface SpectraMetavault {
   address: string;         // MetaVault contract address
   vault: string;           // Underlying ERC-4626 vault
@@ -525,6 +570,10 @@ export interface SpectraMetavault {
   name: string;
   symbol: string;
   decimals: number;
+  // UI-layer visibility flag. Observed values: "VISIBLE" (3 of 6 vaults),
+  // "HIDDEN" (3 of 6 — UltraYield WETH/USDC, mainnet WETH MetaVault).
+  // Surface as a label, do NOT filter on it.
+  status?: string;
   curator: {
     name: string;
     addresses: string[];
@@ -542,6 +591,8 @@ export interface SpectraMetavault {
   positions: SpectraMetavaultPosition[];
   epochs: SpectraMetavaultEpoch[];
   bridge?: SpectraMetavaultBridge;
+  // Value held OUTSIDE the Spectra LP structure. Undocumented live field.
+  externalPositions?: SpectraMetavaultExternalPosition[];
   tvl: { underlying: number; usd: number };
   liveApy: {
     total: number;
@@ -553,6 +604,23 @@ export interface SpectraMetavault {
       boostedRewards?: Record<string, { min: number; max: number }>; // SPECTRA gauge with veSPECTRA boost range
     };
   };
+  // 30-day trailing average APY. Same shape as liveApy. Present on some
+  // vaults, absent on others — may carry total=0 with details.base=null.
+  avgApy30d?: {
+    total?: number;
+    boostedTotal?: number;
+    details?: {
+      base?: number | null;
+      ibtRewards?: Record<string, number>;
+      mvRewards?: Record<string, number>;
+      boostedRewards?: Record<string, { min: number; max: number }>;
+    };
+  };
+  // Module whitelist — module-name → enabled flag. Top-level is same-chain
+  // modules; cross-chain modules live under `remote[chainId].modules`.
+  modules?: Record<string, boolean>;
+  // Cross-chain deployment map. Keys are chain IDs as decimal strings.
+  remote?: Record<string, SpectraMetavaultRemoteEntry>;
   exchangeRate: string;
   price: { underlying: number; usd: number };
 }

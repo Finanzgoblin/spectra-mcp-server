@@ -22,10 +22,16 @@ export function register(server: McpServer): void {
     `Simulate a large redemption on a MetaVault to assess withdrawal liquidity.
 
 Builds a liquidity waterfall — sources of cash ordered by cost:
-  Tier 1: Idle capital (no cost)
-  Tier 2: Naturally maturing positions (no cost, time-dependent)
-  Tier 3: LP removal from Curve/Pendle pools (low-medium impact)
-  Tier 4: PT sale on Curve pool (higher impact)
+  Tier 1:  Unallocated Cash (undeployed, no external — instant, no cost)
+  Tier 1b: Avant Redemption Queue (avUSDx → avUSD burn, ~2d settlement, no
+           price impact — emitted only when avant external positions exist)
+  Tier 2:  Naturally maturing Spectra LP positions (no cost, time-dependent)
+  Tier 3:  LP removal from Curve/Pendle pools (low-medium impact)
+  Tier 4:  PT sale on Curve pool (higher impact)
+
+Note: "Unallocated" replaces the old "Idle" label. External positions (avant
+burn, pendle LP) are NOT counted in Tier 1 — they surface as Tier 1b (avant)
+or are excluded from all tiers (pendle external, conservative error mode).
 
 Computes total coverage, cost to remaining depositors, and maximum safe
 redemption size (< 1% loss to remaining holders).
@@ -117,9 +123,17 @@ Use morpho_monitor_risk for Morpho position risk.`,
           };
         });
 
-        // ── Compute idle capital ──
+        // ── Compute unallocated capital ──
+        // Subtract externalPositions (avant burns: 2d redemption delay; pendle
+        // LP: LP-exit with price impact) from Tier 1. They are NOT instant
+        // cash — belong in Tier 2 (avant, matures when burn clears) or Tier 3
+        // (pendle, LP exit with impact).
         const knownAllocTotal = positions.reduce((s, p) => s + p.allocationUsd, 0);
-        const idleCapitalUsd = Math.max(0, vaultTvl - knownAllocTotal);
+        const externalTotalUsd = (mv.externalPositions || []).reduce(
+          (s, e) => s + (e.valueUsd || 0),
+          0,
+        );
+        const idleCapitalUsd = Math.max(0, vaultTvl - knownAllocTotal - externalTotalUsd);
 
         // ── Build waterfall ──
         const waterfall: WithdrawalWaterfallTier[] = [];
@@ -127,19 +141,47 @@ Use morpho_monitor_risk for Morpho position risk.`,
         let cumulative = 0;
         const remainingTvlAfter = vaultTvl - redemptionUsd;
 
-        // Tier 1: Idle capital
+        // Tier 1: Unallocated cash (truly undeployed — not in LP, not in external)
         const tier1Available = Math.min(idleCapitalUsd, remaining);
         cumulative += tier1Available;
         remaining -= tier1Available;
         waterfall.push({
-          name: "Idle Capital",
-          description: "Undeployed cash in the vault",
+          name: "Unallocated Cash",
+          description: externalTotalUsd > 0
+            ? `Undeployed cash in the vault (${formatUsd(externalTotalUsd)} in external positions counted separately)`
+            : "Undeployed cash in the vault",
           availableUsd: tier1Available,
           coveragePct: redemptionUsd > 0 ? (tier1Available / redemptionUsd) * 100 : 0,
           estimatedCostUsd: 0,
           estimatedCostPct: 0,
           cumulativeCoverageUsd: cumulative,
         });
+
+        // Tier 1b: Avant redemption queue — delayed but no price impact.
+        // avUSDx → avUSD burn-for-redemption settles in ~2 days per Avant's
+        // redemption window. Surface as a dedicated tier with the delay
+        // explicit, so callers see that capital exists but isn't instant.
+        // Pendle external LP is NOT counted here — it requires LP exit with
+        // price impact and ideally belongs in Tier 3. For now, any pendle
+        // external value is excluded from all tiers (shows a more conservative
+        // stress result, which is the safer error mode).
+        const avantExternalUsd = (mv.externalPositions || [])
+          .filter((e) => e.protocol === "avant")
+          .reduce((s, e) => s + (e.valueUsd || 0), 0);
+        if (avantExternalUsd > 0) {
+          const tier1bAvailable = Math.min(avantExternalUsd, remaining);
+          cumulative += tier1bAvailable;
+          remaining -= tier1bAvailable;
+          waterfall.push({
+            name: "Avant Redemption Queue",
+            description: "avUSDx → avUSD burn-for-redemption (~2d settlement, no price impact)",
+            availableUsd: tier1bAvailable,
+            coveragePct: redemptionUsd > 0 ? (tier1bAvailable / redemptionUsd) * 100 : 0,
+            estimatedCostUsd: 0,
+            estimatedCostPct: 0,
+            cumulativeCoverageUsd: cumulative,
+          });
+        }
 
         // Tier 2: Maturing positions (within 7 days) — same-chain only
         // Cross-chain maturing positions need bridge settlement, so they can't be
@@ -412,11 +454,13 @@ function formatStressTestResult(r: StressTestResult): string {
       );
     }
 
-    // Idle capital dependency: if Tier 1 covers most of it
+    // Unallocated capital dependency: if Tier 1 covers most of it.
+    // r.idlePct now means "unallocated" — truly undeployed cash, excluding
+    // external positions (which are surfaced as their own tier).
     if (r.idlePct > 50) {
       qualityWarnings.push(
-        `${r.idlePct.toFixed(0)}% of TVL is idle — coverage is easy but yield is being sacrificed. ` +
-        `High idle ratio means the vault is not deploying capital.`
+        `${r.idlePct.toFixed(0)}% of TVL is unallocated — coverage is easy but yield is being sacrificed. ` +
+        `High unallocated ratio means the vault is not deploying capital.`
       );
     }
 
