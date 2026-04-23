@@ -999,8 +999,14 @@ export interface StressTestResult {
   totalCovered: boolean;
   totalCostToRemainingUsd: number;
   totalCostToRemainingPct: number;
-  maxSafeRedemptionPct: number;
+  maxSafeRedemptionPct: number;           // within-epoch (instant), Tier 1 + maturing-within-7d only
   maxSafeRedemptionUsd: number;
+  // Longer window — includes Tier 1b Avant redemption queue (~1 week cooldown
+  // per Avant docs, $0 cost). Delta vs maxSafeRedemptionPct is the liquidity
+  // buffer the queue provides. Equal to maxSafeRedemptionPct when no avant
+  // external positions exist.
+  maxSafeWithinWeekPct: number;
+  maxSafeWithinWeekUsd: number;
   /** Cross-chain position summary (empty when all positions are same-chain). */
   crossChainPositions: Array<{ symbol: string; allocationUsd: number }>;
   /** Total USD allocated to cross-chain positions (subject to bridge latency). */

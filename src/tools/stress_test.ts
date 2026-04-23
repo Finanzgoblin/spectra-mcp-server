@@ -23,8 +23,10 @@ export function register(server: McpServer): void {
 
 Builds a liquidity waterfall — sources of cash ordered by cost:
   Tier 1:  Unallocated Cash (undeployed, no external — instant, no cost)
-  Tier 1b: Avant Redemption Queue (avUSDx → avUSD burn, ~2d settlement, no
-           price impact — emitted only when avant external positions exist)
+  Tier 1b: Avant Redemption Queue (avUSDx → avUSD burn, ~1 week cooldown per
+           Avant docs, no price impact — emitted only when avant external
+           positions exist; EXCLUDED from within-epoch max-safe calculation
+           due to the delay, INCLUDED in the separate within-1-week metric)
   Tier 2:  Naturally maturing Spectra LP positions (no cost, time-dependent)
   Tier 3:  LP removal from Curve/Pendle pools (low-medium impact)
   Tier 4:  PT sale on Curve pool (higher impact)
@@ -158,9 +160,19 @@ Use morpho_monitor_risk for Morpho position risk.`,
         });
 
         // Tier 1b: Avant redemption queue — delayed but no price impact.
-        // avUSDx → avUSD burn-for-redemption settles in ~2 days per Avant's
-        // redemption window. Surface as a dedicated tier with the delay
-        // explicit, so callers see that capital exists but isn't instant.
+        //
+        // Source [docs]: Avant docs explicitly state "Converting avUSDx back
+        // to avUSD requires a burn request, which initiates a one-week
+        // cooldown period." (docs.avantprotocol.com/overview/core-tokens).
+        // avBTCx and avETHx share the same one-week cooldown. The savUSD
+        // → avUSD unwind is different — 1 day — but that's the stable
+        // variant, not the externalPositions[] protocol we surface.
+        //
+        // Observation boundary: the cooldown is the AVANT-SIDE settlement.
+        // An actual curator redeeming has to wait for the burn to clear
+        // PLUS any CCTP bridge back to Base if the capital needs to end up
+        // on the home chain. Total end-to-end is ≥ 1 week.
+        //
         // Pendle external LP is NOT counted here — it requires LP exit with
         // price impact and ideally belongs in Tier 3. For now, any pendle
         // external value is excluded from all tiers (shows a more conservative
@@ -174,7 +186,7 @@ Use morpho_monitor_risk for Morpho position risk.`,
           remaining -= tier1bAvailable;
           waterfall.push({
             name: "Avant Redemption Queue",
-            description: "avUSDx → avUSD burn-for-redemption (~2d settlement, no price impact)",
+            description: "avUSDx → avUSD burn-for-redemption (~1 week cooldown per Avant docs, no price impact)",
             availableUsd: tier1bAvailable,
             coveragePct: redemptionUsd > 0 ? (tier1bAvailable / redemptionUsd) * 100 : 0,
             estimatedCostUsd: 0,
@@ -303,8 +315,17 @@ Use morpho_monitor_risk for Morpho position risk.`,
         const crossChainTotalUsd = crossChainPositions.reduce((s, p) => s + p.allocationUsd, 0);
 
         // ── Compute max safe redemption (< 1% loss to remaining) ──
-        // Binary search for the largest redemption where total cost < 1% of remaining TVL
-        // Uses same cross-chain logic: same-chain maturing = free, cross-chain gets bridge penalty
+        // Binary search for the largest redemption where total cost < 1% of remaining TVL.
+        // Uses same cross-chain logic: same-chain maturing = free, cross-chain gets bridge penalty.
+        //
+        // SETTLEMENT-WINDOW SCOPE: this computation is within-epoch (no delay
+        // beyond natural maturity of same-chain positions within 7 days).
+        // Tier 1b (Avant Redemption Queue) is INTENTIONALLY EXCLUDED from
+        // the max-safe binary search — its cost is $0 but its settlement
+        // delay is ~1 week per Avant docs (plus CCTP bridge back to home
+        // chain if applicable). Including it here would overstate immediate
+        // liquidity. A secondary "max safe within ~1 week" metric is
+        // computed below that DOES include Tier 1b for the longer window.
         const sameChainMaturingTotal = maturingSameChain.reduce((s, p) => s + p.allocationUsd, 0);
         let maxSafePct = 0;
         for (let testPct = 1; testPct <= 100; testPct++) {
@@ -315,7 +336,7 @@ Use morpho_monitor_risk for Morpho position risk.`,
           let testRem = testAmount;
           let testCost = 0;
 
-          // Tier 1: idle
+          // Tier 1: idle (same-epoch, no delay)
           testRem -= Math.min(idleCapitalUsd, testRem);
           // Tier 2: same-chain maturing only
           testRem -= Math.min(sameChainMaturingTotal, testRem);
@@ -356,6 +377,61 @@ Use morpho_monitor_risk for Morpho position risk.`,
           }
         }
 
+        // ── Max safe within 1-week window (includes Tier 1b Avant queue) ──
+        // Same 1% cost threshold, but with Tier 1b added AFTER Tier 1 — so the
+        // Avant burn queue capital counts toward coverage at $0 cost. Gives
+        // the caller a second, longer-window answer: "how much can exit in
+        // ~1 week without pricing penalty?" The delta between
+        // maxSafeRedemptionPct (within-epoch) and this one is the liquidity
+        // buffer the Avant queue provides. For a vault with no avant external,
+        // both numbers are equal.
+        let maxSafeWithinWeekPct = 0;
+        for (let testPct = 1; testPct <= 100; testPct++) {
+          const testAmount = vaultTvl * (testPct / 100);
+          const testRemaining = vaultTvl - testAmount;
+          if (testRemaining <= 0) break;
+          let testRem = testAmount;
+          let testCost = 0;
+          // Tier 1: idle (instant)
+          testRem -= Math.min(idleCapitalUsd, testRem);
+          // Tier 1b: avant redemption queue (1-week cooldown, $0 cost)
+          testRem -= Math.min(avantExternalUsd, testRem);
+          // Tier 2: same-chain maturing within 7d
+          testRem -= Math.min(sameChainMaturingTotal, testRem);
+          // Tier 3: LP removal (with price impact, same-chain first then cross-chain)
+          for (const pos of allActiveSameChain) {
+            if (testRem <= 0) break;
+            const removable = Math.min(pos.allocationUsd, testRem);
+            testCost += removable * estimatePriceImpact(removable, pos.poolLiquidityUsd) * stressMultiplier;
+            testRem -= removable;
+          }
+          for (const pos of allActiveCrossChain) {
+            if (testRem <= 0) break;
+            const removable = Math.min(pos.allocationUsd, testRem);
+            testCost += removable * estimatePriceImpact(removable, pos.poolLiquidityUsd) * stressMultiplier * 1.5;
+            testRem -= removable;
+          }
+          // Tier 4: PT sale (same-chain then cross-chain)
+          for (const pos of allActiveSameChain) {
+            if (testRem <= 0) break;
+            const ptSellable = Math.min(pos.allocationUsd * 0.5, testRem);
+            testCost += ptSellable * estimatePriceImpact(ptSellable, pos.poolLiquidityUsd) * 2 * stressMultiplier;
+            testRem -= ptSellable;
+          }
+          for (const pos of allActiveCrossChain) {
+            if (testRem <= 0) break;
+            const ptSellable = Math.min(pos.allocationUsd * 0.5, testRem);
+            testCost += ptSellable * estimatePriceImpact(ptSellable, pos.poolLiquidityUsd) * 2 * stressMultiplier * 1.5;
+            testRem -= ptSellable;
+          }
+          if (testRem > 0) break;
+          if (testCost / testRemaining <= 0.01) {
+            maxSafeWithinWeekPct = testPct;
+          } else {
+            break;
+          }
+        }
+
         // ── Incentive dependency context ──
         const apyBase = mv.liveApy?.details?.base || 0;
         const liveApyTotal = mv.liveApy?.total || 0;
@@ -385,6 +461,8 @@ Use morpho_monitor_risk for Morpho position risk.`,
           totalCostToRemainingPct: remainingTvlAfter > 0 ? (totalCost / remainingTvlAfter) * 100 : 0,
           maxSafeRedemptionPct: maxSafePct,
           maxSafeRedemptionUsd: vaultTvl * (maxSafePct / 100),
+          maxSafeWithinWeekPct,
+          maxSafeWithinWeekUsd: vaultTvl * (maxSafeWithinWeekPct / 100),
           crossChainPositions,
           crossChainTotalUsd,
           bridgePendingUsd,
@@ -439,7 +517,13 @@ function formatStressTestResult(r: StressTestResult): string {
   lines.push(`  Total cost to remaining depositors: ${formatUsd(r.totalCostToRemainingUsd)} (${formatPct(r.totalCostToRemainingPct)} of remaining TVL)`);
 
   lines.push(``);
-  lines.push(`  Maximum Safe Redemption (< 1% loss): ${r.maxSafeRedemptionPct}% of TVL (${formatUsd(r.maxSafeRedemptionUsd)})`);
+  lines.push(`  Maximum Safe Redemption (< 1% loss, within-epoch): ${r.maxSafeRedemptionPct}% of TVL (${formatUsd(r.maxSafeRedemptionUsd)})`);
+  // Show the longer-window metric only when it's materially larger — i.e.
+  // when Avant queue (Tier 1b) adds coverage. Avoids redundant display on
+  // vaults without avant external positions (where the two numbers are equal).
+  if (r.maxSafeWithinWeekPct > r.maxSafeRedemptionPct) {
+    lines.push(`  Maximum Safe Redemption (< 1% loss, within ~1 week): ${r.maxSafeWithinWeekPct}% of TVL (${formatUsd(r.maxSafeWithinWeekUsd)}) — includes Avant burn queue settlement`);
+  }
 
   // ── Coverage quality assessment ──
   // "COVERED" alone collapses genuine ambiguity about WHY coverage exists
