@@ -14,7 +14,9 @@ import { z } from "zod";
 import type { StressTestResult, WithdrawalWaterfallTier } from "../types.js";
 import { CHAIN_ENUM, EVM_ADDRESS } from "../config.js";
 import { fetchMetavaults } from "../api.js";
-import { formatUsd, formatPct, daysToMaturity, estimatePriceImpact } from "../formatters.js";
+import { formatUsd, formatPct, daysToMaturity } from "../formatters.js";
+import { classifyForStress, COST_MODELS } from "../protocols/index.js";
+import type { TypedExternalPosition } from "../protocols/index.js";
 
 export function register(server: McpServer): void {
   server.tool(
@@ -125,17 +127,28 @@ Use morpho_monitor_risk for Morpho position risk.`,
           };
         });
 
-        // ── Compute unallocated capital ──
-        // Subtract externalPositions (avant burns: 2d redemption delay; pendle
-        // LP: LP-exit with price impact) from Tier 1. They are NOT instant
-        // cash — belong in Tier 2 (avant, matures when burn clears) or Tier 3
-        // (pendle, LP exit with impact).
+        // Classify externalPositions via the protocol registry (Phase 3).
+        // AP-1: every externalPosition's valueUsd subtracts from idle
+        // regardless of stressExclude — only tier placement + max-safe
+        // inclusion are gated by the flag.
+        const externalClassified = (mv.externalPositions || []).map((ext) => ({
+          ext: ext as unknown as TypedExternalPosition,
+          valueUsd: ext.valueUsd || 0,
+          classification: classifyForStress(ext as unknown as TypedExternalPosition, mv.chainId),
+        }));
+
         const knownAllocTotal = positions.reduce((s, p) => s + p.allocationUsd, 0);
-        const externalTotalUsd = (mv.externalPositions || []).reduce(
-          (s, e) => s + (e.valueUsd || 0),
-          0,
-        );
+        const externalTotalUsd = externalClassified.reduce((s, e) => s + e.valueUsd, 0);
         const idleCapitalUsd = Math.max(0, vaultTvl - knownAllocTotal - externalTotalUsd);
+
+        // Zero-cost queued redemptions get a dedicated tier (avant-shaped).
+        // Classifier-driven: any externalPosition with costModelName="zero"
+        // and stressExclude=false qualifies. New protocols with this shape
+        // flow through without edits here.
+        const externalQueueTier = externalClassified.filter(
+          (e) => !e.classification.stressExclude && e.valueUsd > 0 && e.classification.costModelName === "zero",
+        );
+        const externalQueueTotalUsd = externalQueueTier.reduce((s, e) => s + e.valueUsd, 0);
 
         // ── Build waterfall ──
         const waterfall: WithdrawalWaterfallTier[] = [];
@@ -159,34 +172,26 @@ Use morpho_monitor_risk for Morpho position risk.`,
           cumulativeCoverageUsd: cumulative,
         });
 
-        // Tier 1b: Avant redemption queue — delayed but no price impact.
-        //
-        // Source [docs]: Avant docs explicitly state "Converting avUSDx back
-        // to avUSD requires a burn request, which initiates a one-week
-        // cooldown period." (docs.avantprotocol.com/overview/core-tokens).
-        // avBTCx and avETHx share the same one-week cooldown. The savUSD
-        // → avUSD unwind is different — 1 day — but that's the stable
-        // variant, not the externalPositions[] protocol we surface.
-        //
-        // Observation boundary: the cooldown is the AVANT-SIDE settlement.
-        // An actual curator redeeming has to wait for the burn to clear
-        // PLUS any CCTP bridge back to Base if the capital needs to end up
-        // on the home chain. Total end-to-end is ≥ 1 week.
-        //
-        // Pendle external LP is NOT counted here — it requires LP exit with
-        // price impact and ideally belongs in Tier 3. For now, any pendle
-        // external value is excluded from all tiers (shows a more conservative
-        // stress result, which is the safer error mode).
-        const avantExternalUsd = (mv.externalPositions || [])
-          .filter((e) => e.protocol === "avant")
-          .reduce((s, e) => s + (e.valueUsd || 0), 0);
-        if (avantExternalUsd > 0) {
-          const tier1bAvailable = Math.min(avantExternalUsd, remaining);
+        // Tier 1b: External redemption queue — zero-cost, delayed settlement.
+        // Classifier-driven. Observation boundary: the settlement window is
+        // protocol-side; a CCTP bridge back to the home chain may add latency.
+        if (externalQueueTotalUsd > 0) {
+          const tier1bAvailable = Math.min(externalQueueTotalUsd, remaining);
           cumulative += tier1bAvailable;
           remaining -= tier1bAvailable;
+          const protocols = [...new Set(externalQueueTier.map((e) => e.ext.protocol))];
+          const proto = protocols[0];
+          const tierName =
+            protocols.length === 1
+              ? `${proto[0].toUpperCase()}${proto.slice(1)} Redemption Queue`
+              : "External Redemption Queue";
+          const tierDesc =
+            protocols.length === 1
+              ? `${externalQueueTier[0].classification.windowLabelRendered} (no price impact)`
+              : `${protocols.length} protocol queues combined`;
           waterfall.push({
-            name: "Avant Redemption Queue",
-            description: "avUSDx → avUSD burn-for-redemption (~1 week cooldown per Avant docs, no price impact)",
+            name: tierName,
+            description: tierDesc,
             availableUsd: tier1bAvailable,
             coveragePct: redemptionUsd > 0 ? (tier1bAvailable / redemptionUsd) * 100 : 0,
             estimatedCostUsd: 0,
@@ -229,27 +234,28 @@ Use morpho_monitor_risk for Morpho position risk.`,
           ...activePositions.filter((p) => p.isCrossChain),
         ];
 
+        // LP cost helpers via registry (1.5x cross-chain handled in model).
+        // Shared by Tier 3, Tier 4, and both max-safe binary searches.
+        const lpSame = (amt: number, depth: number) =>
+          COST_MODELS.lp_exit_samechain({ amountUsd: amt, poolLiquidityUsd: depth, stressMultiplier });
+        const lpCross = (amt: number, depth: number) =>
+          COST_MODELS.lp_exit_crosschain_cctp({ amountUsd: amt, poolLiquidityUsd: depth, stressMultiplier });
+
+        // Tier 3 LP removal
         let tier3Available = 0;
         let tier3Cost = 0;
-        // Same-chain first (no bridge penalty)
         for (const pos of allActiveSameChain) {
           if (remaining <= 0) break;
           const removable = Math.min(pos.allocationUsd, remaining);
-          const impact = estimatePriceImpact(removable, pos.poolLiquidityUsd) * stressMultiplier;
-          const cost = removable * impact;
           tier3Available += removable;
-          tier3Cost += cost;
+          tier3Cost += lpSame(removable, pos.poolLiquidityUsd);
           remaining -= removable;
         }
-        // Cross-chain: 1.5x impact multiplier (bridge latency + execution uncertainty)
         for (const pos of allActiveCrossChain) {
           if (remaining <= 0) break;
           const removable = Math.min(pos.allocationUsd, remaining);
-          const bridgePenalty = 1.5;
-          const impact = estimatePriceImpact(removable, pos.poolLiquidityUsd) * stressMultiplier * bridgePenalty;
-          const cost = removable * impact;
           tier3Available += removable;
-          tier3Cost += cost;
+          tier3Cost += lpCross(removable, pos.poolLiquidityUsd);
           remaining -= removable;
         }
         cumulative += tier3Available;
@@ -267,30 +273,24 @@ Use morpho_monitor_risk for Morpho position risk.`,
           cumulativeCoverageUsd: cumulative,
         });
 
-        // Tier 4: PT sale (if LP removal wasn't enough, sell PT tokens with higher impact)
-        // PT sale has ~2x the impact of LP removal since you're selling one side of the pair
+        // Tier 4: PT sale — 2× LP-exit impact (factor outside the registry;
+        // future `pt_sale_*` cost models would replace this literal).
+        const PT_SALE_IMPACT_FACTOR = 2;
         let tier4Available = 0;
         let tier4Cost = 0;
         if (remaining > 0) {
-          // Same-chain first
           for (const pos of allActiveSameChain) {
             if (remaining <= 0) break;
             const ptSellable = Math.min(pos.allocationUsd * 0.5, remaining);
-            const impact = estimatePriceImpact(ptSellable, pos.poolLiquidityUsd) * 2 * stressMultiplier;
-            const cost = ptSellable * impact;
             tier4Available += ptSellable;
-            tier4Cost += cost;
+            tier4Cost += lpSame(ptSellable, pos.poolLiquidityUsd) * PT_SALE_IMPACT_FACTOR;
             remaining -= ptSellable;
           }
-          // Cross-chain with bridge penalty
           for (const pos of allActiveCrossChain) {
             if (remaining <= 0) break;
             const ptSellable = Math.min(pos.allocationUsd * 0.5, remaining);
-            const bridgePenalty = 1.5;
-            const impact = estimatePriceImpact(ptSellable, pos.poolLiquidityUsd) * 2 * stressMultiplier * bridgePenalty;
-            const cost = ptSellable * impact;
             tier4Available += ptSellable;
-            tier4Cost += cost;
+            tier4Cost += lpCross(ptSellable, pos.poolLiquidityUsd) * PT_SALE_IMPACT_FACTOR;
             remaining -= ptSellable;
           }
         }
@@ -314,123 +314,71 @@ Use morpho_monitor_risk for Morpho position risk.`,
           .map((p) => ({ symbol: p.symbol, allocationUsd: p.allocationUsd }));
         const crossChainTotalUsd = crossChainPositions.reduce((s, p) => s + p.allocationUsd, 0);
 
-        // ── Compute max safe redemption (< 1% loss to remaining) ──
-        // Binary search for the largest redemption where total cost < 1% of remaining TVL.
-        // Uses same cross-chain logic: same-chain maturing = free, cross-chain gets bridge penalty.
-        //
-        // SETTLEMENT-WINDOW SCOPE: this computation is within-epoch (no delay
-        // beyond natural maturity of same-chain positions within 7 days).
-        // Tier 1b (Avant Redemption Queue) is INTENTIONALLY EXCLUDED from
-        // the max-safe binary search — its cost is $0 but its settlement
-        // delay is ~1 week per Avant docs (plus CCTP bridge back to home
-        // chain if applicable). Including it here would overstate immediate
-        // liquidity. A secondary "max safe within ~1 week" metric is
-        // computed below that DOES include Tier 1b for the longer window.
+        // ── Max-safe binary search ──
+        // Within-epoch: external queue EXCLUDED (settlement > 1 epoch).
+        // Within-1-week: external queue included if settlementDaysTypical ≤ 7.
         const sameChainMaturingTotal = maturingSameChain.reduce((s, p) => s + p.allocationUsd, 0);
-        let maxSafePct = 0;
-        for (let testPct = 1; testPct <= 100; testPct++) {
-          const testAmount = vaultTvl * (testPct / 100);
-          const testRemaining = vaultTvl - testAmount;
-          if (testRemaining <= 0) break;
 
-          let testRem = testAmount;
-          let testCost = 0;
-
-          // Tier 1: idle (same-epoch, no delay)
-          testRem -= Math.min(idleCapitalUsd, testRem);
-          // Tier 2: same-chain maturing only
-          testRem -= Math.min(sameChainMaturingTotal, testRem);
-          // Tier 3: LP removal — same-chain first
-          for (const pos of allActiveSameChain) {
-            if (testRem <= 0) break;
-            const removable = Math.min(pos.allocationUsd, testRem);
-            testCost += removable * estimatePriceImpact(removable, pos.poolLiquidityUsd) * stressMultiplier;
-            testRem -= removable;
+        function maxSafeBinarySearch(includeQueueUsd: number): number {
+          let safe = 0;
+          for (let testPct = 1; testPct <= 100; testPct++) {
+            const testAmount = vaultTvl * (testPct / 100);
+            const testRemaining = vaultTvl - testAmount;
+            if (testRemaining <= 0) break;
+            let testRem = testAmount;
+            let testCost = 0;
+            // Tier 1: idle
+            testRem -= Math.min(idleCapitalUsd, testRem);
+            // Tier 1b: external redemption queue (only when called with queue)
+            testRem -= Math.min(includeQueueUsd, testRem);
+            // Tier 2: same-chain maturing
+            testRem -= Math.min(sameChainMaturingTotal, testRem);
+            // Tier 3: LP removal — same-chain then cross-chain
+            for (const pos of allActiveSameChain) {
+              if (testRem <= 0) break;
+              const removable = Math.min(pos.allocationUsd, testRem);
+              testCost += lpSame(removable, pos.poolLiquidityUsd);
+              testRem -= removable;
+            }
+            for (const pos of allActiveCrossChain) {
+              if (testRem <= 0) break;
+              const removable = Math.min(pos.allocationUsd, testRem);
+              testCost += lpCross(removable, pos.poolLiquidityUsd);
+              testRem -= removable;
+            }
+            // Tier 4: PT sale (2× LP impact)
+            for (const pos of allActiveSameChain) {
+              if (testRem <= 0) break;
+              const ptSellable = Math.min(pos.allocationUsd * 0.5, testRem);
+              testCost += lpSame(ptSellable, pos.poolLiquidityUsd) * PT_SALE_IMPACT_FACTOR;
+              testRem -= ptSellable;
+            }
+            for (const pos of allActiveCrossChain) {
+              if (testRem <= 0) break;
+              const ptSellable = Math.min(pos.allocationUsd * 0.5, testRem);
+              testCost += lpCross(ptSellable, pos.poolLiquidityUsd) * PT_SALE_IMPACT_FACTOR;
+              testRem -= ptSellable;
+            }
+            if (testRem > 0) break;
+            if (testCost / testRemaining <= 0.01) {
+              safe = testPct;
+            } else {
+              break;
+            }
           }
-          // Tier 3: LP removal — cross-chain with penalty
-          for (const pos of allActiveCrossChain) {
-            if (testRem <= 0) break;
-            const removable = Math.min(pos.allocationUsd, testRem);
-            testCost += removable * estimatePriceImpact(removable, pos.poolLiquidityUsd) * stressMultiplier * 1.5;
-            testRem -= removable;
-          }
-          // Tier 4: PT sale — same-chain
-          for (const pos of allActiveSameChain) {
-            if (testRem <= 0) break;
-            const ptSellable = Math.min(pos.allocationUsd * 0.5, testRem);
-            testCost += ptSellable * estimatePriceImpact(ptSellable, pos.poolLiquidityUsd) * 2 * stressMultiplier;
-            testRem -= ptSellable;
-          }
-          // Tier 4: PT sale — cross-chain with penalty
-          for (const pos of allActiveCrossChain) {
-            if (testRem <= 0) break;
-            const ptSellable = Math.min(pos.allocationUsd * 0.5, testRem);
-            testCost += ptSellable * estimatePriceImpact(ptSellable, pos.poolLiquidityUsd) * 2 * stressMultiplier * 1.5;
-            testRem -= ptSellable;
-          }
-
-          if (testRem > 0) break; // can't cover this amount
-          if (testCost / testRemaining <= 0.01) {
-            maxSafePct = testPct;
-          } else {
-            break; // once we exceed 1%, stop
-          }
+          return safe;
         }
 
-        // ── Max safe within 1-week window (includes Tier 1b Avant queue) ──
-        // Same 1% cost threshold, but with Tier 1b added AFTER Tier 1 — so the
-        // Avant burn queue capital counts toward coverage at $0 cost. Gives
-        // the caller a second, longer-window answer: "how much can exit in
-        // ~1 week without pricing penalty?" The delta between
-        // maxSafeRedemptionPct (within-epoch) and this one is the liquidity
-        // buffer the Avant queue provides. For a vault with no avant external,
-        // both numbers are equal.
-        let maxSafeWithinWeekPct = 0;
-        for (let testPct = 1; testPct <= 100; testPct++) {
-          const testAmount = vaultTvl * (testPct / 100);
-          const testRemaining = vaultTvl - testAmount;
-          if (testRemaining <= 0) break;
-          let testRem = testAmount;
-          let testCost = 0;
-          // Tier 1: idle (instant)
-          testRem -= Math.min(idleCapitalUsd, testRem);
-          // Tier 1b: avant redemption queue (1-week cooldown, $0 cost)
-          testRem -= Math.min(avantExternalUsd, testRem);
-          // Tier 2: same-chain maturing within 7d
-          testRem -= Math.min(sameChainMaturingTotal, testRem);
-          // Tier 3: LP removal (with price impact, same-chain first then cross-chain)
-          for (const pos of allActiveSameChain) {
-            if (testRem <= 0) break;
-            const removable = Math.min(pos.allocationUsd, testRem);
-            testCost += removable * estimatePriceImpact(removable, pos.poolLiquidityUsd) * stressMultiplier;
-            testRem -= removable;
-          }
-          for (const pos of allActiveCrossChain) {
-            if (testRem <= 0) break;
-            const removable = Math.min(pos.allocationUsd, testRem);
-            testCost += removable * estimatePriceImpact(removable, pos.poolLiquidityUsd) * stressMultiplier * 1.5;
-            testRem -= removable;
-          }
-          // Tier 4: PT sale (same-chain then cross-chain)
-          for (const pos of allActiveSameChain) {
-            if (testRem <= 0) break;
-            const ptSellable = Math.min(pos.allocationUsd * 0.5, testRem);
-            testCost += ptSellable * estimatePriceImpact(ptSellable, pos.poolLiquidityUsd) * 2 * stressMultiplier;
-            testRem -= ptSellable;
-          }
-          for (const pos of allActiveCrossChain) {
-            if (testRem <= 0) break;
-            const ptSellable = Math.min(pos.allocationUsd * 0.5, testRem);
-            testCost += ptSellable * estimatePriceImpact(ptSellable, pos.poolLiquidityUsd) * 2 * stressMultiplier * 1.5;
-            testRem -= ptSellable;
-          }
-          if (testRem > 0) break;
-          if (testCost / testRemaining <= 0.01) {
-            maxSafeWithinWeekPct = testPct;
-          } else {
-            break;
-          }
-        }
+        // Within-1-week eligibility: queue position's settlementDaysTypical ≤ 7.
+        const withinWeekQueueTotalUsd = externalQueueTier
+          .filter((e) => {
+            const d = e.classification.settlementDaysTypical;
+            return typeof d === "number" && d <= 7;
+          })
+          .reduce((s, e) => s + e.valueUsd, 0);
+
+        const maxSafePct = maxSafeBinarySearch(0);
+        const maxSafeWithinWeekPct = maxSafeBinarySearch(withinWeekQueueTotalUsd);
 
         // ── Incentive dependency context ──
         const apyBase = mv.liveApy?.details?.base || 0;

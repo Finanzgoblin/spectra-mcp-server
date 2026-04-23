@@ -476,3 +476,137 @@ describe("describeProtocolWindow + effectiveValueAsString + getMeta", () => {
     assert.equal(getMeta("avant").name, "avant");
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// Phase 3 — stress-test caller contract
+//
+// These tests pin the AP-1 invariant and cost-model equivalence that
+// src/tools/stress_test.ts relies on. They don't spin up the tool — they
+// assert the classifier + cost-models produce exactly the numbers the tool
+// wires into its waterfall + binary-search logic.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe("Phase 3 — stress caller invariants", () => {
+  it("AP-1: stressExclude=true still contributes to idle subtraction", () => {
+    // Simulate the caller loop: given a pendle externalPosition (excluded from
+    // all tiers, but still real capital held outside idle), the caller
+    // subtracts valueUsd from idleCapitalUsd regardless of the flag.
+    const vaultTvl = 10_000_000;
+    const knownAllocTotal = 6_000_000;
+    const ext: TypedExternalPosition = {
+      protocol: "pendle",
+      valueUsd: 1_000_000,
+      chainId: 8453,
+    };
+    const c = classifyForStress(ext, 8453);
+    assert.equal(c.stressExclude, true, "pendle must be stressExclude=true");
+
+    // AP-1: valueUsd is subtracted from idle regardless of stressExclude.
+    const idleAfter = Math.max(0, vaultTvl - knownAllocTotal - (ext.valueUsd ?? 0));
+    assert.equal(
+      idleAfter,
+      3_000_000,
+      "pendle externalPosition MUST reduce idleCapitalUsd even though stressExclude=true",
+    );
+  });
+
+  it("avant externalPosition at $1M with stressMultiplier=2.0 costs $0 via COST_MODELS.zero", () => {
+    // Pre-Phase-3 inline math: cost = 0 (tier 1b had no impact).
+    // Post-Phase-3 via registry: COST_MODELS.zero returns 0 for any input.
+    // This is the canonical landmine check from the Phase-3 prompt.
+    const pre = 0;
+    const post = COST_MODELS.zero({ amountUsd: 1_000_000, stressMultiplier: 2.0 });
+    assert.equal(post, pre, "avant cost must be 0 regardless of amount or stress");
+  });
+
+  it("avant classifier returns zero cost model + settlement=7 + stressExclude=false", () => {
+    const ext: TypedExternalPosition = { protocol: "avant", chainId: 43114 };
+    const c = classifyForStress(ext, 8453);
+    assert.equal(c.costModelName, "zero");
+    assert.equal(c.settlementDaysTypical, 7);
+    assert.equal(c.stressExclude, false, "avant must NOT be stressExclude — it holds the tier 1b slot");
+  });
+
+  it("LP-exit samechain cost matches pre-Phase-3 inline formula at depth>0", () => {
+    // Pre-Phase-3 inline (for Spectra LP same-chain):
+    //   cost = removable * estimatePriceImpact(removable, depth) * stressMultiplier
+    //        = removable * (removable / (2*depth)) * stressMultiplier
+    // Post-Phase-3: COST_MODELS.lp_exit_samechain returns the same number.
+    const removable = 50_000;
+    const depth = 1_000_000;
+    const stressMultiplier = 2;
+    // Manual formula:
+    const expected = removable * (removable / (2 * depth)) * stressMultiplier;
+    const actual = COST_MODELS.lp_exit_samechain({
+      amountUsd: removable,
+      poolLiquidityUsd: depth,
+      stressMultiplier,
+    });
+    assert.equal(actual, expected);
+  });
+
+  it("LP-exit crosschain cost matches pre-Phase-3 inline formula (1.5x samechain) at depth>0", () => {
+    // Pre-Phase-3 inline (for Spectra LP cross-chain):
+    //   cost = removable * estimatePriceImpact(...) * stressMultiplier * 1.5
+    // Post-Phase-3: COST_MODELS.lp_exit_crosschain_cctp = samechain * 1.5.
+    const removable = 50_000;
+    const depth = 1_000_000;
+    const stressMultiplier = 2;
+    const expected = removable * (removable / (2 * depth)) * stressMultiplier * 1.5;
+    const actual = COST_MODELS.lp_exit_crosschain_cctp({
+      amountUsd: removable,
+      poolLiquidityUsd: depth,
+      stressMultiplier,
+    });
+    assert.equal(actual, expected);
+  });
+
+  it("PT-sale same-chain: 2 × LP-exit matches pre-Phase-3 inline (impact * 2 * stress)", () => {
+    // Pre-Phase-3 inline (Tier 4 PT sale same-chain):
+    //   cost = ptSellable * estimatePriceImpact(ptSellable, depth) * 2 * stressMultiplier
+    // Post-Phase-3: 2 × COST_MODELS.lp_exit_samechain(...).
+    const ptSellable = 25_000;
+    const depth = 2_000_000;
+    const stressMultiplier = 2;
+    const expected = ptSellable * (ptSellable / (2 * depth)) * 2 * stressMultiplier;
+    const actual =
+      COST_MODELS.lp_exit_samechain({
+        amountUsd: ptSellable,
+        poolLiquidityUsd: depth,
+        stressMultiplier,
+      }) * 2;
+    assert.equal(actual, expected);
+  });
+
+  it("PT-sale cross-chain: 2 × LP-exit-crosschain matches pre-Phase-3 (impact * 2 * stress * 1.5)", () => {
+    const ptSellable = 25_000;
+    const depth = 2_000_000;
+    const stressMultiplier = 2;
+    const expected = ptSellable * (ptSellable / (2 * depth)) * 2 * stressMultiplier * 1.5;
+    const actual =
+      COST_MODELS.lp_exit_crosschain_cctp({
+        amountUsd: ptSellable,
+        poolLiquidityUsd: depth,
+        stressMultiplier,
+      }) * 2;
+    assert.equal(actual, expected);
+  });
+
+  it("unknown protocol is stressExclude=true (excluded from tier + max-safe)", () => {
+    // A future Aave externalPosition shape — unregistered protocol routes
+    // through _unknown, which is stressExclude=true. Caller loop must NOT
+    // place it in any tier but must still subtract from idle.
+    const ext: TypedExternalPosition = {
+      protocol: "aave-v3",
+      valueUsd: 500_000,
+      chainId: 8453,
+    };
+    const c = classifyForStress(ext, 8453);
+    assert.equal(c.stressExclude, true);
+    // Caller contract: subtract from idle, skip tier placement.
+    const vaultTvl = 10_000_000;
+    const knownAllocTotal = 4_000_000;
+    const idleAfter = Math.max(0, vaultTvl - knownAllocTotal - (ext.valueUsd ?? 0));
+    assert.equal(idleAfter, 5_500_000);
+  });
+});
