@@ -188,6 +188,8 @@ Use spectra_get_pool_capacity to assess depth at your capital size for specific 
           daysToMaturity: number;
           allocationUsd: number;
           underlyingNormalized: string;
+          isExternal?: boolean;
+          externalProtocol?: string;
         };
 
         const expiringPositions: ExpiringPosition[] = [];
@@ -225,6 +227,37 @@ Use spectra_get_pool_capacity to assess depth at your capital size for specific 
             allocationUsd: allocUsd,
             underlyingNormalized: normalizeUnderlyingSymbol(underlyingSymbol),
           });
+        }
+
+        // ── Spec §9 Phase 4: External maturities as first-class rollover candidates ──
+        // Per registry metadata, external positions may define actionItems.maturityFieldPath.
+        // Phase 4 surfaces external maturities (e.g., Pendle.market.maturity) as rollover
+        // candidates with the same filtering logic as Spectra positions.
+        for (const ext of mv.externalPositions || []) {
+          // Only process protocols with actionItems.maturityFieldPath registered
+          if (ext.protocol === "pendle" && typeof ext.market?.maturity === "number") {
+            const maturitySec = ext.market.maturity;
+            const days = Math.floor((maturitySec - Math.floor(Date.now() / 1000)) / 86400);
+
+            // Filter: within maturity window (pt_address filter does not apply to externals)
+            if (days > max_maturity_days) continue;
+            if (days < 0) continue; // skip expired
+
+            const mname = ext.market.name || ext.market.address || "Pendle market";
+            const allocUsd = ext.valueUsd || 0;
+
+            expiringPositions.push({
+              symbol: mname,
+              ptAddress: ext.market.address || mname,
+              poolAddress: ext.market.address || null,
+              maturityTimestamp: maturitySec,
+              daysToMaturity: days,
+              allocationUsd: allocUsd,
+              underlyingNormalized: normalizeUnderlyingSymbol(underlyingSymbol),
+              isExternal: true,
+              externalProtocol: "pendle",
+            });
+          }
         }
 
         if (expiringPositions.length === 0) {

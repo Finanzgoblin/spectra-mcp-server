@@ -54,6 +54,8 @@ import {
   formatCuratorDashboard,
 } from "../formatters.js";
 import type { CuratorDashboardOpts } from "../formatters.js";
+import { generateActionItems } from "../protocols/engine.js";
+import type { TypedExternalPosition } from "../protocols/engine.js";
 
 function computeLoopRows(
   baseApy: number,
@@ -1089,29 +1091,15 @@ Use spectra_get_address_activity on the curator's EOA for cross-pool curator act
           }
         }
 
-        // External position warnings — pendle external maturity.
-        // CRITICAL: market.maturity is SECONDS (observed 1777507200 = 2026-04-30).
-        // The parallel avant staleness signal was removed: externalPositions[].updatedAt
-        // tracks Spectra's indexer-write time, NOT the burn-submission time. An avant
-        // burn stuck in Avant's queue for days still shows updatedAt=recent because
-        // Spectra reindexes the row periodically. Any threshold against updatedAt
-        // would be measuring indexer cadence, not redemption age. Real staleness
-        // detection would need burn submission block or orderId-vs-queue-head delta,
-        // neither of which the Spectra API exposes today.
+        // External position action items — registry-driven maturity alerts.
+        // Spec §4: action items generated per protocol from metadata.actionItems.
+        // §6: ordering preserved (appended after [INCENTIVE] check).
+        // Note: Avant has NO actionItems (updatedAt is indexer-write time, not submission
+        // time, per spec §4). Pendle actionItems are driven by market.maturity (seconds).
         const nowMs = Date.now();
         for (const e of (mv.externalPositions || [])) {
-          if (e.protocol === "pendle" && typeof e.market?.maturity === "number") {
-            const maturityMs = e.market.maturity * 1000;
-            const daysUntil = Math.floor((maturityMs - nowMs) / (86400 * 1000));
-            const mname = e.market.name || e.market.address || "Pendle market";
-            if (maturityMs <= nowMs) {
-              actionItems.push(`[PENDLE-EXT EXPIRED] External Pendle ${mname} has matured — redeem LP and redeploy.`);
-            } else if (daysUntil <= 7) {
-              actionItems.push(`[PENDLE-EXT URGENT] External Pendle ${mname} matures in ${daysUntil}d — plan manual unwind.`);
-            } else if (daysUntil <= 30) {
-              actionItems.push(`[PENDLE-EXT UPCOMING] External Pendle ${mname} matures in ${daysUntil}d.`);
-            }
-          }
+          const items = generateActionItems(e as TypedExternalPosition, nowMs);
+          actionItems.push(...items);
         }
 
         // ── Merkl campaigns + unclaimed vault rewards ──────────
