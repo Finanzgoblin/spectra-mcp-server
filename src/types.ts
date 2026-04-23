@@ -520,38 +520,30 @@ export interface SpectraMetavaultBridge {
 
 // External position held outside Spectra LP structure.
 // Surfaced by the Spectra API under `metavault.externalPositions[]`.
-// Shape is a discriminated-by-convention union — `protocol` names the branch.
-// "avant" and "pendle" observed live (2026-04-22); anything else round-trips
-// with only the common spine typed, matching the permissive zod fallback.
+//
+// Phase 5 collapse (spec §9/§10): the spine stops at four typed fields
+// (`protocol`, `chainId`, `valueUsd`, `updatedAt`). Protocol-specific fields
+// (avant's burnt/claim/orderId, pendle's market/lp/pt/yt/sy, and any future
+// module Spectra whitelists) ride through `[key: string]: unknown` untouched.
+//
+// Why the spine stops at four: the registry at `src/protocols/*` owns
+// protocol-specific rendering, classification, and action items. A fifth typed
+// field would mean protocol logic has colonized the schema — spec §10 says
+// stop and revert. Consumers that read `ext.market.maturity` etc. cast
+// locally (e.g. in `formatters.ts`, `stress_test.ts`, `metavault.ts`) before
+// accessing protocol-specific paths.
+//
+// v2 pin retained: package.json still reports version 2.1.0. Downstream tool
+// outputs preserve the same visible fields — this is an internal typing change,
+// not a format break.
 export interface SpectraMetavaultExternalPosition {
   protocol: string;
   chainId?: number;
   valueUsd?: number;
   updatedAt?: number;
-  // avant-specific (burn-for-redemption)
-  source?: string;
-  burnt?: { address: string; symbol?: string; name?: string; decimals?: number; balance?: string; balanceUsd?: number };
-  claim?: { address: string; symbol?: string; name?: string; decimals?: number; balance?: string; balanceUsd?: number };
-  orderId?: number;
-  requestId?: number;
-  // pendle-specific (LP position held inside the vault)
-  market?: {
-    address: string;
-    name?: string;
-    maturity?: number;
-    impliedApy?: number;
-    underlyingApy?: number;
-    swapFeeApy?: number;
-    aggregatedApy?: number;
-    pendleApy?: number;
-    pendleApyMax?: number;
-    feeRate?: number;
-  };
-  lp?: { address: string; symbol?: string; name?: string; decimals?: number; balance?: string; balanceUsd?: number };
-  pt?: { address: string; symbol?: string; name?: string; decimals?: number; balance?: string; balanceUsd?: number };
-  yt?: { address: string; symbol?: string; name?: string; decimals?: number; balance?: string; balanceUsd?: number };
-  sy?: { address: string; symbol?: string; name?: string; decimals?: number; balance?: string; balanceUsd?: number };
-  underlying?: { address: string; symbol?: string; name?: string; decimals?: number; balance?: string; balanceUsd?: number };
+  // Protocol-specific fields (avant: burnt/claim/orderId, pendle: market/lp/...,
+  // future modules: any shape Spectra whitelists) flow through untouched.
+  [key: string]: unknown;
 }
 
 export interface SpectraMetavaultRemoteEntry {

@@ -98,7 +98,13 @@ describe("MetavaultSchema shape guarantees", () => {
   });
 });
 
-describe("ExternalPositionSchema — undocumented live field coverage", () => {
+describe("ExternalPositionSchema — permissive shape (Phase 5 collapse)", () => {
+  // Phase 5 (spec §9): schema is a single permissive shape with a four-field
+  // typed spine (protocol, chainId, valueUsd, updatedAt) + .passthrough().
+  // All protocol-specific fields (avant burnt/claim/orderId, pendle market/lp,
+  // any future module) ride through untouched. A fifth typed field would mean
+  // protocol logic has colonized the schema — spec §10 says stop and revert.
+
   it("parses every externalPosition across all chain fixtures", () => {
     for (const chain of ["base", "mainnet", "flare", "katana"]) {
       const raw = loadFixture(chain) as any[];
@@ -122,23 +128,47 @@ describe("ExternalPositionSchema — undocumented live field coverage", () => {
     }
   });
 
-  it("accepts an unknown protocol via the permissive fallback branch", () => {
-    // When Spectra whitelists a new module (morpho, midas, aave…), the
-    // fallback branch must accept it without a validation crash. This
-    // protects the "Spectra adds fields weekly" design choice — new
-    // protocols should round-trip, not block the whole response.
-    const unknownEntry = {
-      protocol: "morpho",            // not a literal in our union
+  it("accepts a brand-new protocol (morpho-fixed) with zero schema edits", () => {
+    // Phase 5 acceptance: a future whitelisted ERC-4626 module (morpho-fixed,
+    // midas, aave, euler) must round-trip without a schema edit. This is PR1
+    // — zero-code protocol addition, registry-only via metadata.ts.
+    const morphoFixed = {
+      protocol: "morpho-fixed",      // new protocol, never literal'd in schema
       chainId: 1,
-      valueUsd: 123456,
-      vault: { address: "0xabc", symbol: "mvWETH" },
-      extraFieldSpectraAdded: "flexible",
+      valueUsd: 250_000,
+      updatedAt: 1714000000,
+      market: { address: "0xabc", id: "0xmarketkey" },
+      collateral: { address: "0xdef", symbol: "wstETH" },
+      healthFactor: 2.1,
+      anyFieldSpectraAddsNextWeek: { any: "shape" },
     };
-    const result = ExternalPositionSchema.safeParse(unknownEntry);
-    assert.equal(result.success, true, "unknown protocol must round-trip via fallback");
+    const result = ExternalPositionSchema.safeParse(morphoFixed);
+    assert.equal(result.success, true, "brand-new protocol must parse without schema edit");
+    if (result.success) {
+      // Passthrough preserves the shape end-to-end.
+      assert.equal((result.data as any).protocol, "morpho-fixed");
+      assert.equal((result.data as any).market.id, "0xmarketkey");
+      assert.equal((result.data as any).healthFactor, 2.1);
+    }
   });
 
-  it("preserves avant passthrough fields (orderId, requestId)", () => {
+  it("accepts an arbitrary protocol string with only spine fields", () => {
+    // Minimal shape: just the spine, nothing else. Schema must not demand
+    // anything beyond `protocol`.
+    const minimal = { protocol: "some-future-module" };
+    const result = ExternalPositionSchema.safeParse(minimal);
+    assert.equal(result.success, true, "minimal spine-only entry must parse");
+  });
+
+  it("rejects when spine field `protocol` is missing", () => {
+    // The one structural guarantee: every entry must declare its protocol name.
+    // Without it the registry cannot dispatch, and the engine renders blindly.
+    const noProtocol = { chainId: 1, valueUsd: 100 };
+    const result = ExternalPositionSchema.safeParse(noProtocol);
+    assert.equal(result.success, false, "missing protocol must fail validation");
+  });
+
+  it("preserves avant passthrough fields (orderId, burnt, claim, source)", () => {
     const raw = loadFixture("base") as any[];
     // Gami USDC is the one with avant burn entries as of 2026-04-22
     const gami = raw.find((m) => m?.name === "Gami USDC");
@@ -147,12 +177,17 @@ describe("ExternalPositionSchema — undocumented live field coverage", () => {
     const result = ExternalPositionSchema.safeParse(avant);
     assert.equal(result.success, true);
     if (result.success) {
-      assert.equal((result.data as any).protocol, "avant");
-      assert.ok(typeof (result.data as any).valueUsd === "number");
+      const data = result.data as any;
+      // Spine typed
+      assert.equal(data.protocol, "avant");
+      assert.ok(typeof data.valueUsd === "number");
+      // Protocol-specific fields ride through .passthrough() — not stripped.
+      assert.ok("source" in data || "orderId" in data || "burnt" in data,
+        "avant-specific fields must survive passthrough");
     }
   });
 
-  it("parses pendle-shaped entry with nested market APY fields", () => {
+  it("preserves pendle passthrough fields (market, lp, pt, yt)", () => {
     const raw = loadFixture("mainnet") as any[];
     const pendle = raw
       .flatMap((m) => m?.externalPositions || [])
@@ -162,8 +197,11 @@ describe("ExternalPositionSchema — undocumented live field coverage", () => {
     if (!pendle) return;
     const result = ExternalPositionSchema.safeParse(pendle);
     assert.equal(result.success, true);
-    if (result.success && (result.data as any).protocol === "pendle") {
-      assert.ok((result.data as any).market, "pendle branch must carry market object");
+    if (result.success) {
+      const data = result.data as any;
+      assert.equal(data.protocol, "pendle");
+      // Protocol-specific nested shape survives untouched (no zod narrowing).
+      assert.ok(data.market, "pendle passthrough must carry market object");
     }
   });
 });

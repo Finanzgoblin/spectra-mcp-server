@@ -285,88 +285,39 @@ const ModifierSchema = z
 // on mainnet (WETH MetaVault: 1 entry). The field is UNDOCUMENTED in Spectra
 // public docs — shape is inferred from observed data.
 //
-// Design choice: z.union of three branches (avant, pendle, permissive
-// fallback) instead of z.discriminatedUnion. A discriminated union rejects
-// any `protocol` value not in its literal set — unacceptable here, because
-// Spectra can whitelist a new module tomorrow (Morpho, Midas, Aave) and the
-// fallback branch lets that round-trip cleanly while only the common spine
-// (protocol + chainId + valueUsd) is typed. Renderer then decides per-branch
-// what to show and degrades gracefully for unknown protocols.
+// Phase 5 collapse (spec §9/§10): single permissive shape with
+// `protocol: z.string()` and `.passthrough()`. The typed spine STOPS at four
+// fields (protocol, chainId, valueUsd, updatedAt). A fifth typed field would
+// mean protocol-specific logic has colonized the schema — spec §10 says stop
+// and revert.
+//
+// Why collapsed: the registry at `src/protocols/*` owns all protocol-specific
+// rendering, classification, and action-item logic. A third protocol addition
+// (Morpho, Midas, Aave, Euler) must require ONLY a metadata.ts edit — no
+// schema edits, no zod literal-union expansion. PR1 in the spec names this
+// the zero-code protocol-addition gate.
+//
+// Forward compat: any future whitelisted ERC-4626 module rides through
+// `.passthrough()` untouched. The engine interprets shape by protocol name;
+// missing template paths surface as `[MISSING:path]` when
+// `DRIFT_VISIBILITY=loud` (tests/CI), "?" in production (silent default).
+// Consumers that read protocol-specific fields (`ext.market.maturity`,
+// `ext.burnt.symbol`, etc.) cast locally — the engine itself resolves
+// dot-paths via the template resolver.
 //
 // Observed protocols (2026-04-22): "avant" (redemption-in-flight), "pendle"
-// (LP position held inside vault).
+// (LP position held inside vault). Both parse cleanly through the permissive
+// shape; their protocol-specific fields (burnt/claim/orderId/market/lp/...)
+// survive via `.passthrough()` without narrowing.
 
-const ExternalPositionTokenSchema = z
+export const ExternalPositionSchema = z
   .object({
-    address: z.string(),
-    symbol: z.string().optional(),
-    name: z.string().optional(),
-    decimals: z.number().optional(),
-    balance: z.string().optional(),
-    balanceUsd: z.number().optional(),
-    logoURI: z.string().optional(),
-  })
-  .passthrough();
-
-const AvantExternalPositionSchema = z
-  .object({
-    protocol: z.literal("avant"),
-    chainId: z.number(),
-    valueUsd: z.number(),
-    updatedAt: z.number().optional(),
-    source: z.string().optional(),                    // e.g. "avusdx-burn"
-    burnt: ExternalPositionTokenSchema.optional(),    // token being burned
-    claim: ExternalPositionTokenSchema.optional(),    // token to receive
-    orderId: z.number().optional(),
-    requestId: z.number().optional(),
-  })
-  .passthrough();
-
-const PendleExternalPositionSchema = z
-  .object({
-    protocol: z.literal("pendle"),
-    chainId: z.number(),
-    valueUsd: z.number(),
-    updatedAt: z.number().optional(),
-    market: z
-      .object({
-        address: z.string(),
-        name: z.string().optional(),
-        maturity: z.number().optional(),
-        impliedApy: z.number().optional(),
-        underlyingApy: z.number().optional(),
-        swapFeeApy: z.number().optional(),
-        aggregatedApy: z.number().optional(),
-        pendleApy: z.number().optional(),
-        pendleApyMax: z.number().optional(),
-        feeRate: z.number().optional(),
-      })
-      .passthrough()
-      .optional(),
-    lp: ExternalPositionTokenSchema.optional(),
-    pt: ExternalPositionTokenSchema.optional(),
-    yt: ExternalPositionTokenSchema.optional(),
-    sy: ExternalPositionTokenSchema.optional(),
-    underlying: ExternalPositionTokenSchema.optional(),
-  })
-  .passthrough();
-
-// Fallback — any protocol not yet modeled. Common spine typed; rest flows
-// through via .passthrough(). Keeps Spectra's NEXT module from crashing parse.
-const UnknownExternalPositionSchema = z
-  .object({
-    protocol: z.string(),                             // NOT a literal
+    protocol: z.string(),
     chainId: z.number().optional(),
     valueUsd: z.number().optional(),
     updatedAt: z.number().optional(),
   })
   .passthrough();
-
-export const ExternalPositionSchema = z.union([
-  AvantExternalPositionSchema,
-  PendleExternalPositionSchema,
-  UnknownExternalPositionSchema,
-]);
 
 // ────────────────────────────────────────────────────────────────────────────
 // Remote (cross-chain module whitelist)
