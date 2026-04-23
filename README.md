@@ -408,6 +408,15 @@ src/
                       Merkl reward fetching and parsing (pool address extraction from reason keys,
                       BigInt wei→human conversion, matched/unmatched reward categorization),
                       Merkl v4 campaign APR fetching (60s TTL cache, inflight dedup, address-based lookup)
+  primitives.ts     Format primitives (formatUsd, formatPct, formatDate, daysToMaturity,
+                      estimatePriceImpact, chainIdToName) — HOME. Re-exported from formatters.ts
+                      for backward compat with 42 consumer files.
+  protocols/        externalPositions registry (plugin-style extension for Spectra's whitelisted
+                      ERC-4626 modules). types.ts (SourcedValue/InterpretedValue/ProtocolMeta + zod),
+                      metadata.ts (avant + pendle + _unknown), cost-models.ts (zero, lp_exit_samechain,
+                      lp_exit_crosschain_cctp, liquidation), engine.ts (renderExternalPosition,
+                      classifyForStress, generateActionItems, DriftCollector), registry.ts (getMeta +
+                      freshness warnings), index.ts (barrel). Spec: docs/protocols-metadata-spec.md.
   formatters.ts     Formatting, BigInt LLTV parsing, closed-form leverage math,
                       price impact, fractional-day maturity, boost computation,
                       slim envelope helpers, token amount formatting (BigInt → human-readable),
