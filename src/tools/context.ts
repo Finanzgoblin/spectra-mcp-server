@@ -21,6 +21,8 @@ import {
   fetchSpectraPtAddresses,
 } from "../api.js";
 import { formatUsd, formatPct, daysToMaturity } from "../formatters.js";
+import { PROTOCOL_METADATA } from "../protocols/index.js";
+import type { MaybeInterpretedValue, ProtocolMeta } from "../protocols/index.js";
 
 const TOPICS: Record<string, string> = {
 
@@ -538,10 +540,137 @@ Example high-context prompts that trigger deep multi-tool workflows:
   Quote pool capacity at $200K for the top 3 mispricings."`,
 };
 
+// ─── External Protocols registry rendering ─────────────────────────────────
+//
+// `external_protocols` surfaces `PROTOCOL_METADATA` from `src/protocols/` in a
+// shape an agent can reason about. It's built at module load (the registry is
+// frozen), so it lives in TOPICS like the other static topics. The render
+// deliberately DOES NOT dump the full ProtocolMeta — it surfaces the fields an
+// agent needs to decide whether to deploy into a position that touches that
+// protocol:
+//   - label + oneSentenceIntro (what it is, in plain language)
+//   - settlement window (typical + floor + ceiling reason) — how long exits take
+//   - observation boundaries: what's unobservable, how to mitigate, when the
+//     entry dissolves
+//   - docs URL for deeper reading
+//
+// `_unknown` is excluded from the listing (it's a fallback, not a protocol).
+// Freshness footer surfaces the most recent verification date across all
+// registered protocols so agents know how stale the knowledge is.
+
+function renderMaybeInterpreted(v: MaybeInterpretedValue<string | number>): string {
+  if ("interpretedFrom" in v) {
+    const from = v.interpretedFrom.value;
+    return `${String(v.value)} (interpreted from: "${from}")`;
+  }
+  return String(v.value);
+}
+
+function renderSettlementWindowProse(meta: ProtocolMeta): string {
+  const w = meta.stressSettlement.settlementWindow;
+  const typical = renderMaybeInterpreted(w.typical as MaybeInterpretedValue<number>);
+  const parts: string[] = [`typical: ${typical} days`];
+  if (w.floor) parts.push(`floor: ${w.floor.value} days`);
+  if (w.ceiling) parts.push(`ceiling: ${w.ceiling.value} — ${w.ceiling.reason}`);
+  return parts.join("; ");
+}
+
+function maxVerifiedOn(): string {
+  let best = "";
+  for (const [name, meta] of Object.entries(PROTOCOL_METADATA)) {
+    if (name === "_unknown") continue;
+    const dates = [
+      meta.stressSettlement.windowLabel.sourceVerifiedOn,
+      meta.stressSettlement.settlementWindow.typical.sourceVerifiedOn,
+      meta.stressSettlement.settlementWindow.floor?.sourceVerifiedOn,
+    ].filter((d): d is string => typeof d === "string" && d.length > 0);
+    for (const d of dates) {
+      if (d > best) best = d;
+    }
+  }
+  return best;
+}
+
+function renderExternalProtocols(): string {
+  const lines: string[] = [];
+  lines.push(`External Protocols (held OUTSIDE Spectra LP — via MetaVault externalPositions[])`);
+  lines.push(``);
+  lines.push(`This registry describes protocols a MetaVault can hold positions in beyond its`);
+  lines.push(`core Spectra LP strategy. Each entry surfaces what an agent needs to reason about`);
+  lines.push(`exit timing, cost, and observation boundaries — NOT the full protocol metadata.`);
+  lines.push(`Scope: externalPositions[] only. Full yield/risk analysis also needs Merkl`);
+  lines.push(`campaigns (merkl_list_campaigns) and Spectra-native pools (spectra_list_pools).`);
+  lines.push(``);
+
+  const entries = Object.entries(PROTOCOL_METADATA).filter(([name]) => name !== "_unknown");
+  // Stable alphabetical listing for deterministic output.
+  entries.sort(([a], [b]) => a.localeCompare(b));
+
+  for (const [, meta] of entries) {
+    lines.push(`${"─".repeat(68)}`);
+    lines.push(`${meta.label}  —  ${meta.name}`);
+    if (meta.homeDocsUrl) lines.push(`  docs:           ${meta.homeDocsUrl}`);
+    lines.push(`  what it is:     ${meta.oneSentenceIntro}`);
+    lines.push(``);
+    lines.push(`  stress settlement:`);
+    lines.push(`    window label: ${renderMaybeInterpreted(meta.stressSettlement.windowLabel)}`);
+    lines.push(`    window:       ${renderSettlementWindowProse(meta)}`);
+    lines.push(``);
+
+    const ob = meta.observationBoundaries;
+    lines.push(`  observation boundaries:`);
+    lines.push(`    unobservable (what you can't see from tool output):`);
+    for (const u of ob.unobservable) lines.push(`      - ${u}`);
+    if (ob.mitigations && ob.mitigations.length > 0) {
+      lines.push(`    mitigations (how to close each gap yourself):`);
+      for (const m of ob.mitigations) lines.push(`      - ${m}`);
+    }
+    if (ob.dissolution && ob.dissolution.length > 0) {
+      lines.push(`    dissolution (conditions that invalidate this entry):`);
+      for (const d of ob.dissolution) lines.push(`      - ${d}`);
+    }
+    lines.push(``);
+  }
+
+  lines.push(`${"─".repeat(68)}`);
+  lines.push(`Fallback behavior: any externalPosition with a protocol name NOT listed above`);
+  lines.push(`renders via the "_unknown" entry — a loud inline warning + raw valueUsd, plus`);
+  lines.push(`an aggregated drift footer naming the unmapped protocol. The drift footer tells`);
+  lines.push(`you a metadata entry is missing; it does NOT block the tool call.`);
+  lines.push(``);
+  lines.push(`Editability: this registry is human-authored at src/protocols/metadata.ts.`);
+  lines.push(`New protocols are added by authoring a ProtocolMeta entry there — spec at`);
+  lines.push(`docs/protocols-metadata-spec.md §4. Zod validates each entry at registry load.`);
+  lines.push(``);
+
+  const freshest = maxVerifiedOn();
+  if (freshest) {
+    lines.push(`Registry freshness: most recent sourceVerifiedOn across all entries = ${freshest}.`);
+    lines.push(`Entries older than 180 days emit a stderr warning at load; older than 90 days`);
+    lines.push(`append "(verified YYYY-MM-DD)" to curator-facing renders.`);
+  }
+
+  return lines.join("\n");
+}
+
+// Exported for test-side consumption — the tool handler returns this verbatim
+// for `topic="external_protocols"`. Keeping this as a named export lets unit
+// tests assert against the rendered output without wiring up the MCP server.
+export const EXTERNAL_PROTOCOLS_TEXT = renderExternalProtocols();
+
 // "protocol_pulse" is a live-fetching topic — not stored in TOPICS.
 // It fetches real-time vital signs from multiple APIs when requested.
+// "external_protocols" is computed once at module load from the frozen
+// PROTOCOL_METADATA registry, so it lives alongside the other static topics.
 const LIVE_TOPICS = ["protocol_pulse"] as const;
-const ALL_TOPIC_NAMES = [...Object.keys(TOPICS), ...LIVE_TOPICS];
+const STATIC_TOPICS_EXTRA: Record<string, string> = {
+  external_protocols: EXTERNAL_PROTOCOLS_TEXT,
+};
+const ALL_TOPIC_NAMES = [
+  ...Object.keys(TOPICS),
+  ...Object.keys(STATIC_TOPICS_EXTRA),
+  ...LIVE_TOPICS,
+];
 
 // ─── Protocol Pulse: live vital signs ───────────────────────────────────────
 
@@ -813,6 +942,7 @@ Use topic "router_batching" for how Spectra Router affects pool activity interpr
 Use topic "deposit_path" for step-by-step entry mechanics (how to buy PT, mint YT, LP, loop).
 Use topic "glossary" for key term definitions (IBT, sw-prefix, LLTV, gauge, maturity value, APR vs APY, underlying, LP, ERC-4626, Curve StableSwap-NG, boost formula).
 Use topic "fees_and_costs" for protocol YT fees (Spectra 3%, Pendle 5%), reward basis (held vs notional), Merkl campaign types, and external points programs.
+Use topic "external_protocols" for the registry of non-Spectra protocols a MetaVault can hold via externalPositions[] (e.g. Avant one-week cooldown, Pendle instant LP exit): settlement windows, observation boundaries, mitigations. Call this before reasoning about withdraw speed or exit cost on positions that aren't in Spectra LP.
 Use topic "protocol_pulse" for LIVE cross-protocol vital signs (TVL, emissions, pool counts, expiring pools). Fetches real-time data — takes 5-15 seconds.
 
 Available topics: ${ALL_TOPIC_NAMES.join(", ")}
@@ -836,12 +966,22 @@ Omit the topic parameter to get all topics at once.`,
       }
 
       if (topic) {
+        // Registry-derived static topic (computed at module load from PROTOCOL_METADATA).
+        const extra = STATIC_TOPICS_EXTRA[topic];
+        if (extra !== undefined) {
+          return { content: [{ type: "text" as const, text: extra }] };
+        }
         const text = TOPICS[topic];
         return { content: [{ type: "text" as const, text }] };
       }
 
-      // Return all static topics (protocol_pulse excluded — it requires live fetching)
-      const text = Object.entries(TOPICS).map(([, v]) => v).join("\n\n---\n\n");
+      // Return all static topics (protocol_pulse excluded — it requires live fetching).
+      // external_protocols IS included here since it's a pre-computed static string.
+      const pieces = [
+        ...Object.values(TOPICS),
+        ...Object.values(STATIC_TOPICS_EXTRA),
+      ];
+      const text = pieces.join("\n\n---\n\n");
       return { content: [{ type: "text" as const, text }] };
     }
   );
