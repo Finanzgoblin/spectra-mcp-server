@@ -4,6 +4,10 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
+import type { CuratorDashboardOpts } from "./formatters.js";
 import {
   formatUsd,
   formatPct,
@@ -32,6 +36,7 @@ import {
   matchByAssetAndMaturity,
   formatMetavaultStrategy,
   formatCuratorDashboard,
+  CURATOR_DASHBOARD_THRESHOLDS,
   formatObservationCoverage,
   pendleDaysToMaturity,
   formatPendleMarketCompact,
@@ -1700,152 +1705,280 @@ describe("formatCuratorDashboard — protocol tags", () => {
     assert.ok(!result.includes("APY breakdown"), "APY breakdown must NOT appear when stable");
   });
 
-  it("emits Capital state decomposition when ≥2 non-LP buckets populated", () => {
-    const result = formatCuratorDashboard({
+  // ──────────────────────────────────────────────────────────────
+  // Scenario builder — intent-legible test fixtures
+  // ──────────────────────────────────────────────────────────────
+  //
+  // Why this helper exists: threshold-boundary tests need controlled inputs
+  // (a real vault won't sit at exactly 20% unallocated for a drift test).
+  // But hand-crafted magic numbers like `130_000` + `128_500` don't tell a
+  // reader what's being tested — they force archaeology. This helper maps
+  // intent (percentages of TVL) to the USD values the formatter consumes,
+  // so each test reads as a scenario declaration, not a fixture decode.
+  //
+  // Open-emergence note: this helper is the synthetic path. For "does a
+  // real live vault render sensibly end-to-end", see the fixture-based
+  // tests below — they load test/fixtures/metavaults-*.json (re-captured
+  // against live API) and exercise the formatter against real shapes.
+  //
+  // Params are fractions of tvlUsd expressed as percentages. An `expired`
+  // slice consumes both the deployed-total (all_LP) and the expired-stuck
+  // bucket per the formatter's `deployed = all_LP − expired_LP` math.
+  function makeScenario(params: {
+    tvlUsd: number;
+    deployedPct?: number;    // active Spectra LP
+    expiredPct?: number;     // LP in expired positions (included in all_LP, subtracted into expired-stuck)
+    externalPct?: number;    // avant/pendle/other external positions
+    status?: string;         // VISIBLE / HIDDEN / etc
+    avgApy30dTotal?: number;
+    avgApy30dBase?: number;
+  }): CuratorDashboardOpts {
+    const { tvlUsd, deployedPct = 0, expiredPct = 0, externalPct = 0, status, avgApy30dTotal, avgApy30dBase } = params;
+    const positions: CuratorDashboardOpts["positions"] = [];
+    const nowS = Math.floor(Date.now() / 1000);
+    if (deployedPct > 0) {
+      positions.push({
+        symbol: "PT-active-scenario",
+        ptAddress: "0xdeadbeef01" + "0".repeat(30),
+        poolAddress: "0xdeadbeef02" + "0".repeat(30),
+        maturityTimestamp: nowS + 86400 * 60,
+        daysToMaturity: 60,
+        expired: false,
+        tvlUsd: tvlUsd * deployedPct / 100,
+        vaultAllocationUsd: tvlUsd * deployedPct / 100,
+        ptApy: 5,
+        lpApyTotal: 4,
+        lpApyBoostedTotal: null,
+        protocol: "Spectra",
+      });
+    }
+    if (expiredPct > 0) {
+      positions.push({
+        symbol: "PT-expired-scenario",
+        ptAddress: "0xdeadbeef03" + "0".repeat(30),
+        poolAddress: "0xdeadbeef04" + "0".repeat(30),
+        maturityTimestamp: nowS - 86400 * 3,
+        daysToMaturity: 0,
+        expired: true,
+        tvlUsd: tvlUsd * expiredPct / 100,
+        vaultAllocationUsd: tvlUsd * expiredPct / 100,
+        ptApy: 0,
+        lpApyTotal: 0,
+        lpApyBoostedTotal: null,
+        protocol: "Spectra",
+      });
+    }
+    const externalPositions = externalPct > 0
+      ? [{ protocol: "avant", chainId: 43114, valueUsd: tvlUsd * externalPct / 100 } as any]
+      : undefined;
+    return {
       ...baseDashOpts,
+      tvlUsd,
+      tvlUnderlying: tvlUsd,
+      status,
+      avgApy30dTotal,
+      avgApy30dBase,
+      externalPositions,
+      positions,
+    };
+  }
+
+  it("emits Capital state when ≥1 non-LP bucket (expired-stuck or external) populated", () => {
+    // Gami-shape scenario: tiny active LP + expired-stuck + dominant external.
+    // This is the exact pathology the Capital State line was designed for —
+    // reader would otherwise see "48% unallocated headline" vs "$3.65M external
+    // below" and have to mentally reconcile.
+    const result = formatCuratorDashboard(makeScenario({
       tvlUsd: 7_290_000,
-      tvlUnderlying: 7_290_000,
-      positions: [
-        {
-          symbol: "PT-active",
-          ptAddress: "0xa",
-          poolAddress: "0xpa",
-          maturityTimestamp: Math.floor(Date.now() / 1000) + 86400 * 20,
-          daysToMaturity: 20,
-          expired: false,
-          tvlUsd: 130_000,
-          vaultAllocationUsd: 130_000,
-          ptApy: 5,
-          lpApyTotal: 4,
-          lpApyBoostedTotal: null,
-          protocol: "Spectra",
-        },
-        {
-          symbol: "PT-expired",
-          ptAddress: "0xb",
-          poolAddress: "0xpb",
-          maturityTimestamp: Math.floor(Date.now() / 1000) - 86400 * 3,
-          daysToMaturity: 0,
-          expired: true,
-          tvlUsd: 126_000,
-          vaultAllocationUsd: 126_000,
-          ptApy: 0,
-          lpApyTotal: 0,
-          lpApyBoostedTotal: null,
-          protocol: "Spectra",
-        },
-      ],
-      externalPositions: [
-        { protocol: "avant", chainId: 43114, valueUsd: 3_648_221 } as any,
-      ],
-    });
+      deployedPct: 0.06,   // ≈ Gami's live live-LP share
+      expiredPct: 1.7,     // expired-stuck bucket above noise threshold (0.5%)
+      externalPct: 50,     // dominant external bucket
+    }));
     assert.ok(result.includes("Capital state:"), "Capital state line must appear");
     assert.ok(/expired-stuck/.test(result), "expired bucket must render");
     assert.ok(/external/.test(result), "external bucket must render");
   });
 
-  it("suppresses Capital state for simple vaults (only 1 non-LP bucket)", () => {
-    const result = formatCuratorDashboard({
-      ...baseDashOpts,
+  it("suppresses Capital state when only deployed + unallocated (simple vault)", () => {
+    // ~1% unallocated, no expired-stuck, no external → zero non-LP-non-idle
+    // buckets populated → suppress the whole line. Headline TVL already says
+    // everything a simple vault's reader needs.
+    const result = formatCuratorDashboard(makeScenario({
       tvlUsd: 130_000,
-      tvlUnderlying: 130_000,
-      positions: [{
-        symbol: "PT-active",
-        ptAddress: "0xa",
-        poolAddress: "0xpa",
-        maturityTimestamp: Math.floor(Date.now() / 1000) + 86400 * 60,
-        daysToMaturity: 60,
-        expired: false,
-        tvlUsd: 128_500,
-        vaultAllocationUsd: 128_500,
-        ptApy: 3,
-        lpApyTotal: 3,
-        lpApyBoostedTotal: null,
-        protocol: "Spectra",
-      }],
-    });
-    // Only ~1% unallocated (below threshold), 0 external, 0 expired.
-    // Should NOT emit Capital state line.
+      deployedPct: 98.8,
+    }));
     assert.ok(!result.includes("Capital state:"), "Capital state must be suppressed for simple vault");
   });
 
-  it("emits temporal boundary note when unallocated >= 20% alongside Capital state", () => {
-    // Diverger finding: unallocated is point-in-time. When significant, surface
-    // the boundary so a reader doesn't form false confidence.
-    const result = formatCuratorDashboard({
-      ...baseDashOpts,
+  it("emits temporal boundary when unallocated >= TEMPORAL_BOUNDARY_UNALLOC_PCT", () => {
+    // Diverger finding, 5-lens dialectic: "unallocated" is point-in-time.
+    // When the bucket is large enough to anchor a reader's inference, the
+    // caveat becomes load-bearing — capital in pending timelock executions
+    // or cross-chain transit may appear unallocated until indexer refresh.
+    const result = formatCuratorDashboard(makeScenario({
       tvlUsd: 7_290_000,
-      tvlUnderlying: 7_290_000,
-      positions: [{
-        symbol: "PT-x",
-        ptAddress: "0xa",
-        poolAddress: "0xpa",
-        maturityTimestamp: Math.floor(Date.now() / 1000) + 86400 * 20,
-        daysToMaturity: 20,
-        expired: false,
-        tvlUsd: 4_700,
-        vaultAllocationUsd: 4_700,
-        ptApy: 5,
-        lpApyTotal: 4,
-        lpApyBoostedTotal: null,
-        protocol: "Spectra",
-      }],
-      externalPositions: [
-        { protocol: "avant", chainId: 43114, valueUsd: 3_648_221 } as any,
-      ],
-    });
+      deployedPct: 0.06,
+      externalPct: 50,    // forces Capital State to emit (non-LP-non-idle bucket populated)
+      // unallocated ≈ 49.94% → well above TEMPORAL_BOUNDARY_UNALLOC_PCT (20%)
+    }));
     assert.ok(result.includes("Capital state:"), "Capital state line precondition");
     assert.ok(
       result.includes('"unallocated" is point-in-time'),
-      `temporal boundary note must emit when unallocated >= 20%; got first 600 chars: ${result.slice(0, 600)}`,
+      `temporal boundary note must emit when unallocated >= ${CURATOR_DASHBOARD_THRESHOLDS.TEMPORAL_BOUNDARY_UNALLOC_PCT}%; got first 600 chars: ${result.slice(0, 600)}`,
     );
   });
 
-  it("suppresses temporal boundary when unallocated below 20%", () => {
-    const result = formatCuratorDashboard({
-      ...baseDashOpts,
+  it("suppresses temporal boundary when unallocated < TEMPORAL_BOUNDARY_UNALLOC_PCT", () => {
+    // 80% deployed + 18% expired-stuck + 2% unallocated. Capital State may
+    // emit (expired-stuck bucket is populated), but the temporal note must
+    // suppress — at 2% unallocated a reader won't make a load-bearing
+    // inference from the label.
+    const result = formatCuratorDashboard(makeScenario({
       tvlUsd: 1_000_000,
-      tvlUnderlying: 1_000_000,
-      positions: [
-        {
-          symbol: "PT-main",
-          ptAddress: "0xa",
-          poolAddress: "0xpa",
-          maturityTimestamp: Math.floor(Date.now() / 1000) + 86400 * 60,
-          daysToMaturity: 60,
-          expired: false,
-          tvlUsd: 800_000,
-          vaultAllocationUsd: 800_000,
-          ptApy: 5,
-          lpApyTotal: 4,
-          lpApyBoostedTotal: null,
-          protocol: "Spectra",
-        },
-        {
-          symbol: "PT-exp",
-          ptAddress: "0xb",
-          poolAddress: "0xpb",
-          maturityTimestamp: Math.floor(Date.now() / 1000) - 86400 * 3,
-          daysToMaturity: 0,
-          expired: true,
-          tvlUsd: 180_000,
-          vaultAllocationUsd: 180_000,
-          ptApy: 0,
-          lpApyTotal: 0,
-          lpApyBoostedTotal: null,
-          protocol: "Spectra",
-        },
-      ],
-    });
-    // 80% deployed + 18% expired-stuck + 2% unallocated. Capital state may emit
-    // (expired-stuck bucket populated), but temporal note should NOT because
-    // unallocated is below 20%.
+      deployedPct: 80,
+      expiredPct: 18,
+    }));
     if (result.includes("Capital state:")) {
       assert.ok(
         !result.includes('"unallocated" is point-in-time'),
-        "temporal note must be suppressed when unallocated < 20%",
+        `temporal note must be suppressed when unallocated < ${CURATOR_DASHBOARD_THRESHOLDS.TEMPORAL_BOUNDARY_UNALLOC_PCT}%`,
       );
     }
+  });
+
+  // ──────────────────────────────────────────────────────────────
+  // Fixture-based E2E — real vault shapes produce sensible output
+  // ──────────────────────────────────────────────────────────────
+  //
+  // Why fixture-based: the synthetic tests above pin threshold BEHAVIOR.
+  // These tests pin that a REAL vault shape (re-captured against live API)
+  // produces sensible output end-to-end. When Spectra adds a field or
+  // changes a shape, these tests are where the breakage surfaces.
+  //
+  // Dissolution condition: these tests validate the current fixture state.
+  // If the fixtures are re-captured and the new reality no longer exhibits
+  // the asserted patterns (e.g., Gami resolves its avant burns), the
+  // assertions should be updated to reflect the new reality — not loosened
+  // to hide it.
+
+  describe("formatCuratorDashboard — fixture-based end-to-end", () => {
+    // Tests run from build/; fixtures live at repo-root/test/fixtures.
+    const __dirname_e2e = dirname(fileURLToPath(import.meta.url));
+    const fixturesDir = resolve(__dirname_e2e, "../test/fixtures");
+
+    function loadMvFixture(chain: string): any[] {
+      const path = resolve(fixturesDir, `metavaults-${chain}.json`);
+      return JSON.parse(readFileSync(path, "utf8"));
+    }
+
+    // Map a fixture MetaVault into the CuratorDashboardOpts shape the
+    // formatter consumes. Mirrors the projection in src/tools/metavault.ts
+    // at the spectra_get_curator_dashboard handler — kept in sync so
+    // E2E tests exercise the actual rendering path, not a mock.
+    function projectFixtureToOpts(mv: any, chain: string): CuratorDashboardOpts {
+      const positions = (mv.positions || []).map((pos: any) => {
+        const pool = pos.pools?.[0];
+        let vaultAllocationUsd: number | null = null;
+        const rawBalance = pool?.lpt?.balance || pos.balance;
+        if (rawBalance && pool?.lpt?.price?.usd) {
+          const decimals = pool.lpt.decimals || 18;
+          const raw = BigInt(rawBalance);
+          const d = 10n ** BigInt(decimals);
+          const lpBalance = Number(raw / d) + Number(raw % d) / Number(d);
+          vaultAllocationUsd = lpBalance * pool.lpt.price.usd;
+        }
+        return {
+          symbol: pos.symbol || "?",
+          ptAddress: pos.address,
+          poolAddress: pool?.address || null,
+          maturityTimestamp: pos.maturity,
+          daysToMaturity: Math.max(0, Math.ceil((pos.maturity * 1000 - Date.now()) / 86400000)),
+          expired: pos.maturity * 1000 <= Date.now(),
+          tvlUsd: pos.tvl?.usd || 0,
+          vaultAllocationUsd,
+          ptApy: pool?.ptApy || 0,
+          lpApyTotal: pool?.lpApy?.total || 0,
+          lpApyBoostedTotal: pool?.lpApy?.boostedTotal ?? null,
+          protocol: "Spectra" as const,
+        };
+      });
+      return {
+        ...baseDashOpts,
+        chain,
+        metavaultAddress: mv.address,
+        curatorName: mv.curator?.name || "?",
+        curatorAddresses: mv.curator?.addresses || [],
+        vaultName: mv.metadata?.title || mv.name,
+        vaultSymbol: mv.symbol,
+        underlyingSymbol: mv.underlying?.symbol || "?",
+        underlyingDecimals: mv.underlying?.decimals || 6,
+        underlyingPriceUsd: mv.underlying?.price?.usd || 0,
+        tvlUsd: mv.tvl?.usd || 0,
+        tvlUnderlying: mv.tvl?.underlying || 0,
+        liveApyTotal: mv.liveApy?.total || 0,
+        liveApyBoostedTotal: mv.liveApy?.boostedTotal ?? null,
+        liveApyBase: mv.liveApy?.details?.base ?? null,
+        apyDetails: mv.liveApy?.details,
+        sharePriceUsd: mv.price?.usd || 0,
+        sharePriceUnderlying: mv.price?.underlying || 0,
+        status: mv.status,
+        avgApy30dTotal: mv.avgApy30d?.total ?? undefined,
+        avgApy30dBase: mv.avgApy30d?.details?.base ?? undefined,
+        externalPositions: mv.externalPositions,
+        positions,
+      };
+    }
+
+    it("Base Gami USDC renders External Positions + Capital State + temporal boundary", () => {
+      const base = loadMvFixture("base");
+      const gami = base.find((m: any) => m.name === "Gami USDC");
+      assert.ok(gami, "Base fixture must contain Gami USDC");
+      const result = formatCuratorDashboard(projectFixtureToOpts(gami, "base"));
+
+      // External positions exist in the fixture (3 avant avUSDx-burn entries).
+      assert.ok(result.includes("External Positions"), "External Positions section must render");
+      assert.ok(result.includes("[avant]"), "avant branch must render");
+
+      // Gami's shape triggers the Capital State line (deployed + expired-stuck
+      // + external all populated).
+      assert.ok(result.includes("Capital state:"), "Capital state line must render on Gami shape");
+
+      // Gami's unallocated exceeds the temporal boundary threshold.
+      assert.ok(result.includes('"unallocated" is point-in-time'), "temporal boundary note must render for Gami");
+
+      // Gami is VISIBLE — Status line must NOT render.
+      assert.ok(!/^\s*Status:/m.test(result), "VISIBLE vault must not show Status line");
+
+      // No undefined or NaN leaks anywhere in the output.
+      assert.ok(!result.includes("undefined"), "no undefined in rendered output");
+      assert.ok(!result.includes("NaN"), "no NaN in rendered output");
+    });
+
+    it("Mainnet WETH MetaVault (HIDDEN + pendle external) renders Status + pendle branch", () => {
+      const mainnet = loadMvFixture("mainnet");
+      assert.ok(mainnet.length > 0, "mainnet fixture must not be empty");
+      const vault = mainnet[0];  // only one vault in the mainnet fixture today
+      const result = formatCuratorDashboard(projectFixtureToOpts(vault, "mainnet"));
+
+      if (vault.status === "HIDDEN") {
+        assert.ok(result.includes("Status: HIDDEN"), "HIDDEN vault must show Status label");
+      }
+      if ((vault.externalPositions || []).some((e: any) => e.protocol === "pendle")) {
+        assert.ok(result.includes("[pendle]"), "pendle external branch must render");
+      }
+      assert.ok(!result.includes("undefined"), "no undefined leaks");
+      assert.ok(!result.includes("NaN"), "no NaN leaks");
+    });
+
+    it("simple vaults (no external, no expired-stuck) suppress Capital state + temporal note", () => {
+      // UltraYield WETH fixture shape: deployed ≈ 99%, no external, no expired.
+      const base = loadMvFixture("base");
+      const ultra = base.find((m: any) => m.name === "UltraYield WETH");
+      assert.ok(ultra, "Base fixture must contain UltraYield WETH");
+      const result = formatCuratorDashboard(projectFixtureToOpts(ultra, "base"));
+      assert.ok(!result.includes("Capital state:"), "simple vault must not emit Capital state");
+      assert.ok(!result.includes('"unallocated" is point-in-time'), "no temporal boundary without Capital state");
+    });
   });
 });
 

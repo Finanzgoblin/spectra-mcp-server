@@ -3994,6 +3994,53 @@ export interface CuratorDashboardOpts {
   }>;
 }
 
+/**
+ * Rendering thresholds for the curator dashboard.
+ *
+ * These are exported so tests can pin boundary behavior without hardcoding
+ * magic numbers, AND so agents reading the code can see WHY each threshold
+ * is set where it is without archaeology. Each threshold is a product
+ * decision, not an implementation detail. When a threshold changes, the
+ * reason should change with it — update both the value and the rationale.
+ *
+ * Open-emergence note: these numbers are defensible defaults, not truths.
+ * If a vault surfaces where the current thresholds produce misleading
+ * output (e.g., a legitimate 0.3% expired-stuck that deserves surfacing),
+ * the correct response is to re-examine the threshold, not suppress the
+ * vault. The comment-at-site is the invitation to that re-examination.
+ */
+export const CURATOR_DASHBOARD_THRESHOLDS = {
+  /**
+   * Minimum pct of TVL for expired-stuck and external buckets to render
+   * in the Capital State decomposition line. Below this, the bucket is
+   * treated as measurement noise.
+   *
+   * Why 0.5%: empirically, sub-0.5% values on these buckets are either
+   * rounding artifacts or dust that a curator does not act on. A
+   * vault with $500 expired-stuck in a $100K vault (0.5%) is at the
+   * edge — dust above that is worth surfacing.
+   */
+  CAPITAL_STATE_BUCKET_NOISE_PCT: 0.5,
+
+  /**
+   * Minimum pct of TVL for the unallocated bucket to render in the
+   * Capital State decomposition. Set slightly higher than the other
+   * buckets because unallocated is ALREADY surfaced in the headline
+   * TVL line — re-rendering it at rounding scale is redundant noise.
+   */
+  CAPITAL_STATE_UNALLOC_BUCKET_PCT: 1.0,
+
+  /**
+   * Minimum pct unallocated before emitting the temporal-validity note
+   * under the Capital State line. Below this threshold a reader is
+   * unlikely to make a wrong inference from the label; above it, the
+   * "point-in-time" caveat becomes load-bearing (see Diverger finding
+   * from 5-lens dialectic: capital in pending timelock executions or
+   * cross-chain transit can appear unallocated until indexer refresh).
+   */
+  TEMPORAL_BOUNDARY_UNALLOC_PCT: 20,
+} as const;
+
 export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
   const lines: string[] = [];
 
@@ -4252,32 +4299,55 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
     const expiredPct = (expiredLpUsd / opts.tvlUsd) * 100;
     const externalPct = (externalUsd / opts.tvlUsd) * 100;
     const idlePct = (unallocated / opts.tvlUsd) * 100;
+    // Deployed LP bucket has NO pct gate (unlike expired/external). This
+    // asymmetry is load-bearing: a vault with 0.1% Spectra LP and 50%
+    // external is the Gami-shape — the contrast between "nominal strategy"
+    // and "actual reality" IS the signal, not noise. Applying a parity
+    // threshold here would erase that contrast. Killed FU5 from the
+    // 5-lens dialectic explicitly protected this.
     if (deployedUsd > 0) buckets.push(`${deployedPct.toFixed(1)}% Spectra LP`);
-    if (expiredLpUsd > 0 && expiredPct >= 0.5) buckets.push(`${expiredPct.toFixed(1)}% expired-stuck`);
-    if (externalUsd > 0 && externalPct >= 0.5) buckets.push(`${externalPct.toFixed(1)}% external`);
-    if (unallocated > 0 && idlePct >= 1.0) buckets.push(`${idlePct.toFixed(1)}% unallocated`);
-    // Threshold: emit when ≥1 non-idle-non-LP bucket is populated AND total
-    // buckets ≥2. Non-idle-non-LP = {expired-stuck, external}. A simple
-    // LP + unallocated vault doesn't need the decomposition — headline
-    // already shows unallocated%. The line exists to resolve the Gami-style
-    // contradiction where non-obvious buckets (expired-stuck, external) coexist.
+    if (expiredLpUsd > 0 && expiredPct >= CURATOR_DASHBOARD_THRESHOLDS.CAPITAL_STATE_BUCKET_NOISE_PCT) {
+      buckets.push(`${expiredPct.toFixed(1)}% expired-stuck`);
+    }
+    if (externalUsd > 0 && externalPct >= CURATOR_DASHBOARD_THRESHOLDS.CAPITAL_STATE_BUCKET_NOISE_PCT) {
+      buckets.push(`${externalPct.toFixed(1)}% external`);
+    }
+    if (unallocated > 0 && idlePct >= CURATOR_DASHBOARD_THRESHOLDS.CAPITAL_STATE_UNALLOC_BUCKET_PCT) {
+      buckets.push(`${idlePct.toFixed(1)}% unallocated`);
+    }
+    // Emit condition: ≥1 non-idle-non-LP bucket populated AND total buckets ≥2.
+    // Non-idle-non-LP = {expired-stuck, external}. Rationale: a simple
+    // all-deployed vault doesn't need the decomposition (headline already
+    // says everything). The line exists to resolve the Gami-style
+    // contradiction where non-obvious buckets coexist and the reader would
+    // otherwise have to mentally reconcile "98% idle headline" vs "$3.65M
+    // external below."
     //
-    // Brittle string match on bucket labels: if labels are renamed or
-    // translated, this filter must update in lockstep. Acceptable today;
-    // track bucket kinds as an enum if we ever need to.
+    // Observation boundary: this filter uses string-match on bucket labels.
+    // If labels are renamed or translated, it must update in lockstep. An
+    // enum-keyed bucket-kind map would be more robust — acceptable today
+    // because labels are English-only and changes are caught by tests.
     const nonIdleNonLpBuckets = buckets.filter(b =>
       b.includes("expired-stuck") || b.includes("external")
     ).length;
     if (nonIdleNonLpBuckets >= 1 && buckets.length >= 2) {
       lines.push(`  Capital state: ${buckets.join(" | ")}`);
-      // Diverger finding (5-lens dialectic): the "unallocated" label is a
-      // point-in-time snapshot. Capital in pending timelock executions,
-      // cross-chain transit, or external channels the API doesn't surface
-      // as externalPositions may appear unallocated until the next Spectra
-      // indexer refresh picks up the state change. Emit a boundary line
-      // when unallocated exceeds 20% so a reader doesn't form false
-      // confidence in an accurate-seeming but temporally fragile number.
-      if (idlePct >= 20) {
+      // Temporal-validity boundary (Diverger finding, 5-lens dialectic).
+      //
+      // What this note tells the reader: "unallocated" is a snapshot
+      // against the Spectra indexer's current state. Capital can appear
+      // here that is actually committed elsewhere:
+      //   - pending timelock executions (e.g., queued
+      //     registerMarketAsMetavault that will deploy post-cooldown)
+      //   - cross-chain transit (CCTP bridges that haven't settled in
+      //     the destination chain's indexed state yet)
+      //   - external protocol channels the API doesn't surface as
+      //     externalPositions (new modules Spectra hasn't mapped)
+      //
+      // Why 20% threshold: below this a reader is unlikely to form
+      // false confidence from the label. Above it, the tool is surfacing
+      // a load-bearing number and the caveat becomes ammunition-critical.
+      if (idlePct >= CURATOR_DASHBOARD_THRESHOLDS.TEMPORAL_BOUNDARY_UNALLOC_PCT) {
         lines.push(`  Note: "unallocated" is point-in-time — capital in pending timelock executions, cross-chain transit, or unrecognized external channels may appear here until the next indexer refresh.`);
       }
       lines.push(``);

@@ -932,13 +932,38 @@ Use spectra_get_address_activity on the curator's EOA for cross-pool curator act
         const idlePct = vaultTvl > 0 ? idleLiquidityUsd / vaultTvl * 100 : 0;
 
         // ── Queued timelock transactions — staging signal ──────
-        // transactionQueue is an opaque passthrough field on MetavaultSchema.
-        // Cast to read its shape; we've observed QUEUED entries on Base Gami
-        // with registerMarketAsMetavault calls waiting on Safe timelock cooldown.
-        // A queued action tells us the curator is staging capital for an
-        // imminent deployment — that context softens the [UNALLOC] verb
-        // (FU3' from 5-lens dialectic: the softening should trigger on ANY
-        // staging signal, not just external positions).
+        //
+        // What this block surfaces: QUEUED actions from MetavaultSchema's
+        // opaque `transactionQueue` passthrough. Observed live on Base Gami
+        // as a `registerMarketAsMetavault(market=0x…)` sitting in a Safe
+        // timelock with cooldown + execution window timestamps.
+        //
+        // Why this exists: a queued action tells us the curator has publicly
+        // telegraphed a governance move N days ahead of execution. That
+        // re-frames "unallocated capital" from "neglect" to "staging." The
+        // [TIMELOCK] action item surfaces this directly; the `isStaging`
+        // flag below feeds into the [UNALLOC] softening so the two signals
+        // reinforce each other.
+        //
+        // Observation boundaries (what this can and CANNOT tell a reader):
+        //   CAN: the queued function name, the chainId it targets, the
+        //        cooldown-end and execution-max timestamps.
+        //   CANNOT: the delay-module contract address, the cancellation
+        //        authority (who can void the queue entry), the full
+        //        calldata semantics (function args are not rendered —
+        //        only the function name). A competitive-intel reader
+        //        who needs those would cross-reference the raw API or
+        //        Safe transaction builder directly.
+        //   CANNOT: multi-action queue entries are collapsed to the first
+        //        action's name. If a queued tx bundles a multisend, only
+        //        the outer call is surfaced.
+        //
+        // Dialectic provenance: this surface was surfaced by Agent-A of
+        // the Apr 23 cold-start audit ("the dashboard SEES the rotation
+        // but doesn't NARRATE it") and adopted in its smaller form by
+        // Breaker's rejection of Builder's 140-line full-schema proposal.
+        // FU4 from the 5-lens; FU3' (softened verb on hasQueuedTimelock)
+        // is the Inverter's protected finding propagated through here.
         const queuedTimelockTxns: Array<{
           chainIdStr: string;
           functionName: string;
