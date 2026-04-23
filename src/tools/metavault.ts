@@ -931,6 +931,42 @@ Use spectra_get_address_activity on the curator's EOA for cross-pool curator act
           : 0;
         const idlePct = vaultTvl > 0 ? idleLiquidityUsd / vaultTvl * 100 : 0;
 
+        // ── Queued timelock transactions — staging signal ──────
+        // transactionQueue is an opaque passthrough field on MetavaultSchema.
+        // Cast to read its shape; we've observed QUEUED entries on Base Gami
+        // with registerMarketAsMetavault calls waiting on Safe timelock cooldown.
+        // A queued action tells us the curator is staging capital for an
+        // imminent deployment — that context softens the [UNALLOC] verb
+        // (FU3' from 5-lens dialectic: the softening should trigger on ANY
+        // staging signal, not just external positions).
+        const queuedTimelockTxns: Array<{
+          chainIdStr: string;
+          functionName: string;
+          cooldownEndMs: number;
+          executionMaxMs: number;
+        }> = [];
+        const tqRaw = (mv as any).transactionQueue as Record<string, any[]> | undefined;
+        if (tqRaw && typeof tqRaw === "object") {
+          for (const chainIdStr of Object.keys(tqRaw)) {
+            const txs = tqRaw[chainIdStr];
+            if (!Array.isArray(txs)) continue;
+            for (const tx of txs) {
+              if (tx?.status !== "QUEUED") continue;
+              const cooldownMs = Number(tx?.cooldownEndTimestamp || 0) * 1000;
+              const execMaxMs = Number(tx?.executionMaxTimestamp || 0) * 1000;
+              const action = Array.isArray(tx?.actions) && tx.actions.length > 0 ? tx.actions[0] : null;
+              const fn = action?.functionName || action?.description || "queued action";
+              queuedTimelockTxns.push({
+                chainIdStr,
+                functionName: String(fn),
+                cooldownEndMs: cooldownMs,
+                executionMaxMs: execMaxMs,
+              });
+            }
+          }
+        }
+        const hasQueuedTimelock = queuedTimelockTxns.length > 0;
+
         // ── Action items ───────────────────────────────────────
         const actionItems: string[] = [];
 
@@ -940,12 +976,39 @@ Use spectra_get_address_activity on the curator's EOA for cross-pool curator act
           actionItems.push(`[STATUS] Vault status is "${mv.status}" — not listed in Spectra frontend. Confirm intent.`);
         }
 
-        // Unallocated liquidity warning — soften verb when external capital
-        // coexists. Without the softening, we'd tell curators to "deploy"
-        // capital that's already in an avant burn queue or pendle LP.
+        // Queued timelock transactions — surface curator's pending governance
+        // actions (registerMarketAsMetavault, etc.). This exposes capital
+        // staging that would otherwise look like neglect. The cooldown/execution
+        // window is the curator's declared intent in timestamp form.
+        const nowMsForTimelock = Date.now();
+        for (const tl of queuedTimelockTxns) {
+          const chainName = SUPPORTED_CHAINS[Object.entries(SUPPORTED_CHAINS).find(([, v]) => v.id === Number(tl.chainIdStr))?.[0] || ""]?.name
+            || `chain ${tl.chainIdStr}`;
+          const daysToCooldown = Math.max(0, Math.ceil((tl.cooldownEndMs - nowMsForTimelock) / (86400 * 1000)));
+          const daysToExpiry = Math.max(0, Math.ceil((tl.executionMaxMs - nowMsForTimelock) / (86400 * 1000)));
+          const status = tl.cooldownEndMs > nowMsForTimelock
+            ? `executable in ${daysToCooldown}d`
+            : tl.executionMaxMs > nowMsForTimelock
+              ? `EXECUTABLE NOW (window closes in ${daysToExpiry}d)`
+              : `EXPIRED (execution window closed)`;
+          actionItems.push(`[TIMELOCK] ${tl.functionName}() queued on ${chainName} — ${status}`);
+        }
+
+        // Unallocated liquidity warning — soften verb when staging signal exists
+        // (external capital OR queued timelock). FU3' dialectic finding: a vault
+        // with a queued registerMarketAsMetavault is staging unallocated capital
+        // for the post-timelock deployment, even if no external position exists
+        // yet. Hard verb would tell the curator to deploy capital that's already
+        // committed to a specific post-timelock action.
+        const isStaging = hasExternal || hasQueuedTimelock;
         if (idlePct > 20 && idleLiquidityUsd > 1000) {
-          if (hasExternal) {
-            actionItems.push(`[UNALLOC] ${idlePct.toFixed(0)}% of vault capital (${formatUsd(idleLiquidityUsd)}) is unallocated alongside ${formatUsd(externalTotalUsd)} in external positions. Consider whether to deploy the unallocated slice.`);
+          if (isStaging) {
+            const stagingContext = hasExternal && hasQueuedTimelock
+              ? `alongside ${formatUsd(externalTotalUsd)} in external positions and ${queuedTimelockTxns.length} queued timelock action(s)`
+              : hasExternal
+                ? `alongside ${formatUsd(externalTotalUsd)} in external positions`
+                : `alongside ${queuedTimelockTxns.length} queued timelock action(s)`;
+            actionItems.push(`[UNALLOC] ${idlePct.toFixed(0)}% of vault capital (${formatUsd(idleLiquidityUsd)}) is unallocated ${stagingContext}. Consider whether to deploy the unallocated slice.`);
           } else {
             actionItems.push(`[UNALLOC] ${idlePct.toFixed(0)}% of vault capital (${formatUsd(idleLiquidityUsd)}) is sitting unallocated. Deploy to active pools to generate yield.`);
           }

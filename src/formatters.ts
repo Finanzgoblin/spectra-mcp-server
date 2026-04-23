@@ -4194,10 +4194,8 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
   if (opts.externalPositions && opts.externalPositions.length > 0) {
     lines.push(`--- External Positions (${opts.externalPositions.length}) ---`);
     let totalExtUsd = 0;
-    const nowMs = Date.now();
     for (const e of opts.externalPositions) {
       const proto = e.protocol || "unknown";
-      const cidName = typeof e.chainId === "number" ? chainIdToName(e.chainId) : "?";
       const usd = e.valueUsd || 0;
       totalExtUsd += usd;
       const pct = opts.tvlUsd > 0 ? `${(usd / opts.tvlUsd * 100).toFixed(1)}%` : "?";
@@ -4206,13 +4204,12 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
         const claimSym = e.claim?.symbol || "?";
         const orderStr = e.orderId != null ? ` | order=${e.orderId}` : "";
         const sourceStr = e.source ? ` | ${e.source}` : "";
-        // updatedAt is MILLISECONDS (observed live). Compute in-flight age.
-        let ageStr = "";
-        if (typeof e.updatedAt === "number") {
-          const ageDays = Math.floor((nowMs - e.updatedAt) / (86400 * 1000));
-          if (ageDays >= 0) ageStr = ` | in-flight ${ageDays}d`;
-        }
-        lines.push(`  [avant] ${pct} | ${formatUsd(usd)} | ${burntSym} → ${claimSym}${orderStr}${sourceStr}${ageStr}`);
+        // `updatedAt` intentionally NOT rendered as age: it tracks Spectra's
+        // indexer-write time, not burn submission. A burn stuck in Avant's
+        // queue for days will show updatedAt=recent because the indexer
+        // reindexes the row periodically. Same reason the parallel
+        // [AVANT-STALE] action item was removed — see metavault.ts comment.
+        lines.push(`  [avant] ${pct} | ${formatUsd(usd)} | ${burntSym} → ${claimSym}${orderStr}${sourceStr}`);
       } else if (proto === "pendle" && e.market) {
         // market.maturity is SECONDS (observed live).
         const mat = typeof e.market.maturity === "number"
@@ -4273,6 +4270,16 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
     ).length;
     if (nonIdleNonLpBuckets >= 1 && buckets.length >= 2) {
       lines.push(`  Capital state: ${buckets.join(" | ")}`);
+      // Diverger finding (5-lens dialectic): the "unallocated" label is a
+      // point-in-time snapshot. Capital in pending timelock executions,
+      // cross-chain transit, or external channels the API doesn't surface
+      // as externalPositions may appear unallocated until the next Spectra
+      // indexer refresh picks up the state change. Emit a boundary line
+      // when unallocated exceeds 20% so a reader doesn't form false
+      // confidence in an accurate-seeming but temporally fragile number.
+      if (idlePct >= 20) {
+        lines.push(`  Note: "unallocated" is point-in-time — capital in pending timelock executions, cross-chain transit, or unrecognized external channels may appear here until the next indexer refresh.`);
+      }
       lines.push(``);
     }
   }

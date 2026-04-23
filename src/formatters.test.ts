@@ -1768,6 +1768,85 @@ describe("formatCuratorDashboard — protocol tags", () => {
     // Should NOT emit Capital state line.
     assert.ok(!result.includes("Capital state:"), "Capital state must be suppressed for simple vault");
   });
+
+  it("emits temporal boundary note when unallocated >= 20% alongside Capital state", () => {
+    // Diverger finding: unallocated is point-in-time. When significant, surface
+    // the boundary so a reader doesn't form false confidence.
+    const result = formatCuratorDashboard({
+      ...baseDashOpts,
+      tvlUsd: 7_290_000,
+      tvlUnderlying: 7_290_000,
+      positions: [{
+        symbol: "PT-x",
+        ptAddress: "0xa",
+        poolAddress: "0xpa",
+        maturityTimestamp: Math.floor(Date.now() / 1000) + 86400 * 20,
+        daysToMaturity: 20,
+        expired: false,
+        tvlUsd: 4_700,
+        vaultAllocationUsd: 4_700,
+        ptApy: 5,
+        lpApyTotal: 4,
+        lpApyBoostedTotal: null,
+        protocol: "Spectra",
+      }],
+      externalPositions: [
+        { protocol: "avant", chainId: 43114, valueUsd: 3_648_221 } as any,
+      ],
+    });
+    assert.ok(result.includes("Capital state:"), "Capital state line precondition");
+    assert.ok(
+      result.includes('"unallocated" is point-in-time'),
+      `temporal boundary note must emit when unallocated >= 20%; got first 600 chars: ${result.slice(0, 600)}`,
+    );
+  });
+
+  it("suppresses temporal boundary when unallocated below 20%", () => {
+    const result = formatCuratorDashboard({
+      ...baseDashOpts,
+      tvlUsd: 1_000_000,
+      tvlUnderlying: 1_000_000,
+      positions: [
+        {
+          symbol: "PT-main",
+          ptAddress: "0xa",
+          poolAddress: "0xpa",
+          maturityTimestamp: Math.floor(Date.now() / 1000) + 86400 * 60,
+          daysToMaturity: 60,
+          expired: false,
+          tvlUsd: 800_000,
+          vaultAllocationUsd: 800_000,
+          ptApy: 5,
+          lpApyTotal: 4,
+          lpApyBoostedTotal: null,
+          protocol: "Spectra",
+        },
+        {
+          symbol: "PT-exp",
+          ptAddress: "0xb",
+          poolAddress: "0xpb",
+          maturityTimestamp: Math.floor(Date.now() / 1000) - 86400 * 3,
+          daysToMaturity: 0,
+          expired: true,
+          tvlUsd: 180_000,
+          vaultAllocationUsd: 180_000,
+          ptApy: 0,
+          lpApyTotal: 0,
+          lpApyBoostedTotal: null,
+          protocol: "Spectra",
+        },
+      ],
+    });
+    // 80% deployed + 18% expired-stuck + 2% unallocated. Capital state may emit
+    // (expired-stuck bucket populated), but temporal note should NOT because
+    // unallocated is below 20%.
+    if (result.includes("Capital state:")) {
+      assert.ok(
+        !result.includes('"unallocated" is point-in-time'),
+        "temporal note must be suppressed when unallocated < 20%",
+      );
+    }
+  });
 });
 
 // =============================================================================
