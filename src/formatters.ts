@@ -3,8 +3,26 @@
  */
 
 import type { SpectraPt, SpectraPool, SpectraMetavault, SpectraMetavaultPosition, MorphoMarket, MorphoVault, MorphoVaultAllocation, MorphoMarketSupplier, PendleMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavaultBridgeTx, MerklTokenReward, CrossProtocolMatch, CuratorOpportunity, MerklCampaign, MorphoUserPositions, MorphoHistoricalAnalysis, MorphoRateStats, MorphoPublicAllocatorLiquidity, CuratorRiskSummary, LiquidationAlert, RiskAlertLevel } from "./types.js";
-import { SUPPORTED_CHAINS } from "./config.js";
 import { lookupMerklCampaigns } from "./api.js";
+import {
+  formatUsd,
+  formatPct,
+  formatDate,
+  daysToMaturity,
+  estimatePriceImpact,
+  chainIdToName,
+} from "./primitives.js";
+
+// Primitives now live in primitives.ts. Re-exported here for backward compat
+// with 42+ call sites importing them from "../formatters.js".
+export {
+  formatUsd,
+  formatPct,
+  formatDate,
+  daysToMaturity,
+  estimatePriceImpact,
+  chainIdToName,
+};
 
 // =============================================================================
 // Primitive Formatters
@@ -43,24 +61,6 @@ export function parsePtMaturityFromName(name: string): Date | null {
     }
   }
   return null;
-}
-
-export function formatUsd(val: number): string {
-  return `$${val.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-export function formatPct(val: number): string {
-  return `${(val ?? 0).toFixed(2)}%`;
-}
-
-export function formatDate(timestamp: number): string {
-  const date = new Date(timestamp * 1000);
-  return date.toISOString().split("T")[0];
-}
-
-export function daysToMaturity(timestamp: number): number {
-  const now = Date.now() / 1000;
-  return Math.max(0, Math.round((timestamp - now) / 86400));
 }
 
 // =============================================================================
@@ -2037,21 +2037,6 @@ export function formatLpApyLines(
 // =============================================================================
 
 /**
- * Estimate price impact for a Curve-style AMM trade.
- *
- * Uses the simplified constant-product approximation:
- *   priceImpact ≈ amountUsd / (2 * poolLiquidityUsd)
- *
- * Real Curve StableSwap-NG pools are more capital-efficient than x*y=k,
- * so this is a conservative upper bound. For small trades relative to pool
- * liquidity the estimate is very close; for large trades it overstates impact.
- */
-export function estimatePriceImpact(amountUsd: number, poolLiquidityUsd: number): number {
-  if (poolLiquidityUsd <= 0) return 1; // 100% impact — no liquidity means no trade
-  return amountUsd / (2 * poolLiquidityUsd);
-}
-
-/**
  * Estimate the imbalance fee from an LP deposit into a Curve StableSwap-NG pool.
  *
  * LP deposits add to BOTH sides of the pool (IBT and PT), deepening liquidity
@@ -3053,14 +3038,6 @@ export function formatYtArbitrageResults(
 // =============================================================================
 
 /** Format a single MetaVault for detailed output. */
-/** Map chain ID → human-readable name for bridge display. */
-function chainIdToName(id: number): string {
-  for (const info of Object.values(SUPPORTED_CHAINS)) {
-    if (info.id === id) return info.name;
-  }
-  return `Chain ${id}`;
-}
-
 export function formatMetavaultSummary(
   mv: SpectraMetavault,
   chain: string,
