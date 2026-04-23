@@ -74,7 +74,7 @@ describe("template resolver — single-brace + `{{` escape", () => {
       claim: { symbol: "avUSD" },
     };
     const line = renderExternalPosition(ext, 10000, { viewMode: "curator" });
-    assert.ok(line.includes("order: 42"), `number hint not rendered: ${line}`);
+    assert.ok(line.includes("order=42"), `number hint not rendered: ${line}`);
     assert.ok(line.includes("avusdx-burn"), `plain hint not rendered: ${line}`);
   });
 

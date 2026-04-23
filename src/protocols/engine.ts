@@ -168,7 +168,7 @@ function renderContextFields(fields: readonly FieldSpec[], ext: TypedExternalPos
   for (const f of fields) {
     const raw = lookupByDotPath(ext, f.path);
     const rendered = raw == null ? missingToken(f.path) : formatByHint(raw, f.format);
-    parts.push(f.label ? `${f.label}: ${rendered}` : rendered);
+    parts.push(f.label ? `${f.label}=${rendered}` : rendered);
   }
   return parts.join(" | ");
 }
