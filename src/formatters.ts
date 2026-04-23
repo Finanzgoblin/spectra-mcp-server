@@ -12,6 +12,11 @@ import {
   estimatePriceImpact,
   chainIdToName,
 } from "./primitives.js";
+import {
+  renderExternalPosition,
+  DriftCollector,
+  type TypedExternalPosition,
+} from "./protocols/index.js";
 
 // Primitives now live in primitives.ts. Re-exported here for backward compat
 // with 42+ call sites importing them from "../formatters.js".
@@ -3304,39 +3309,18 @@ export function formatMetavaultSummary(
     }
   }
 
-  // External positions — value held OUTSIDE the Spectra LP structure.
-  // On Base Gami USDC, this is where $3.65M+ of avant avUSDx-burn
-  // redemption-in-flight lives — completely invisible to the Positions
-  // block above. Shape is a discriminated-by-convention union keyed on
-  // `protocol`; we render per branch and degrade gracefully for unknowns.
   if (mv.externalPositions && mv.externalPositions.length > 0) {
     lines.push(``);
     lines.push(`  External Positions (${mv.externalPositions.length}):`);
+    const drift = new DriftCollector();
+    const ctx = { viewMode: "curator" as const };
     let totalExtUsd = 0;
     for (const e of mv.externalPositions) {
-      const proto = e.protocol || "unknown";
-      const cidName = typeof e.chainId === "number" ? chainIdToName(e.chainId) : "?";
       const usd = e.valueUsd || 0;
       totalExtUsd += usd;
-      if (proto === "avant" && (e.burnt || e.claim)) {
-        const burntSym = e.burnt?.symbol || "?";
-        const claimSym = e.claim?.symbol || "?";
-        const orderStr = e.orderId != null ? ` | orderId=${e.orderId}` : "";
-        const sourceStr = e.source ? ` | ${e.source}` : "";
-        lines.push(`    ${proto} (${cidName}) | ${formatUsd(usd)} | ${burntSym} → ${claimSym}${orderStr}${sourceStr}`);
-      } else if (proto === "pendle" && e.market) {
-        const mname = e.market.name || e.market.address;
-        const mat = e.market.maturity != null
-          ? ` | ${formatDate(e.market.maturity)}`
-          : "";
-        const mapy = typeof e.market.aggregatedApy === "number"
-          ? ` | LP APY ${formatPct(e.market.aggregatedApy * 100)}`
-          : "";
-        lines.push(`    ${proto} (${cidName}) | ${formatUsd(usd)} | ${mname}${mat}${mapy}`);
-      } else {
-        // Unknown protocol or missing sub-fields — surface proto + value,
-        // don't guess at shape. Agents can inspect the raw API if needed.
-        lines.push(`    ${proto} (${cidName}) | ${formatUsd(usd)} | shape not yet parsed — see raw API`);
+      const rendered = renderExternalPosition(e as TypedExternalPosition, vaultTvlUsd, ctx, drift);
+      for (const sub of rendered.split("\n")) {
+        lines.push(`    ${sub}`);
       }
     }
     if (totalExtUsd > 0) {
@@ -3344,6 +3328,14 @@ export function formatMetavaultSummary(
         ? ` (${(totalExtUsd / vaultTvlUsd * 100).toFixed(1)}% of TVL)`
         : "";
       lines.push(`    Total external: ${formatUsd(totalExtUsd)}${pct}`);
+    }
+    const driftWarnings = drift.aggregate();
+    if (driftWarnings.length > 0) {
+      lines.push(`    ──`);
+      lines.push(`    Drift: ${driftWarnings.length} unmapped protocol(s) — author registry entry per DriftCollector template:`);
+      for (const w of driftWarnings) {
+        lines.push(`      ${w.protocol} (${w.count} position${w.count === 1 ? "" : "s"}; fields: ${w.sampleFields.join(", ")})`);
+      }
     }
   }
 
@@ -4211,45 +4203,29 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
   }
   lines.push(``);
 
-  // ── External Positions — value held OUTSIDE Spectra LP ──────
-  // On Base Gami this is where $3.65M of avant avUSDx-burn redemption-in-flight
-  // lives, invisible to the Positions block above. Render per-protocol with
-  // graceful fallback for unknown protocols.
   if (opts.externalPositions && opts.externalPositions.length > 0) {
     lines.push(`--- External Positions (${opts.externalPositions.length}) ---`);
+    const drift = new DriftCollector();
+    const ctx = { viewMode: "curator" as const };
     let totalExtUsd = 0;
     for (const e of opts.externalPositions) {
-      const proto = e.protocol || "unknown";
       const usd = e.valueUsd || 0;
       totalExtUsd += usd;
-      const pct = opts.tvlUsd > 0 ? `${(usd / opts.tvlUsd * 100).toFixed(1)}%` : "?";
-      if (proto === "avant" && (e.burnt || e.claim)) {
-        const burntSym = e.burnt?.symbol || "?";
-        const claimSym = e.claim?.symbol || "?";
-        const orderStr = e.orderId != null ? ` | order=${e.orderId}` : "";
-        const sourceStr = e.source ? ` | ${e.source}` : "";
-        // `updatedAt` intentionally NOT rendered as age: it tracks Spectra's
-        // indexer-write time, not burn submission. A burn stuck in Avant's
-        // queue for days will show updatedAt=recent because the indexer
-        // reindexes the row periodically. Same reason the parallel
-        // [AVANT-STALE] action item was removed — see metavault.ts comment.
-        lines.push(`  [avant] ${pct} | ${formatUsd(usd)} | ${burntSym} → ${claimSym}${orderStr}${sourceStr}`);
-      } else if (proto === "pendle" && e.market) {
-        // market.maturity is SECONDS (observed live).
-        const mat = typeof e.market.maturity === "number"
-          ? ` | matures ${formatDate(e.market.maturity)}`
-          : "";
-        const mapy = typeof e.market.aggregatedApy === "number"
-          ? ` | LP APY ${formatPct(e.market.aggregatedApy * 100)}`
-          : "";
-        const mname = e.market.name || e.market.address || "?";
-        lines.push(`  [pendle] ${pct} | ${formatUsd(usd)} | ${mname}${mat}${mapy}`);
-      } else {
-        lines.push(`  [${proto}] ${pct} | ${formatUsd(usd)} | shape not yet parsed — see raw API`);
+      const rendered = renderExternalPosition(e as TypedExternalPosition, opts.tvlUsd, ctx, drift);
+      for (const sub of rendered.split("\n")) {
+        lines.push(`  ${sub}`);
       }
     }
     if (totalExtUsd > 0 && opts.tvlUsd > 0) {
       lines.push(`  Total external: ${formatUsd(totalExtUsd)} (${(totalExtUsd / opts.tvlUsd * 100).toFixed(1)}% of TVL)`);
+    }
+    const driftWarnings = drift.aggregate();
+    if (driftWarnings.length > 0) {
+      lines.push(`  ──`);
+      lines.push(`  Drift: ${driftWarnings.length} unmapped protocol(s) — author registry entry per DriftCollector template:`);
+      for (const w of driftWarnings) {
+        lines.push(`    ${w.protocol} (${w.count} position${w.count === 1 ? "" : "s"}; fields: ${w.sampleFields.join(", ")})`);
+      }
     }
     lines.push(``);
   }

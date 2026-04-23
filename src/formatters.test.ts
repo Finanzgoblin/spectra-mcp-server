@@ -1621,9 +1621,9 @@ describe("formatCuratorDashboard — protocol tags", () => {
       ],
     });
     assert.ok(result.includes("External Positions (1)"), "section header must appear");
-    assert.ok(result.includes("[avant]"), "avant branch must render");
-    assert.ok(result.includes("avUSDx → avUSD"), "burnt → claim symbols must render");
-    assert.ok(result.includes("order=42"), "orderId must render");
+    assert.ok(result.includes("avant:"), "avant protocol label must render");
+    assert.ok(result.includes("burn:avUSDx → claim:avUSD"), "burnt → claim symbols must render via template");
+    assert.ok(result.includes("order=42"), "orderId must render via FieldSpec label");
   });
 
   it("renders External Positions pendle branch with APY + maturity", () => {
@@ -1645,7 +1645,7 @@ describe("formatCuratorDashboard — protocol tags", () => {
         } as any,
       ],
     });
-    assert.ok(result.includes("[pendle]"), "pendle branch must render");
+    assert.ok(result.includes("pendle:"), "pendle protocol label must render");
     assert.ok(result.includes("fusnstETH-Jun"), "market name must render");
     assert.ok(result.includes("LP APY"), "aggregatedApy must render as LP APY");
   });
@@ -1937,7 +1937,7 @@ describe("formatCuratorDashboard — protocol tags", () => {
 
       // External positions exist in the fixture (3 avant avUSDx-burn entries).
       assert.ok(result.includes("External Positions"), "External Positions section must render");
-      assert.ok(result.includes("[avant]"), "avant branch must render");
+      assert.ok(result.includes("avant:"), "avant protocol label must render");
 
       // Gami's shape triggers the Capital State line (deployed + expired-stuck
       // + external all populated).
@@ -1964,7 +1964,7 @@ describe("formatCuratorDashboard — protocol tags", () => {
         assert.ok(result.includes("Status: HIDDEN"), "HIDDEN vault must show Status label");
       }
       if ((vault.externalPositions || []).some((e: any) => e.protocol === "pendle")) {
-        assert.ok(result.includes("[pendle]"), "pendle external branch must render");
+        assert.ok(result.includes("pendle:"), "pendle protocol label must render");
       }
       assert.ok(!result.includes("undefined"), "no undefined leaks");
       assert.ok(!result.includes("NaN"), "no NaN leaks");
