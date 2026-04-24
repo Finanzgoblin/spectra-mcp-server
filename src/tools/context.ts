@@ -656,6 +656,15 @@ function renderExternalProtocols(): string {
 // Exported for test-side consumption — the tool handler returns this verbatim
 // for `topic="external_protocols"`. Keeping this as a named export lets unit
 // tests assert against the rendered output without wiring up the MCP server.
+//
+// Lifecycle: computed once at module load from frozen PROTOCOL_METADATA per
+// spec §6 (precompiled at module load). A long-running MCP server process
+// will NOT pick up edits to src/protocols/metadata.ts until the process
+// restarts — metadata changes are deploy-time, not runtime.
+//
+// Dissolution condition: per spec §10 DS-1, when Spectra publishes a typed
+// /v1/modules endpoint, re-architect this as a dynamic fetch with a TTL cache
+// (similar to protocol_pulse). Until then, module-load snapshot is correct.
 export const EXTERNAL_PROTOCOLS_TEXT = renderExternalProtocols();
 
 // "protocol_pulse" is a live-fetching topic — not stored in TOPICS.

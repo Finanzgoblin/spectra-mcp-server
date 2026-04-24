@@ -312,7 +312,7 @@ const ModifierSchema = z
 
 export const ExternalPositionSchema = z
   .object({
-    protocol: z.string(),
+    protocol: z.string().min(1),
     chainId: z.number().optional(),
     valueUsd: z.number().optional(),
     updatedAt: z.number().optional(),

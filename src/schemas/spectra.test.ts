@@ -168,6 +168,15 @@ describe("ExternalPositionSchema — permissive shape (Phase 5 collapse)", () =>
     assert.equal(result.success, false, "missing protocol must fail validation");
   });
 
+  it("rejects empty-string protocol (no dispatchable name)", () => {
+    // Wave-2 audit finding: z.string() accepted "". Tightened to .min(1) so
+    // the registry never sees a zero-length protocol name that would fall
+    // back to _unknown silently at the API boundary.
+    const emptyProtocol = { protocol: "", chainId: 1, valueUsd: 100 };
+    const result = ExternalPositionSchema.safeParse(emptyProtocol);
+    assert.equal(result.success, false, "empty-string protocol must fail validation");
+  });
+
   it("preserves avant passthrough fields (orderId, burnt, claim, source)", () => {
     const raw = loadFixture("base") as any[];
     // Gami USDC is the one with avant burn entries as of 2026-04-22
