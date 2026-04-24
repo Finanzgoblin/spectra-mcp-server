@@ -255,6 +255,12 @@ export function renderExternalPosition(
 
   const freshness = ctx.viewMode === "curator" ? renderFreshnessSuffix(meta) : "";
 
+  // `settle ~Nd` is appended in both viewModes. The VALUE is spec-licensed
+  // (§0 SU-3 allows curator nominal-only render); the WORD and position are
+  // builder-chosen and now load-bearing in snapshot tests. Revisit if a
+  // curator reports the suffix as noise in dashboard output — the suffix
+  // can become viewMode-conditional at that point without touching any
+  // metadata entry (wave-2 hyperyellow finding).
   const body = context
     ? `${meta.label}: ${primary} — ${valueStr}${shareSuffix} | ${context} | settle ${settlement}${freshness}`
     : `${meta.label}: ${primary} — ${valueStr}${shareSuffix} | settle ${settlement}${freshness}`;

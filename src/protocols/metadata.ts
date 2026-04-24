@@ -3,10 +3,29 @@
  *
  * Spec: docs/protocols-metadata-spec.md §4.
  *
- * Three entries in Phase 1: `avant`, `pendle`, `_unknown`. Every numeric
+ * Three entries today: `avant`, `pendle`, `_unknown`. Every numeric
  * constant that doesn't appear verbatim in a cited source is typed as
  * `InterpretedValue<T>` to protect against attribution creep (a protocol
  * team reading "we pin 7 days" when their docs say "one week").
+ *
+ * Adding a new protocol (spec §1 PR1 — zero-code addition):
+ *   1. Copy avant or pendle and replace all fields — name, label, docs
+ *      URL, oneSentenceIntro, display template, contextFields, settlement
+ *      window, cost model, action items, observation boundaries.
+ *   2. For each numeric constant, decide SourcedValue vs InterpretedValue
+ *      by asking "does this EXACT number appear verbatim in the cited
+ *      source?" If no, use InterpretedValue with interpretedFrom prose.
+ *   3. `npm run test:unit` — zod validation at registry load will refuse
+ *      incomplete entries (see registry.ts). The PR1 round-trip test in
+ *      registry.test.ts proves a new entry flows through end-to-end.
+ *   4. If the protocol needs a new cost model, edit cost-models.ts too
+ *      (two-file friction is the review gate for cost-model expansion).
+ *   5. If a sourceVerifiedOn ages past 180 days, registry.ts emits a
+ *      stderr staleness warning at load. Re-verify at the cited docs.
+ *
+ * No other files need editing — consumers (formatters.ts, stress_test.ts,
+ * metavault.ts, rollover.ts, context.ts) read from this registry via
+ * getMeta + the engine's render/classify/actionItems functions.
  */
 
 import type { ProtocolMeta, SourcedValue, InterpretedValue } from "./types.js";

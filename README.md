@@ -40,7 +40,7 @@ Any AI agent (Claude, GPT, open-source) that supports MCP can query Spectra, Pen
 - **Plan** position rollovers for expiring MetaVault positions — cross-protocol candidate ranking with entry impact, yield gap, and overlap windows
 - **Aggregate** multi-vault curator portfolios — total AUM, blended APY, fee revenue projection, concentration analysis by underlying/chain
 - **Monitor** pool expiry across all chains with readiness assessment — successor pool detection, gauge status from governance API, and operator checklist (deploy pool / submit gauge / ready for migration)
-- **Learn** protocol mechanics on-demand via `mv_get_protocol_context` (PT/YT identity, Router batching, deposit paths, glossary, fees & costs, workflow routing)
+- **Learn** protocol mechanics on-demand via `mv_get_protocol_context` (PT/YT identity, Router batching, deposit paths, glossary, fees & costs, workflow routing, externalPositions registry)
 - **Surface** protocol YT fees (Spectra 3%, Pendle 5%) and Merkl campaign eligibility (POOL vs HOLD) directly in tool output so agents apply them without external lookups
 
 The agent doesn't need to understand PT/YT mechanics -- it just calls `spectra_scan_opportunities` or `pendle_scan_opportunities` with its capital size and gets ranked, actionable data. For cross-protocol comparison, `mv_scan_curator_opportunities` ranks both protocols together. If it needs to understand *why* something works that way, it calls `mv_get_protocol_context`.
@@ -195,7 +195,7 @@ The observation coverage layer addresses a deeper problem: even perfect interpre
 | `spectra_get_gauge_votes` | Full veSPECTRA governance dashboard — gauge vote distribution, voting APRs, bribe incentives, SPECTRA emissions per pool. Shows where veSPECTRA holders direct votes, what rewards they earn, emission concentration, and bribe efficiency ($ per vote). |
 | `pendle_get_market_history` | Historical time-series for any Pendle market — implied APY, TVL, volume, PT/YT prices over 7d/30d/90d/1y periods. First tool that answers "what happened over time?" for trend analysis, yield stability assessment, and anomaly detection. |
 | `spectra_list_expiring_pools` | Scan all chains for pools approaching maturity (default 21-day threshold). Groups by urgency (CRITICAL ≤7d, WARNING ≤14d, ALERT ≤21d). Cross-references each expiring pool's IBT against all active pools for successor detection. Fetches gauge status from governance API. Per-pool readiness assessment (OK/CAUTION/WARNING). Operator checklist: deploy successor pool, submit gauge proposal, ready for migration. |
-| `mv_get_protocol_context` | Returns protocol mechanics reference (PT/YT identity, Router batching, deposit paths, glossary, fees & costs, workflow routing). 9 topics callable on-demand. Fees topic covers Spectra 3% / Pendle 5% YT fees, reward basis (held vs notional), Merkl campaign types, and external points program discovery. |
+| `mv_get_protocol_context` | Returns protocol mechanics reference across 12 topics: `pt_yt_mechanics`, `router_batching`, `position_analysis`, `looping`, `networks`, `deposit_path`, `glossary`, `fees_and_costs`, `pendle_morpho`, `workflow_routing`, `protocol_pulse` (live TVL/emissions/expiring pools), and `external_protocols` (registry of non-Spectra protocols a MetaVault can hold via externalPositions — settlement windows, observation boundaries, mitigations per entry). Fees topic covers Spectra 3% / Pendle 5% YT fees, reward basis (held vs notional), Merkl campaign types, and external points program discovery. |
 
 ## Supported Chains
 
