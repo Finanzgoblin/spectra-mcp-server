@@ -278,7 +278,10 @@ async function testToolRegistration(client) {
     );
   }
 
-  // Spot-check: chain enum includes ethereum alias
+  // Spot-check: chain enum includes ethereum alias and matches the
+  // CHAIN_KEYS source-of-truth count. CHAIN_KEYS is loaded via dynamic
+  // import because build/config.js is an ES module and this runner is
+  // CommonJS — keeps the count test self-updating when chains are added.
   const ptTool = tools.find((t) => t.name === "spectra_get_pt_details");
   if (ptTool) {
     const chainEnum = ptTool.inputSchema.properties.chain.enum;
@@ -287,7 +290,13 @@ async function testToolRegistration(client) {
       "chain enum includes mainnet + ethereum alias",
       `got: ${JSON.stringify(chainEnum)}`
     );
-    assert(chainEnum && chainEnum.length === 12, "chain enum has 12 entries (11 chains + alias)", `got ${chainEnum && chainEnum.length}`);
+    const { pathToFileURL } = require("url");
+    const { CHAIN_KEYS } = await import(pathToFileURL(path.join(__dirname, "build", "config.js")).href);
+    assert(
+      chainEnum && chainEnum.length === CHAIN_KEYS.length,
+      `chain enum length matches CHAIN_KEYS source-of-truth (${CHAIN_KEYS.length})`,
+      `got ${chainEnum && chainEnum.length}, expected ${CHAIN_KEYS.length}`
+    );
   }
 
   // Spot-check: address fields have pattern validation
