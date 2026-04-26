@@ -13,10 +13,157 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { StressTestResult, WithdrawalWaterfallTier } from "../types.js";
 import { CHAIN_ENUM, EVM_ADDRESS } from "../config.js";
+import type { ChainKey } from "../config.js";
 import { fetchMetavaults } from "../api.js";
 import { formatUsd, formatPct, daysToMaturity } from "../formatters.js";
 import { classifyForStress, COST_MODELS } from "../protocols/index.js";
 import type { TypedExternalPosition } from "../protocols/index.js";
+import {
+  readMetaVaultChainStateCached,
+  projectChainReadInput,
+} from "../chain-reads.js";
+import type { MetaVaultChainState } from "../types.js";
+
+// =============================================================================
+// Chain-truth idle derivation (pure helper — exported for unit testing)
+// =============================================================================
+
+/**
+ * Compute chain-truth idle USD from the engine's chain state + the API-derived
+ * `knownAllocTotal` and `externalTotalUsd`.
+ *
+ * The API derivation `tvl.underlying - sum(positions) - sum(external)` MISSES
+ * the curator-transit cash held DIRECTLY at the Safe (NOT counted in
+ * infraVault.totalAssets, which is the API's primary). The chain-truth
+ * formula:
+ *
+ *   chainTruthIdleUsd = safeCashUsd + max(0, infraTotalUsd - knownAlloc - external)
+ *
+ * captures both. Returns a tagged union for the four legitimate states:
+ *   - `ok`: both safe.assetBalance and infraVault.totalAssets present, price>0
+ *   - `failed`: required reads missing (RPC hard failure or null bytecode)
+ *   - `price-feed-zero`: reads succeeded but underlyingPriceUsd === 0
+ *
+ * Pure function — no I/O, no time. Test fixtures pass synthetic state.
+ */
+export type ChainTruthIdleDerivation =
+  | {
+      kind: "ok";
+      chainTruthIdleUsd: number;
+      block: number;
+      rpc: string;
+    }
+  | {
+      kind: "failed";
+      reason: string;
+      block?: number;
+      rpc?: string;
+    }
+  | {
+      kind: "price-feed-zero";
+      idleUnderlying: number;
+      reason: string;
+      block: number;
+      rpc: string;
+    };
+
+export function deriveChainTruthIdle(
+  state: MetaVaultChainState,
+  knownAllocTotal: number,
+  externalTotalUsd: number,
+  underlyingPriceUsd: number,
+  underlyingDecimalsFallback: number,
+): ChainTruthIdleDerivation {
+  const block = state.block;
+  const rpc = state.rpcUsed;
+
+  // Hard-failure: every RPC failed → engine returned all-null state with
+  // rpc-all-failed warning.
+  const allFailed = state.warnings.some((w) => w.code === "rpc-all-failed");
+  if (allFailed) {
+    return {
+      kind: "failed",
+      reason:
+        state.warnings.find((w) => w.code === "rpc-all-failed")?.detail ??
+        "all RPCs failed",
+      block,
+      rpc,
+    };
+  }
+
+  const safeAssetBalance = state.safe?.assetBalance;
+  const infraTotalAssets = state.infraVault?.totalAssets;
+  const infraDecimals = state.infraVault?.decimals ?? underlyingDecimalsFallback;
+
+  if (safeAssetBalance == null || infraTotalAssets == null) {
+    const reason =
+      safeAssetBalance == null && infraTotalAssets == null
+        ? "safe.assetBalance and infraVault.totalAssets both null"
+        : safeAssetBalance == null
+          ? "safe.assetBalance null"
+          : "infraVault.totalAssets null";
+    return { kind: "failed", reason, block, rpc };
+  }
+
+  const decimalsDiv = Math.pow(10, infraDecimals);
+  const safeCashUnderlying = Number(safeAssetBalance) / decimalsDiv;
+  const infraTotalUnderlying = Number(infraTotalAssets) / decimalsDiv;
+
+  if (underlyingPriceUsd === 0) {
+    // Price-feed-zero (STAK-class): USD math is unverified. Surface the
+    // underlying-denominated idle directly. Caller falls back to API USD
+    // for the waterfall (multiplying zero into the waterfall is wrong).
+    return {
+      kind: "price-feed-zero",
+      idleUnderlying: safeCashUnderlying,
+      reason: "underlying.price.usd === 0; USD chain-truth unverified",
+      block,
+      rpc,
+    };
+  }
+
+  const safeCashUsd = safeCashUnderlying * underlyingPriceUsd;
+  const infraTotalUsd = infraTotalUnderlying * underlyingPriceUsd;
+  const chainTruthIdleUsd =
+    safeCashUsd + Math.max(0, infraTotalUsd - knownAllocTotal - externalTotalUsd);
+
+  return { kind: "ok", chainTruthIdleUsd, block, rpc };
+}
+
+// =============================================================================
+// idlePct denominator (pure helper — Diverger Round-4 fix)
+// =============================================================================
+
+/**
+ * Compute the idlePct denominator coherent with the numerator's source.
+ *
+ * When chain-truth is on AND succeeded, idleCapitalUsd has been reassigned to
+ * chainTruthIdleUsd which INCLUDES safeCashUsd — capital that is NOT counted
+ * in vaultTvl (= mv.tvl.usd ≈ infraTotalUsd). Using vaultTvl as denominator
+ * with the chain-truth numerator renders >100% on vaults with material
+ * Safe-side staging cash (e.g., $50K Safe + $100K infraVault → 150% idle).
+ *
+ * The chain-truth-consistent denominator is chainTruthIdleUsd + deployed
+ * (= total capital under curator control, with Safe-side cash on both sides
+ * of the ratio). Fallback to vaultTvl when chain-truth is unavailable —
+ * preserves pre-Phase-5 idlePct semantics.
+ *
+ * Pure function. Test fixtures verify the >100% regression directly.
+ */
+export function computeIdlePct(args: {
+  idleCapitalUsd: number;
+  chainTruthAvailable: StressTestResult["chainTruthAvailable"];
+  chainTruthIdleUsd: number | undefined;
+  knownAllocTotal: number;
+  externalTotalUsd: number;
+  vaultTvl: number;
+}): number {
+  const denom =
+    args.chainTruthAvailable === "ok" && args.chainTruthIdleUsd != null
+      ? args.chainTruthIdleUsd + args.knownAllocTotal + args.externalTotalUsd
+      : args.vaultTvl;
+  return denom > 0 ? (args.idleCapitalUsd / denom) * 100 : 0;
+}
 
 export function register(server: McpServer): void {
   server.tool(
@@ -61,8 +208,17 @@ Use morpho_monitor_risk for Morpho position risk.`,
         .boolean()
         .default(false)
         .describe("If true, assume 2x normal price impact on LP exits (correlated sell pressure)"),
+      verify_onchain: z.boolean()
+        .optional()
+        .describe(
+          "Replace the API-derived `idleCapitalUsd` (Tier 1 unallocated cash) with a chain-truth equivalent computed from the Safe + infraVault state. Off by default — chain reads add latency and RPC pressure. " +
+          "When true, reads via the same engine that powers spectra_get_curator_dashboard (5-min cache shared with the dashboard, so a curator who just rendered the dashboard hits cache for free). " +
+          "The chain-truth formula is `safe.assetBalance + max(0, infraVault.totalAssets - sum(positions) - sum(external))`. The API derivation MISSES `safe.assetBalance` (curator-transit cash held DIRECTLY at the Safe, NOT counted in infraVault.totalAssets), which can be material when the curator is staging cross-chain inflows. " +
+          "Failures (RPC, timeout, missing bytecode) degrade to the API path. When `mv.underlying.price.usd === 0` the USD chain-truth is unverified; the output surfaces underlying-denominated chain-truth and falls back to API USD math for the waterfall. " +
+          "Dissolution: if telemetry shows zero verify_onchain=true invocations within 60 days of ship, the flag is fossil — consolidate by making chain-truth always-on for the cash derivation.",
+        ),
     },
-    async ({ chain, metavault_address, redemption_pct, market_stress }) => {
+    async ({ chain, metavault_address, redemption_pct, market_stress, verify_onchain }) => {
       try {
         // Fetch MetaVault data
         const mvs = await fetchMetavaults(chain);
@@ -139,7 +295,105 @@ Use morpho_monitor_risk for Morpho position risk.`,
 
         const knownAllocTotal = positions.reduce((s, p) => s + p.allocationUsd, 0);
         const externalTotalUsd = externalClassified.reduce((s, e) => s + e.valueUsd, 0);
-        const idleCapitalUsd = Math.max(0, vaultTvl - knownAllocTotal - externalTotalUsd);
+        const apiPathIdleUsd = Math.max(0, vaultTvl - knownAllocTotal - externalTotalUsd);
+
+        // ── Chain-truth idle derivation (Theme A Phase 5) ──
+        //
+        // Off by default. When on: read Safe + infraVault via the same engine
+        // that powers spectra_get_curator_dashboard. The API derivation
+        // `tvl.underlying - sum(positions) - sum(external)` MISSES the
+        // curator-transit cash held DIRECTLY at the Safe (NOT counted in
+        // infraVault.totalAssets, which is the API's primary). The chain-
+        // truth formula:
+        //
+        //   chainTruthIdleUsd = safeCashUsd + max(0, infraTotalUsd - knownAlloc - external)
+        //
+        // captures both. The empirical relationship (gamisUSDC at base block
+        // ~45.2M):
+        //   safe.assetBalance     ≈ 32,743 USDC (curator-transit cash, missed by API)
+        //   infraVault.totalAssets ≈ 5,124,225 USDC (= API tvl.underlying ± 0.01%)
+        //   chain-truth idle = 32,743 + max(0, 5,124,225 - 130,950 - 3,648,221)
+        //                    = 32,743 + 1,345,054 = $1,377,797
+        //   API-path idle    = 5,124,225 - 130,950 - 3,648,221 = $1,345,054
+        //   delta            ≈ $32,743 (= the safeCashUsd the API misses)
+        //
+        // PR0 graceful degradation: any failure (RPC, timeout, missing
+        // bytecode, null reads) degrades to the API path — never throws at
+        // the tool boundary.
+        //
+        // Single-MV scope, no concurrency pool needed. Per-MV timeout 30s
+        // matches sub-PR 1 (spectra_list_metavaults) and sub-PR 2
+        // (mv_plan_rollover) — long enough for one RPC fallback hop, short
+        // enough to bound stress-test latency. clearTimeout in finally
+        // (timer-leak fix from sub-PR 1 hotfix 378e409).
+        let idleCapitalUsd = apiPathIdleUsd;
+        let chainTruthAvailable: StressTestResult["chainTruthAvailable"] = "not-requested";
+        let chainTruthIdleUsd: number | undefined;
+        let chainTruthBlock: number | undefined;
+        let chainTruthRpc: string | undefined;
+        let chainTruthFailureReason: string | undefined;
+        let chainTruthIdleUnderlying: number | undefined;
+
+        if (verify_onchain) {
+          const PER_MV_TIMEOUT_MS = 30_000;
+          let timeoutId: ReturnType<typeof setTimeout> | undefined;
+          try {
+            const chainInput = projectChainReadInput(mv);
+            const timeoutPromise = new Promise<never>((_, reject) => {
+              timeoutId = setTimeout(
+                () => reject(new Error(`chain-read timed out after ${PER_MV_TIMEOUT_MS}ms`)),
+                PER_MV_TIMEOUT_MS,
+              );
+            });
+            const state = await Promise.race([
+              readMetaVaultChainStateCached(chain as ChainKey, chainInput, {
+                forceRefresh: false,
+              }),
+              timeoutPromise,
+            ]);
+
+            const derivation = deriveChainTruthIdle(
+              state,
+              knownAllocTotal,
+              externalTotalUsd,
+              underlyingPriceUsd,
+              underlyingDecimals,
+            );
+
+            if (derivation.kind === "ok") {
+              chainTruthAvailable = "ok";
+              chainTruthIdleUsd = derivation.chainTruthIdleUsd;
+              chainTruthBlock = derivation.block;
+              chainTruthRpc = derivation.rpc;
+              idleCapitalUsd = derivation.chainTruthIdleUsd;
+            } else if (derivation.kind === "price-feed-zero") {
+              chainTruthAvailable = "price-feed-zero";
+              chainTruthIdleUnderlying = derivation.idleUnderlying;
+              chainTruthFailureReason = derivation.reason;
+              chainTruthBlock = derivation.block;
+              chainTruthRpc = derivation.rpc;
+              // idleCapitalUsd stays apiPathIdleUsd; waterfall uses API math.
+            } else {
+              chainTruthAvailable = "failed";
+              chainTruthFailureReason = derivation.reason;
+              chainTruthBlock = derivation.block;
+              chainTruthRpc = derivation.rpc;
+              // idleCapitalUsd stays apiPathIdleUsd (fallback to API path).
+            }
+          } catch (err: any) {
+            console.error(
+              `[spectra_stress_test_vault] chain-read failed for ${mv?.address || "?"} on ${chain}: ${err?.message || err}`,
+            );
+            chainTruthAvailable = "failed";
+            chainTruthFailureReason = err?.message || String(err);
+          } finally {
+            // Clear the race timer regardless of who won. Timer-leak fix
+            // (sub-PR 1 hotfix 378e409): the engine winning the race
+            // would otherwise leave a 30s-pending timer holding the event
+            // loop reference.
+            if (timeoutId !== undefined) clearTimeout(timeoutId);
+          }
+        }
 
         // Zero-cost queued redemptions get a dedicated tier (avant-shaped).
         // Classifier-driven: any externalPosition with costModelName="zero"
@@ -417,7 +671,28 @@ Use morpho_monitor_risk for Morpho position risk.`,
           incentiveDependencyPct,
           maturingCoveragePct,
           nearestMaturityDays,
-          idlePct: vaultTvl > 0 ? (idleCapitalUsd / vaultTvl) * 100 : 0,
+          idlePct: computeIdlePct({
+            idleCapitalUsd,
+            chainTruthAvailable,
+            chainTruthIdleUsd,
+            knownAllocTotal,
+            externalTotalUsd,
+            vaultTvl,
+          }),
+          chainTruthAvailable,
+          chainTruthIdleUsd,
+          // Always populate apiPathIdleUsd when verify_onchain was requested
+          // so the formatter can render the equivalence delta. When
+          // verify_onchain=false, leave undefined to keep the result shape
+          // byte-identical to the pre-Phase-5 path on that branch (Lens A
+          // N4: agent-consumable shape consistency on the verify-on path
+          // is preserved without breaking the off-path byte-identity).
+          apiPathIdleUsd: verify_onchain ? apiPathIdleUsd : undefined,
+          chainTruthBlock,
+          chainTruthRpc,
+          chainTruthFailureReason,
+          chainTruthIdleUnderlying,
+          underlyingSymbol: verify_onchain ? mv.underlying?.symbol : undefined,
         };
 
         const text = formatStressTestResult(result);
@@ -432,7 +707,7 @@ Use morpho_monitor_risk for Morpho position risk.`,
 
 // ── Inline formatter (self-contained for simplicity) ──
 
-function formatStressTestResult(r: StressTestResult): string {
+export function formatStressTestResult(r: StressTestResult): string {
   const lines: string[] = [];
 
   lines.push(`== Withdrawal Stress Test ==`);
@@ -441,6 +716,34 @@ function formatStressTestResult(r: StressTestResult): string {
   if (r.marketStress) {
     lines.push(`  Mode: MARKET STRESS (2x price impact assumed)`);
   }
+
+  // Chain-truth status line (Theme A Phase 5).
+  // Single-line render. "not-requested" only renders when verify_onchain=false
+  // is the active mode — but on that branch we suppress it to keep the output
+  // byte-identical to the pre-Phase-5 path.
+  if (r.chainTruthAvailable === "ok" && r.chainTruthIdleUsd != null && r.apiPathIdleUsd != null) {
+    const delta = r.chainTruthIdleUsd - r.apiPathIdleUsd;
+    const sign = delta >= 0 ? "+" : "−";
+    const blockStr = r.chainTruthBlock ? r.chainTruthBlock.toLocaleString("en-US") : "?";
+    lines.push(
+      `  Chain-truth: ✓ idle=${formatUsd(r.chainTruthIdleUsd)} | API: ${formatUsd(r.apiPathIdleUsd)} | delta: ${sign}${formatUsd(Math.abs(delta))} (block ${blockStr})`,
+    );
+  } else if (r.chainTruthAvailable === "price-feed-zero") {
+    const u = r.underlyingSymbol || "underlying";
+    const idleU = r.chainTruthIdleUnderlying != null ? r.chainTruthIdleUnderlying.toFixed(2) : "?";
+    lines.push(
+      `  Chain-truth: ⚠ USD figures unverified (${r.chainTruthFailureReason || "price feed zero"}) — Safe holds ${idleU} ${u} idle | waterfall uses API USD path`,
+    );
+  } else if (r.chainTruthAvailable === "failed") {
+    const reason = r.chainTruthFailureReason
+      ? r.chainTruthFailureReason.length > 80
+        ? r.chainTruthFailureReason.slice(0, 77) + "..."
+        : r.chainTruthFailureReason
+      : "unknown";
+    lines.push(`  Chain-truth: ✗ fallback to API (${reason})`);
+  }
+  // chainTruthAvailable === "not-requested" → render nothing (byte-identity
+  // with the pre-Phase-5 output on the verify_onchain=false branch).
 
   lines.push(``);
   lines.push(`  Liquidity Waterfall:`);

@@ -1316,6 +1316,38 @@ export interface StressTestResult {
   nearestMaturityDays: number | null;
   /** % of vault TVL sitting idle (undeployed). */
   idlePct: number;
+  /**
+   * Chain-truth status for the cash-derivation step (Theme A Phase 5).
+   *
+   * - `not-requested`: `verify_onchain=false` (default). idleCapitalUsd derived
+   *    from `tvl.usd - sum(positions) - external` per the API path.
+   * - `ok`: chain reads succeeded, idle was substituted with the chain-truth
+   *    formula `safeCashUsd + max(0, infraTotalUsd - knownAlloc - external)`.
+   *    The new value captures curator-transit cash held DIRECTLY at the Safe
+   *    that the API derivation misses.
+   * - `failed`: `verify_onchain=true` but engine failed (RPC, timeout, missing
+   *    bytecode, or null infraVault.totalAssets). Behavior degrades gracefully
+   *    to API path; field surfaces the failure for audit.
+   * - `price-feed-zero`: `verify_onchain=true`, chain reads succeeded, but
+   *    `mv.underlying.price.usd === 0`. USD math is unverified; the formatter
+   *    surfaces underlying-denominated chain-truth instead.
+   */
+  chainTruthAvailable: "not-requested" | "ok" | "failed" | "price-feed-zero";
+  /** When `chainTruthAvailable === "ok"`: the chain-truth idle in USD. */
+  chainTruthIdleUsd?: number;
+  /** Always populated when `verify_onchain=true` was requested: the API-path
+   *  idle BEFORE substitution, for the equivalence matrix in the output. */
+  apiPathIdleUsd?: number;
+  /** Block number when chain reads succeeded. */
+  chainTruthBlock?: number;
+  /** RPC URL used for the chain reads. */
+  chainTruthRpc?: string;
+  /** Failure reason when `chainTruthAvailable === "failed"`. */
+  chainTruthFailureReason?: string;
+  /** When `chainTruthAvailable === "price-feed-zero"`: idle in underlying tokens. */
+  chainTruthIdleUnderlying?: number;
+  /** Underlying symbol (only relevant when `chainTruthAvailable === "price-feed-zero"`). */
+  underlyingSymbol?: string;
 }
 
 // =============================================================================
