@@ -26,7 +26,9 @@
  */
 
 import {
+  type RawEventLog,
   fetchBlockNumber,
+  fetchLogs,
   withRpcFallback,
 } from "./api.js";
 import {
@@ -39,7 +41,11 @@ import type {
   ChainReadWarning,
   InfraVaultState,
   MetaVaultChainState,
+  MetaVaultEventResult,
   ModifierAddresses,
+  ParsedDepositEvent,
+  ParsedTransferEvent,
+  ParsedWithdrawEvent,
   SafeSingletonId,
   SafeState,
   SecondaryVaultState,
@@ -112,6 +118,16 @@ export const SELECTORS = {
   maxWithdraw: "0xce96cb77",
   maxRedeem: "0xd905777e",
   previewRedeem: "0x4cdad506",
+  // Phase 3 — event topic0 hashes (verified against ERC-4626 EIP / ERC-20).
+  // These are full 32-byte keccak256 hashes (not 4-byte selectors), so they
+  // sit in `topics[0]` of an emitted log. Co-located here for one place to
+  // grep when audit asks "what does the engine match against?"
+  // keccak256("Deposit(address,address,uint256,uint256)")
+  DepositTopic:  "0xdcbc1c05240f31ff3ad067ef1ee35ce4997762752e3a095284754544f4c709d7",
+  // keccak256("Withdraw(address,address,address,uint256,uint256)")
+  WithdrawTopic: "0xfbde797d201c681b91056529119e0b02407c7bb96a4a2c75c01fc9667232c8db",
+  // keccak256("Transfer(address,address,uint256)")
+  TransferTopic: "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
 } as const;
 
 // =============================================================================
@@ -939,6 +955,439 @@ export async function readMetaVaultChainState(
     modifiers,
     remoteModifiers,
     warnings,
+  };
+}
+
+// =============================================================================
+// Phase 3 — event decoders (ERC-4626 Deposit/Withdraw, ERC-20 Transfer)
+// =============================================================================
+//
+// Each decoder returns null on malformed input. The orchestrator filters nulls
+// and emits a single `event-decode-failed` info-warning when ≥1 log was
+// dropped — silent corruption is the failure mode these checks guard against.
+// The constraints encoded:
+//   - topics[0] must match the expected event hash (caller is supposed to have
+//     filtered, but we re-check defensively).
+//   - indexed-arg count: Deposit=2, Withdraw=3, Transfer=2.
+//   - data block length: ABI-encoded uint256 args at exactly 32 bytes each.
+//
+// Why pure functions: the decoders are exported for unit testing, and they
+// don't need RPC context. The engine orchestrates the eth_getLogs calls and
+// hands raw logs in; everything in this section operates on already-fetched
+// data.
+
+const HEX_RE_64 = /^0x[0-9a-fA-F]{64}$/;
+
+/**
+ * Extract an indexed-arg address from a topic word (32-byte left-padded
+ * address). Reuses `decodeAddress` so the upper-12-byte zero guard applies —
+ * if the topic is not a clean ABI-encoded address, return null.
+ */
+function decodeAddressTopic(topic: string | undefined | null): string | null {
+  if (!topic || !HEX_RE_64.test(topic)) return null;
+  return decodeAddress(topic);
+}
+
+/**
+ * Read a 32-byte uint256 word from `data` starting at `byteOffset`. Returns
+ * null on out-of-bounds or malformed hex. `data` is the full data block
+ * including the `0x` prefix.
+ */
+function readUint256At(data: string | undefined | null, byteOffset: number): bigint | null {
+  if (!data || !data.startsWith("0x")) return null;
+  const start = 2 + byteOffset * 2;
+  const end = start + 64;
+  if (data.length < end) return null;
+  const word = "0x" + data.slice(start, end);
+  return decodeUint256(word);
+}
+
+/** Decode an ERC-4626 `Deposit(address sender, address owner, uint256 assets, uint256 shares)` log.
+ *  - topics[0] = DepositTopic
+ *  - topics[1] = sender (indexed)
+ *  - topics[2] = owner (indexed)
+ *  - data = (assets || shares), 64 bytes total. */
+export function decodeDepositLog(log: RawEventLog): ParsedDepositEvent | null {
+  if (!log || !Array.isArray(log.topics) || log.topics.length !== 3) return null;
+  if (log.topics[0]?.toLowerCase() !== SELECTORS.DepositTopic) return null;
+  const sender = decodeAddressTopic(log.topics[1]);
+  const owner = decodeAddressTopic(log.topics[2]);
+  if (!sender || !owner) return null;
+  const assets = readUint256At(log.data, 0);
+  const shares = readUint256At(log.data, 32);
+  if (assets === null || shares === null) return null;
+  let blockNumber: number;
+  let logIndex: number;
+  try {
+    blockNumber = Number(BigInt(log.blockNumber));
+    logIndex = Number(BigInt(log.logIndex));
+  } catch {
+    return null;
+  }
+  return {
+    sender,
+    owner,
+    assets,
+    shares,
+    blockNumber,
+    transactionHash: log.transactionHash,
+    logIndex,
+  };
+}
+
+/** Decode an ERC-4626 `Withdraw(address sender, address receiver, address owner, uint256 assets, uint256 shares)` log.
+ *  - topics[0] = WithdrawTopic
+ *  - topics[1] = sender (indexed)
+ *  - topics[2] = receiver (indexed)
+ *  - topics[3] = owner (indexed)
+ *  - data = (assets || shares), 64 bytes total. */
+export function decodeWithdrawLog(log: RawEventLog): ParsedWithdrawEvent | null {
+  if (!log || !Array.isArray(log.topics) || log.topics.length !== 4) return null;
+  if (log.topics[0]?.toLowerCase() !== SELECTORS.WithdrawTopic) return null;
+  const sender = decodeAddressTopic(log.topics[1]);
+  const receiver = decodeAddressTopic(log.topics[2]);
+  const owner = decodeAddressTopic(log.topics[3]);
+  if (!sender || !receiver || !owner) return null;
+  const assets = readUint256At(log.data, 0);
+  const shares = readUint256At(log.data, 32);
+  if (assets === null || shares === null) return null;
+  let blockNumber: number;
+  let logIndex: number;
+  try {
+    blockNumber = Number(BigInt(log.blockNumber));
+    logIndex = Number(BigInt(log.logIndex));
+  } catch {
+    return null;
+  }
+  return {
+    sender,
+    receiver,
+    owner,
+    assets,
+    shares,
+    blockNumber,
+    transactionHash: log.transactionHash,
+    logIndex,
+  };
+}
+
+/** Decode an ERC-20 `Transfer(address from, address to, uint256 value)` log.
+ *  - topics[0] = TransferTopic
+ *  - topics[1] = from (indexed)
+ *  - topics[2] = to (indexed)
+ *  - data = value (32 bytes). */
+export function decodeTransferLog(
+  log: RawEventLog,
+  tokenAddress: string,
+): ParsedTransferEvent | null {
+  if (!log || !Array.isArray(log.topics) || log.topics.length !== 3) return null;
+  if (log.topics[0]?.toLowerCase() !== SELECTORS.TransferTopic) return null;
+  const from = decodeAddressTopic(log.topics[1]);
+  const to = decodeAddressTopic(log.topics[2]);
+  if (!from || !to) return null;
+  const value = readUint256At(log.data, 0);
+  if (value === null) return null;
+  let blockNumber: number;
+  let logIndex: number;
+  try {
+    blockNumber = Number(BigInt(log.blockNumber));
+    logIndex = Number(BigInt(log.logIndex));
+  } catch {
+    return null;
+  }
+  return {
+    from,
+    to,
+    value,
+    blockNumber,
+    transactionHash: log.transactionHash,
+    logIndex,
+    tokenAddress: tokenAddress.toLowerCase(),
+  };
+}
+
+// =============================================================================
+// Phase 3 — readMetaVaultEvents
+// =============================================================================
+//
+// Two parallel event traces: ERC-4626 Deposit/Withdraw on the share-emitting
+// vault (infraVault primary, fall back to vault when no infraVault), and
+// ERC-20 Transfer on the underlying where the Safe is `from` or `to`.
+//
+// Address-targeted filtering for the Safe trace uses topics[1] (`from`) and
+// topics[2] (`to`) in two separate `eth_getLogs` calls. This is the cheap-RPC
+// path: the RPC does the filtering server-side and we only transfer matching
+// logs. Without it, fetching all Transfer events of a hot stablecoin across a
+// 500K block range would be unworkable.
+//
+// Block range cap: 500K (matches `spectra_get_onchain_activity` cap and
+// existing `MAX_TOTAL_BLOCK_RANGE` in src/tools/onchain.ts). Exceeding the cap
+// emits `block-range-too-large` and the engine clamps `effectiveTo` to
+// `fromBlock + 500_000` — graceful degradation, NEVER throws. The caller sees
+// what was actually scanned in `result.toBlock`.
+//
+// Failures NOT silent: per-RPC errors land in `console.error` via
+// `withRpcFallback`; per-chunk errors land in `console.error` inside
+// `fetchLogs` (existing behavior). Unrecoverable cases (no RPC reachable for
+// blockNumber probe) emit `rpc-all-failed` and return empty arrays — same
+// graceful-degradation contract as `readMetaVaultChainState`.
+//
+// Empty result is valid: zero events in the range returns empty arrays + zero
+// warnings (besides any rpc-fallback-used info). Don't confuse "nothing
+// happened in this range" with "something went wrong."
+
+/** Maximum block range per call (matches src/tools/onchain.ts MAX_TOTAL_BLOCK_RANGE). */
+const MAX_EVENT_BLOCK_RANGE = 500_000;
+
+/** Pad an EVM address to a 32-byte topic word (lowercase, zero-padded left). */
+function addressToTopic(address: string): string {
+  return "0x" + "0".repeat(24) + address.toLowerCase().replace(/^0x/, "");
+}
+
+/**
+ * Phase 3 — fetch decoded ERC-4626 Deposit/Withdraw + ERC-20 Safe Transfer
+ * events for a MetaVault.
+ *
+ * Targets the `infraVault` for share events when present (the primary
+ * aggregate; spec PR2). Falls back to `vault` (secondaryVault) when no
+ * infraVault is supplied — that's the wrapper, but it's the only ERC-4626
+ * surface we have to look at.
+ *
+ * The Safe-side trace queries `Transfer` events on the underlying token
+ * filtered by `topics[1] = padded(safe)` (from-side) and `topics[2] = padded(safe)`
+ * (to-side) in two separate calls. Results are merged + sorted by (block, logIndex).
+ *
+ * Failure modes:
+ *   - RPC bootstrap fails (no URL responds to `eth_blockNumber`) → returns
+ *     empty arrays + a single `rpc-all-failed` warning.
+ *   - Range exceeds 500K → clamps `toBlock` to `fromBlock + 500K`, emits
+ *     `block-range-too-large`, continues with the clamped range.
+ *   - Per-chunk eth_getLogs fails → logged to `console.error` by the existing
+ *     `fetchLogs` helper; the chunk is skipped, partial results returned.
+ *     No engine-level warning is emitted for that — `fetchLogs` is the audit
+ *     trail here (it logs the failed block range with a chain explorer-friendly
+ *     message). Adding a duplicate warning would be noise.
+ *   - Decoders drop ≥1 malformed log → emits `event-decode-failed` info.
+ */
+export async function readMetaVaultEvents(
+  chain: ChainKey,
+  addresses: ChainReadInput,
+  fromBlock: number,
+  toBlock: number,
+): Promise<MetaVaultEventResult> {
+  const warnings: ChainReadWarning[] = [];
+
+  // Resolve a working RPC up front. Same fail-soft contract as the state
+  // engine: if every URL fails, return an empty result with rpc-all-failed.
+  let rpcCtx: RpcContext;
+  try {
+    rpcCtx = await pickWorkingRpc(chain);
+  } catch (err) {
+    if (err instanceof RpcAllFailedError) {
+      return makeAllNullEventResult(chain, addresses, fromBlock, toBlock, err);
+    }
+    throw err;
+  }
+  if (rpcCtx.fellBack) {
+    warnings.push({
+      severity: "info",
+      code: "rpc-fallback-used",
+      detail: `primary RPC failed; succeeded on ${rpcCtx.url}`,
+      nextProbe: "check primary RPC health if pattern persists for >24h; consider promoting a fallback to primary in CHAIN_RPC_URLS",
+    });
+  }
+
+  // Range-cap clamping. The cap is a graceful-degradation knob, not an error
+  // — clamp + warn so the caller sees what was actually scanned.
+  let effectiveTo = toBlock;
+  if (toBlock > fromBlock && toBlock - fromBlock > MAX_EVENT_BLOCK_RANGE) {
+    effectiveTo = fromBlock + MAX_EVENT_BLOCK_RANGE;
+    warnings.push({
+      severity: "warn",
+      code: "block-range-too-large",
+      detail: `requested ${toBlock - fromBlock} blocks exceeds ${MAX_EVENT_BLOCK_RANGE}-block cap; scanning ${fromBlock}..${effectiveTo}`,
+      nextProbe: `re-call with a narrower window or paginate (current cap matches src/tools/onchain.ts MAX_TOTAL_BLOCK_RANGE)`,
+    });
+  }
+
+  // Target for share events: prefer infraVault (primary aggregate). Fall back
+  // to `vault` (secondaryVault) when no infraVault is supplied — it's a
+  // wrapper, but it's the only surface we have. The share semantics differ
+  // between layers, so emit an in-band info warning when the fallback fires
+  // — `shareTokenAddress` alone is a passive signal a hurried consumer would
+  // miss. Round-3 audit (Sonnet Bug 2 + Diverger SG-3 convergence).
+  const hasInfraVault = !!addresses.infraVault && addresses.infraVault.length === 42;
+  const shareTokenAddress = hasInfraVault ? addresses.infraVault! : addresses.vault;
+  if (!hasInfraVault) {
+    warnings.push({
+      severity: "info",
+      code: "share-events-fallback",
+      detail: `infraVault not supplied; scanning vault (${addresses.vault}) for share events. Share semantics are wrapper-scope, not primary aggregate.`,
+      nextProbe:
+        "verify the upstream API populated `metavault.infraVault` for this vault — if absent intentionally (legacy topology), this warning is informational",
+    });
+  }
+  const safeAddressPadded = addressToTopic(addresses.address);
+
+  // Three eth_getLogs calls in parallel: Deposit-on-share, Withdraw-on-share,
+  // Transfer-from-Safe, Transfer-to-Safe. The first two are at the share
+  // token; the latter two are at the underlying (Safe is the indexed counter-
+  // party). All four use `fetchLogs` — which already chunks at 2K blocks per
+  // request internally and aggregates.
+  const depositTopics: (string | string[] | null)[] = [SELECTORS.DepositTopic];
+  const withdrawTopics: (string | string[] | null)[] = [SELECTORS.WithdrawTopic];
+  const transferFromTopics: (string | string[] | null)[] = [
+    SELECTORS.TransferTopic,
+    safeAddressPadded,
+  ];
+  const transferToTopics: (string | string[] | null)[] = [
+    SELECTORS.TransferTopic,
+    null,
+    safeAddressPadded,
+  ];
+
+  let depositRaw: RawEventLog[] = [];
+  let withdrawRaw: RawEventLog[] = [];
+  let transferFromRaw: RawEventLog[] = [];
+  let transferToRaw: RawEventLog[] = [];
+
+  try {
+    const [d, w, tFrom, tTo] = await Promise.all([
+      fetchLogs(rpcCtx.url, shareTokenAddress, depositTopics, fromBlock, effectiveTo),
+      fetchLogs(rpcCtx.url, shareTokenAddress, withdrawTopics, fromBlock, effectiveTo),
+      fetchLogs(rpcCtx.url, addresses.underlying.address, transferFromTopics, fromBlock, effectiveTo),
+      fetchLogs(rpcCtx.url, addresses.underlying.address, transferToTopics, fromBlock, effectiveTo),
+    ]);
+    depositRaw = d[0];
+    withdrawRaw = w[0];
+    transferFromRaw = tFrom[0];
+    transferToRaw = tTo[0];
+
+    // Partial-coverage detection (round-3 audit S1 — STAK-class scar repeats).
+    // `fetchLogs` returns `[allLogs, chunksSucceeded, chunksTotal]`; if any
+    // chunk failed mid-scan, the result silently misses events from that
+    // chunk's block window. A consumer reconciling deposits would see "no
+    // deposits" on a vault that had them. The lesson Phase 2 taught about API
+    // success ≠ chain truth applies here: chunk success ≠ complete coverage.
+    const partialCoverage: Array<{ stream: string; ok: number; total: number }> = [];
+    if (d[1] < d[2]) partialCoverage.push({ stream: "Deposit", ok: d[1], total: d[2] });
+    if (w[1] < w[2]) partialCoverage.push({ stream: "Withdraw", ok: w[1], total: w[2] });
+    if (tFrom[1] < tFrom[2]) partialCoverage.push({ stream: "Transfer (from-Safe)", ok: tFrom[1], total: tFrom[2] });
+    if (tTo[1] < tTo[2]) partialCoverage.push({ stream: "Transfer (to-Safe)", ok: tTo[1], total: tTo[2] });
+    if (partialCoverage.length > 0) {
+      const detail = partialCoverage
+        .map((p) => `${p.stream}: ${p.ok}/${p.total} chunks`)
+        .join(", ");
+      warnings.push({
+        severity: "warn",
+        code: "logs-partial-coverage",
+        detail: `eth_getLogs partial coverage — ${detail}. Returned events may be incomplete.`,
+        nextProbe:
+          "narrow the block range to a smaller window, OR retry with a more reliable RPC. Treat 'no events' as 'unknown coverage' until the partial-coverage warning clears.",
+      });
+    }
+  } catch (err) {
+    // Whole-batch failure (network drop mid-flight). `fetchLogs` itself is
+    // best-effort per-chunk, so reaching this branch implies a hard error
+    // outside its retry envelope. Surface as rpc-all-failed and return empty.
+    return makeAllNullEventResult(
+      chain,
+      addresses,
+      fromBlock,
+      effectiveTo,
+      new RpcAllFailedError(chain, [rpcCtx.url], err),
+    );
+  }
+
+  // Decode + drop nulls. Track decode-fail count so we can emit a single
+  // info-warning if anything was dropped.
+  let decodeFailures = 0;
+
+  const depositEvents: ParsedDepositEvent[] = [];
+  for (const raw of depositRaw) {
+    const parsed = decodeDepositLog(raw);
+    if (parsed) depositEvents.push(parsed);
+    else decodeFailures++;
+  }
+
+  const withdrawEvents: ParsedWithdrawEvent[] = [];
+  for (const raw of withdrawRaw) {
+    const parsed = decodeWithdrawLog(raw);
+    if (parsed) withdrawEvents.push(parsed);
+    else decodeFailures++;
+  }
+
+  // Merge from-side + to-side Transfer logs, dedup by (txHash, logIndex) in
+  // case the Safe self-transferred (rare but possible — same log would match
+  // both filters). Sort ascending by (block, logIndex).
+  const transferEventsRaw = [...transferFromRaw, ...transferToRaw];
+  const seen = new Set<string>();
+  const safeTransferEvents: ParsedTransferEvent[] = [];
+  for (const raw of transferEventsRaw) {
+    const parsed = decodeTransferLog(raw, addresses.underlying.address);
+    if (!parsed) {
+      decodeFailures++;
+      continue;
+    }
+    const key = `${parsed.transactionHash}:${parsed.logIndex}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    safeTransferEvents.push(parsed);
+  }
+  safeTransferEvents.sort((a, b) =>
+    a.blockNumber !== b.blockNumber ? a.blockNumber - b.blockNumber : a.logIndex - b.logIndex,
+  );
+
+  if (decodeFailures > 0) {
+    warnings.push({
+      severity: "info",
+      code: "event-decode-failed",
+      detail: `${decodeFailures} raw log(s) failed to decode and were skipped (malformed topic count, hex, or ABI layout)`,
+      nextProbe: `inspect the failed logs by re-fetching the same range via spectra_get_onchain_activity; verify the contract emits the canonical ERC-4626 / ERC-20 signature`,
+    });
+  }
+
+  return {
+    chain,
+    fromBlock,
+    toBlock: effectiveTo,
+    rpcUsed: rpcCtx.url,
+    shareTokenAddress,
+    depositEvents,
+    withdrawEvents,
+    safeTransferEvents,
+    warnings,
+  };
+}
+
+/** Empty event result with a single `rpc-all-failed` warning — graceful tail
+ *  for the Phase 3 engine when bootstrap fails. */
+function makeAllNullEventResult(
+  chain: ChainKey,
+  addresses: ChainReadInput,
+  fromBlock: number,
+  toBlock: number,
+  err: RpcAllFailedError,
+): MetaVaultEventResult {
+  const hasInfraVault = !!addresses.infraVault && addresses.infraVault.length === 42;
+  const shareTokenAddress = hasInfraVault ? addresses.infraVault! : addresses.vault;
+  return {
+    chain,
+    fromBlock,
+    toBlock,
+    rpcUsed: "",
+    shareTokenAddress,
+    depositEvents: [],
+    withdrawEvents: [],
+    safeTransferEvents: [],
+    warnings: [
+      {
+        severity: "error",
+        code: "rpc-all-failed",
+        detail: `all RPCs failed for ${chain}: ${err.message} (tried ${err.attemptedUrls.length} endpoint(s))`,
+        nextProbe: `use a premium RPC (Alchemy, Infura) for chain ${chain}; chain-reads degraded for events. Failed URLs: ${err.attemptedUrls.join(", ") || "(none configured)"}`,
+      },
+    ],
   };
 }
 

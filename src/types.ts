@@ -828,7 +828,95 @@ export type ChainReadWarningCode =
   | "tvl-divergence-large"
   | "price-feed-zero"                      // API price oracle reports $0 while chain state is healthy
   | "role-inversion-detected"              // ERC-4626 reads succeed at metavault.address (would invert the model)
-  | "remote-modifier-detected";            // info: cross-chain modifier present
+  | "remote-modifier-detected"             // info: cross-chain modifier present
+  | "block-range-too-large"                // warn: requested fromBlock..toBlock exceeded 500K cap (Phase 3 events)
+  | "event-decode-failed"                  // info: ≥1 raw log was malformed and could not be decoded (skipped)
+  | "logs-partial-coverage"                // warn: fetchLogs succeeded for some chunks but not all — events may be missing
+  | "share-events-fallback";               // info: infraVault not supplied; share events read from outer wrapper (different scope)
+
+// =============================================================================
+// Phase 3 — readMetaVaultEvents output types
+// =============================================================================
+//
+// Phase 3 reads ERC-4626 Deposit/Withdraw events from the share-emitting vault
+// (infraVault primary, fall-back to secondaryVault when no infraVault) AND
+// ERC-20 Transfer events on the underlying token where the Safe is `to` or
+// `from`. The two traces are kept parallel — they observe DIFFERENT ledgers
+// (vault shares vs underlying balance) and any reconciliation between them is
+// analysis (Theme E), not data fetching.
+//
+// Each parsed event preserves the raw locator (block, tx, logIndex) so callers
+// can chain back to the chain explorer or fetch surrounding state. None of
+// these types take a USD or per-share-rate field — that's an interpretation
+// surface and lives outside the engine.
+
+/** ERC-4626 Deposit event: `Deposit(address sender, address owner, uint256 assets, uint256 shares)`.
+ *  `sender` and `owner` are indexed (topics[1], topics[2]); `assets` + `shares` are in the data block. */
+export interface ParsedDepositEvent {
+  sender: string;
+  owner: string;
+  assets: bigint;
+  shares: bigint;
+  blockNumber: number;
+  transactionHash: string;
+  logIndex: number;
+}
+
+/** ERC-4626 Withdraw event: `Withdraw(address sender, address receiver, address owner, uint256 assets, uint256 shares)`.
+ *  `sender`, `receiver`, `owner` are indexed (topics[1..3]); `assets` + `shares` are in the data block. */
+export interface ParsedWithdrawEvent {
+  sender: string;
+  receiver: string;
+  owner: string;
+  assets: bigint;
+  shares: bigint;
+  blockNumber: number;
+  transactionHash: string;
+  logIndex: number;
+}
+
+/** ERC-20 Transfer event: `Transfer(address from, address to, uint256 value)`.
+ *  `from` and `to` are indexed (topics[1], topics[2]); `value` is in the data block.
+ *  `tokenAddress` is the contract that emitted the log — preserved here because the
+ *  Safe-side trace queries the underlying token, but tests / future consumers may want
+ *  to confirm the token identity. */
+export interface ParsedTransferEvent {
+  from: string;
+  to: string;
+  value: bigint;
+  blockNumber: number;
+  transactionHash: string;
+  logIndex: number;
+  tokenAddress: string;
+}
+
+/**
+ * Output of `readMetaVaultEvents`. Two parallel event traces:
+ *   - `depositEvents` / `withdrawEvents` from the share-emitting ERC-4626 vault.
+ *     The engine targets `infraVault` when present (the primary aggregate), and
+ *     falls back to `vault` (secondaryVault) when no infraVault address is
+ *     supplied. The address actually scanned is `shareTokenAddress`.
+ *   - `safeTransferEvents` of the underlying token where the Safe is `from` or
+ *     `to`. Two `eth_getLogs` calls under the hood (one per topic position),
+ *     merged + sorted.
+ *
+ * `warnings` carries any non-fatal signals (block-range-too-large degradation,
+ * decode failures, RPC fallback usage). Empty result with empty warnings is
+ * VALID — it means "no events in this range", not "something went wrong."
+ */
+export interface MetaVaultEventResult {
+  chain: ChainKey;
+  fromBlock: number;
+  /** Effective `toBlock` after any range-cap clamping. Reflects what was actually scanned. */
+  toBlock: number;
+  rpcUsed: string;
+  /** Address whose Deposit/Withdraw logs were scanned (infraVault if present, else vault). */
+  shareTokenAddress: string;
+  depositEvents: ParsedDepositEvent[];
+  withdrawEvents: ParsedWithdrawEvent[];
+  safeTransferEvents: ParsedTransferEvent[];
+  warnings: ChainReadWarning[];
+}
 
 // =============================================================================
 // MetaVault Strategy Interfaces
