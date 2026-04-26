@@ -826,7 +826,7 @@ export type ChainReadWarningCode =
   | "wrapper-signature-broken"             // infraVault.balanceOf(secondaryVault) < 50% of totalSupply (OQ-J pattern violated)
   | "tvl-divergence-small"
   | "tvl-divergence-large"
-  | "price-feed-zero"                      // STAK-class signal
+  | "price-feed-zero"                      // API price oracle reports $0 while chain state is healthy
   | "role-inversion-detected"              // ERC-4626 reads succeed at metavault.address (would invert the model)
   | "remote-modifier-detected";            // info: cross-chain modifier present
 

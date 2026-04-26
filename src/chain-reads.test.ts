@@ -260,7 +260,7 @@ describe("classifyTvlDivergence", () => {
 });
 
 describe("detectPriceFeedZero", () => {
-  it("flags 0 as STAK-class", () => {
+  it("flags 0 as a price-feed outage", () => {
     assert.equal(detectPriceFeedZero(0), true);
   });
   it("does NOT flag positive values", () => {

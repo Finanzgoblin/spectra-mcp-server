@@ -265,9 +265,13 @@ export function classifyTvlDivergence(
 }
 
 /**
- * STAK-class detection: Spectra/DeFiLlama price feed has gone to zero while
- * the underlying chain state is healthy. The canonical scar this codebase was
- * forged through (SOUL.md "I trusted the API and didn't check the chain").
+ * Price feed outage detection: the upstream API has reported `price.usd === 0`
+ * while chain state is healthy. Renders to a "Price feed outage" warning in
+ * the chain-truth footer; tvl.underlying remains trustworthy from chain even
+ * when tvl.usd collapses with the feed.
+ *
+ * Anchor: SOUL.md STAK incident — "I trusted the API and didn't check the
+ * chain. The DeFiLlama price feed is down."
  */
 export function detectPriceFeedZero(apiUnderlyingPriceUsd: number | undefined | null): boolean {
   return apiUnderlyingPriceUsd === 0;

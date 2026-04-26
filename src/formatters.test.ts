@@ -2490,7 +2490,7 @@ describe("formatPendleMarketSummary", () => {
 //   - Per-share value math edge cases (totalSupply = 0n)
 //   - Capital scope decomposition (when wrapper has supply and gap is non-trivial)
 //   - Withdraw capacity line presence
-//   - STAK-class price-feed-zero rendering
+//   - Price feed outage (price-feed-zero) rendering
 //
 // The reference state objects below mirror what the engine would produce
 // against the fixtures at tests/fixtures/{csfusionmvweth,gamisusdc}-*.json.
@@ -2728,7 +2728,7 @@ describe("formatChainTruthFooter — verbose mode (warn/error triggers)", () => 
     assert.ok(joined.includes("[curator self-seed, cross-chain transit, infraVault-direct]"));
   });
 
-  it("renders STAK-class signal when api.underlyingPriceUsd === 0", () => {
+  it("renders Price feed outage section when api.underlyingPriceUsd === 0", () => {
     const state = makeCleanState({ warnings: [] });
     const lines = formatChainTruthFooter(state, {
       viewMode: "curator",
@@ -2736,7 +2736,7 @@ describe("formatChainTruthFooter — verbose mode (warn/error triggers)", () => 
       api: { tvlUnderlying: 5_125_544.79, underlyingPriceUsd: 0 },
     });
     const joined = lines.join("\n");
-    assert.ok(joined.includes("STAK-class signal"));
+    assert.ok(joined.includes("Price feed outage"));
     assert.ok(joined.includes("price-feed-zero"));
     // The chain-side TVL line should also still render (tvl.usd is broken,
     // tvl.underlying is fine).
@@ -2744,19 +2744,19 @@ describe("formatChainTruthFooter — verbose mode (warn/error triggers)", () => 
   });
 
   // Phase-2 audit: 2-lens convergence (Diverger + DeFi-analyst inversion test).
-  // STAK is an API-context signal, not an engine warning — without this,
-  // production callers (no explicit verbose:true) would see "all checks pass"
-  // when the price feed is broken. The Phase 1 Diverger named exactly this.
-  it("STAK alone (no engine warns) triggers verbose render WITHOUT explicit verbose:true", () => {
+  // The price-feed-zero signal lives in the API context, not the engine
+  // warnings — without this trigger, production callers (no explicit
+  // verbose:true) would see "all checks pass" when the price feed is broken.
+  it("price-feed-zero alone (no engine warns) triggers verbose render WITHOUT explicit verbose:true", () => {
     const state = makeCleanState({ warnings: [] });
     const lines = formatChainTruthFooter(state, {
       viewMode: "curator",
       // NOTE: no verbose:true — production caller path
       api: { tvlUnderlying: 5_125_544.79, underlyingPriceUsd: 0 },
     });
-    assert.ok(lines.length > 1, "STAK alone should NOT collapse to compact mode");
+    assert.ok(lines.length > 1, "price-feed-zero alone should NOT collapse to compact mode");
     const joined = lines.join("\n");
-    assert.ok(joined.includes("STAK-class signal"), "STAK warning section must render");
+    assert.ok(joined.includes("Price feed outage"), "Price feed outage section must render");
     assert.ok(joined.includes("price-feed-zero"));
   });
 

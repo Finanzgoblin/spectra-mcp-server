@@ -5223,8 +5223,9 @@ export type ChainTruthViewMode = "curator" | "lp";
  * the per-share value line, and the price-feed-zero detection. When absent,
  * the formatter renders chain-truth lines only (no API comparisons).
  *
- * `underlyingPriceUsd === 0` triggers a STAK-class warning addendum (the scar
- * this engine was built around — see SOUL.md).
+ * `underlyingPriceUsd === 0` triggers a "Price feed outage" warning addendum.
+ * Background: the engine was built around the canonical scar of trusting an
+ * API-side $0 TVL on a healthy on-chain pool — see SOUL.md.
  *
  * `underlyingSymbol` lets the caller pass the truth-symbol from the API
  * (e.g. "WETH", "USDC") for rendering. Without it, the formatter falls back
@@ -5306,13 +5307,14 @@ export function formatChainTruthFooter(
   const hasActionable = viewedWarnings.some(
     (w) => w.severity === "warn" || w.severity === "error",
   );
-  // STAK-class signal lives in the API-context (price feed went to zero), not
-  // in the engine's warnings array. Without this, a clean-engine vault with a
-  // broken price oracle silently renders "all checks pass" — exactly the scar
-  // SOUL.md teaches against (Phase 1 Diverger's protected finding).
+  // Price feed outage lives in the API-context (api.underlying.price.usd
+  // reported zero), not in the engine's warnings array. Without this, a
+  // clean-engine vault with a broken price oracle silently renders "all
+  // checks pass" while every USD figure downstream collapses to $0.
+  // (Anchor: SOUL.md STAK incident — the canonical scar this engine honors.)
   // Dissolution: when API + chain are unified into a single source upstream.
-  const stakClassSignal = opts.api?.underlyingPriceUsd === 0;
-  const verbose = opts.verbose === true || hasActionable || stakClassSignal;
+  const priceFeedOutage = opts.api?.underlyingPriceUsd === 0;
+  const verbose = opts.verbose === true || hasActionable || priceFeedOutage;
 
   const decimals = state.infraVault?.decimals ?? state.secondaryVault?.decimals ?? 18;
 
@@ -5489,15 +5491,14 @@ export function formatChainTruthFooter(
     }
   }
 
-  // STAK-class price-feed-zero — surfaced inline because it's load-bearing for
-  // any USD-denominated reasoning the caller might do downstream.
-  //
-  // The Diverger's protected finding (engineering-brief landmine #2): if the
-  // upstream API price feed has gone to zero, the caller MUST know — silently
-  // computing $0 USD on a healthy vault is the STAK scar. We surface it even
-  // when the engine itself didn't flag it (the engine doesn't see the API).
+  // Price feed outage — surfaced inline because it's load-bearing for any
+  // USD-denominated reasoning the caller might do downstream. If the upstream
+  // API price feed has gone to zero, the caller MUST know — silently
+  // computing $0 USD on a healthy vault is the failure mode this engine was
+  // built to prevent. We surface it even when the engine itself didn't flag
+  // it (the engine doesn't see the API).
   if (opts.api && opts.api.underlyingPriceUsd === 0) {
-    lines.push(`  ── STAK-class signal ──`);
+    lines.push(`  ── Price feed outage ──`);
     lines.push(
       `  [warn] price-feed-zero: api.underlying.price.usd === 0 — DeFiLlama or Spectra price oracle stale.`,
     );
