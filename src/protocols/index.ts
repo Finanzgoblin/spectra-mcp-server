@@ -46,10 +46,29 @@ export type {
   ExternalChainTruthMap,
 } from "./engine.js";
 export { getMeta } from "./registry.js";
+
+// Generic verifier dispatch (Theme E architecture):
+export type {
+  ProtocolVerifier,
+  VerifierResult,
+  ChainTruthMap,
+} from "./verifier-types.js";
+export {
+  getVerifier,
+  hasVerifier,
+  listVerifierNames,
+  listVerifiers,
+} from "./verifier-registry.js";
+
+// Avant verifier — exported for direct unit testing. Production callers
+// (engine, metavault) consume via getVerifier("avant"); they never reference
+// avant-specific symbols. To add a new protocol, implement ProtocolVerifier
+// in a sibling file and register in verifier-registry.ts.
 export {
   verifyAvantPosition,
   formatAvantVerification,
   decodeBurnRequest,
+  avantVerifier,
   AVANT_REQUESTS_MANAGER_AVAX,
   AVANT_SELECTORS,
   AVANT_REQUEST_STATE,

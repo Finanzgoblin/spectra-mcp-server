@@ -565,3 +565,84 @@ export function formatAvantVerification(
   // collapse to plain "✓" with the relevant on-chain timestamp.
   return `[chain-truth ✓ eligible] state=${stateName} | counter=${v.burnRequestsCounter} (${v.ordersSubmittedAfter} after) | paused=${v.paused} | block ${v.blockRead}`;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ProtocolVerifier strategy — generic dispatch entry point
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// All avant-specific glue lives below this line. Engine.ts + metavault.ts
+// consume `avantVerifier` via the registry's `getVerifier("avant")` — they
+// never reference avant-specific symbols directly. To add a new protocol
+// (pendle, parallel, etc.), implement `ProtocolVerifier` in a sibling file
+// and register it in verifier-registry.ts. No engine/tool edits required.
+
+import type { ProtocolVerifier, VerifierResult } from "./verifier-types.js";
+import type { TypedExternalPosition } from "./engine.js";
+
+/**
+ * Extract the on-chain `requestId` from a Spectra-API avant external position.
+ * Returns null when the field is missing or malformed (e.g., raw API drift).
+ *
+ * IMPORTANT: requestId (the on-chain mapping key in Avant's RequestsManager)
+ * is distinct from orderId (Avant's off-chain order tracker that the
+ * Spectra API also surfaces). Verifier MUST use requestId.
+ */
+function extractAvantRequestId(position: TypedExternalPosition): number | null {
+  const raw = (position as { requestId?: unknown }).requestId;
+  if (typeof raw !== "number" || !Number.isInteger(raw) || raw <= 0) return null;
+  return raw;
+}
+
+/** Avant-specific expected-value extraction for the formatter cross-checks. */
+function extractAvantExpected(
+  position: TypedExternalPosition,
+): { provider?: string; amountWei?: bigint } {
+  const providerRaw = (position as { provider?: unknown }).provider;
+  const provider = typeof providerRaw === "string" ? providerRaw : undefined;
+  const burnt = (position as { burnt?: { balance?: unknown } }).burnt;
+  let amountWei: bigint | undefined;
+  if (burnt && typeof burnt.balance === "string") {
+    try {
+      amountWei = BigInt(burnt.balance);
+    } catch {
+      amountWei = undefined;
+    }
+  }
+  return { provider, amountWei };
+}
+
+/**
+ * Avant verifier strategy. Implements `ProtocolVerifier` over
+ * `verifyAvantPosition` + `formatAvantVerification`. The engine + tools
+ * dispatch through this; the avant-specific functions remain exported
+ * for direct unit testing (avant-verifier.test.ts) but are not consumed
+ * from outside the protocols/ directory anymore.
+ */
+export const avantVerifier: ProtocolVerifier = {
+  name: "avant",
+
+  positionKey(position) {
+    const requestId = extractAvantRequestId(position);
+    return requestId == null ? null : `avant:${requestId}`;
+  },
+
+  async verify(position): Promise<VerifierResult> {
+    const requestId = extractAvantRequestId(position);
+    if (requestId == null) {
+      return {
+        kind: "failed",
+        protocol: "avant",
+        line: "[chain-truth ✗] avant: missing or malformed requestId",
+      };
+    }
+    const { provider, amountWei } = extractAvantExpected(position);
+    const v = await verifyAvantPosition(requestId);
+    const line = formatAvantVerification(v, provider, amountWei);
+    return {
+      kind: v.kind === "ok" ? "ok" : "failed",
+      protocol: "avant",
+      line,
+      extra: v,
+    };
+  },
+};

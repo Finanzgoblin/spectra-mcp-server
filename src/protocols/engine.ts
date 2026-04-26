@@ -23,10 +23,8 @@ import type {
   SettlementWindow,
 } from "./types.js";
 import { formatUsd, formatPct, formatDate } from "../primitives.js";
-import {
-  type AvantVerification,
-  formatAvantVerification,
-} from "./avant-verifier.js";
+import { getVerifier } from "./verifier-registry.js";
+import type { ChainTruthMap } from "./verifier-types.js";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Drift visibility — read once at module load. Silent default; tests/CI set loud.
@@ -57,21 +55,24 @@ export interface StressClassification {
 }
 
 /**
- * Per-position chain-truth verification result map (Theme E first slice).
+ * Per-position chain-truth verification result map (Theme E architecture).
  *
  * The engine itself never makes RPC calls — verifications are computed at
  * the tool boundary (where flags + concurrency control + per-call timeouts
- * live) and passed in pre-resolved. This keeps the engine purely synchronous
- * and unit-testable without RPC mocking, mirroring the Phase-2 chain-truth
+ * live) and passed in pre-resolved. Engine stays purely synchronous +
+ * unit-testable without RPC mocking, mirroring the Phase-2 chain-truth
  * footer pattern.
  *
- * Map keys: `<protocol>:<id>` lowercased. Today only avant uses
- * `avant:<requestId>`. Pendle externals etc. would extend this with their
- * own protocol-prefixed keys in subsequent slices.
+ * Generic shape (post-architectural-revise): keyed by stable per-position
+ * strings produced by each verifier's `positionKey` method. Protocol-
+ * agnostic. Adding pendle, parallel, etc. requires no edits here — the
+ * verifier registry dispatches.
+ *
+ * The legacy name `ExternalChainTruthMap` is kept as the exported type so
+ * downstream callers (formatters.ts, metavault.ts) don't break. The shape
+ * is now `ChainTruthMap` (a `Map<string, VerifierResult>`).
  */
-export interface ExternalChainTruthMap {
-  avant?: Map<number, AvantVerification>;
-}
+export type ExternalChainTruthMap = ChainTruthMap;
 
 // ────────────────────────────────────────────────────────────────────────────
 // Value extraction
@@ -287,30 +288,20 @@ export function renderExternalPosition(
     ? `${meta.label}: ${primary} — ${valueStr}${shareSuffix} | ${context} | settle ${settlement}${freshness}`
     : `${meta.label}: ${primary} — ${valueStr}${shareSuffix} | settle ${settlement}${freshness}`;
 
-  // Chain-truth augmentation (Theme E first slice). Avant only this slice;
-  // pendle verifier is a separate next-session slice. When the caller
-  // provides a verification result, append it as a separate line under the
-  // body. When no entry is present (off-flag, or per-position fetch
-  // failure that wasn't even attempted), the line is omitted — render
-  // stays identical to the pre-flag default.
+  // Chain-truth augmentation (Theme E architecture). Generic dispatch via
+  // verifier-registry: look up the verifier for this protocol, ask it for
+  // the position's stable key, fetch the pre-resolved result from the map.
+  // No avant- or pendle-specific code lives here — adding a new protocol
+  // verifier is zero-touch for this file. Off-flag (no chainTruth) or
+  // missing-verifier or no-result-in-map all degrade to the pre-flag render.
   let chainTruthLine = "";
-  if (chainTruth?.avant && meta.name === "avant") {
-    const requestIdRaw = ext.requestId;
-    const requestId = typeof requestIdRaw === "number" ? requestIdRaw : null;
-    if (requestId != null) {
-      const v = chainTruth.avant.get(requestId);
-      if (v) {
-        const expectedProvider = typeof ext.provider === "string" ? ext.provider : undefined;
-        const burnt = ext.burnt as { balance?: string } | undefined;
-        let expectedAmountWei: bigint | undefined;
-        if (burnt && typeof burnt.balance === "string") {
-          try {
-            expectedAmountWei = BigInt(burnt.balance);
-          } catch {
-            expectedAmountWei = undefined;
-          }
-        }
-        chainTruthLine = "\n    " + formatAvantVerification(v, expectedProvider, expectedAmountWei);
+  if (chainTruth) {
+    const verifier = getVerifier(meta.name);
+    if (verifier) {
+      const key = verifier.positionKey(ext);
+      if (key !== null) {
+        const result = chainTruth.get(key);
+        if (result) chainTruthLine = "\n    " + result.line;
       }
     }
   }

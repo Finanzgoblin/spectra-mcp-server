@@ -57,8 +57,8 @@ import {
 import type { CuratorDashboardOpts, ChainTruthSummaryResult } from "../formatters.js";
 import { generateActionItems } from "../protocols/engine.js";
 import type { TypedExternalPosition, ExternalChainTruthMap } from "../protocols/engine.js";
-import { verifyAvantPosition } from "../protocols/avant-verifier.js";
-import type { AvantVerification } from "../protocols/avant-verifier.js";
+import { getVerifier } from "../protocols/verifier-registry.js";
+import type { ProtocolVerifier, VerifierResult } from "../protocols/verifier-types.js";
 import { readMetaVaultChainStateCached, projectChainReadInput } from "../chain-reads.js";
 
 function computeLoopRows(
@@ -1324,63 +1324,64 @@ Pendle externals are NOT yet probed in this slice.`,
           estimatedAnnualFeeRevenueUsd = (curator_fee_pct / 100) * (liveApyTotal / 100) * mv.tvl.usd;
         }
 
-        // ── External chain-truth verification (Theme E first slice) ──
-        // Off by default. When verify_externals=true, walks every avant
-        // externalPosition and probes its on-chain RequestsManager state
-        // on Avalanche. Per-position failures become [chain-truth ✗]
-        // lines but never poison sibling positions or block the
-        // dashboard. Concurrency capped at 4 simultaneous reads (avant
-        // burns are sparse — typical vault has 0-5 entries; 4 in flight
-        // is enough headroom without hammering Avalanche public RPC).
+        // ── External chain-truth verification (Theme E architecture) ──
+        // Off by default. When verify_externals=true, walks every external
+        // position whose protocol has a registered verifier and probes
+        // chain state via the strategy. Generic dispatch — adding pendle,
+        // parallel, etc. needs no edits here. Per-position failures become
+        // [chain-truth ✗] lines but never poison sibling positions or
+        // block the dashboard. Concurrency capped at 4 simultaneous reads.
         // The whole block is try/catch — a catastrophic engine failure
         // never blocks the existing dashboard.
         let externalChainTruth: ExternalChainTruthMap | undefined;
         if (verify_externals && mv.externalPositions && mv.externalPositions.length > 0) {
           try {
-            const avantTruth = new Map<number, AvantVerification>();
-            const avantTargets: Array<{ requestId: number }> = [];
+            const truthMap = new Map<string, VerifierResult>();
+            type Target = { verifier: ProtocolVerifier; position: TypedExternalPosition; key: string };
+            const targets: Target[] = [];
             for (const ep of mv.externalPositions) {
-              if (ep.protocol === "avant" && typeof (ep as any).requestId === "number") {
-                avantTargets.push({ requestId: (ep as any).requestId });
-              }
+              const verifier = getVerifier(ep.protocol);
+              if (!verifier) continue;
+              const key = verifier.positionKey(ep as TypedExternalPosition);
+              if (key === null) continue;
+              targets.push({ verifier, position: ep as TypedExternalPosition, key });
             }
-            if (avantTargets.length > 0) {
+            if (targets.length > 0) {
               const CONCURRENCY = 4;
               let cursor = 0;
               const runOne = async (): Promise<void> => {
                 while (true) {
                   const idx = cursor++;
-                  if (idx >= avantTargets.length) return;
-                  const { requestId } = avantTargets[idx];
+                  if (idx >= targets.length) return;
+                  const { verifier, position, key } = targets[idx];
                   try {
-                    // verifyAvantPosition is itself bounded by
-                    // AVANT_VERIFY_TIMEOUT_MS (15s, single batched RPC) and
-                    // never throws — it returns {kind:"failed",error}. We
-                    // still wrap in try/catch as defense-in-depth: a future
-                    // refactor that introduces a throw must not poison the
-                    // worker pool.
-                    const v = await verifyAvantPosition(requestId);
-                    avantTruth.set(requestId, v);
+                    // ProtocolVerifier.verify() is contract-bounded NOT to
+                    // throw — it returns {kind:"failed",...} on any error.
+                    // We still wrap in try/catch as defense-in-depth: a
+                    // future verifier that violates the contract must not
+                    // poison the worker pool.
+                    const result = await verifier.verify(position);
+                    truthMap.set(key, result);
                   } catch (err: any) {
                     console.error(
-                      `[spectra_get_curator_dashboard] avant-verify uncaught for request=${requestId}: ${err?.message || err}`,
+                      `[spectra_get_curator_dashboard] verifier "${verifier.name}" threw for key=${key}: ${err?.message || err}`,
                     );
-                    avantTruth.set(requestId, {
+                    truthMap.set(key, {
                       kind: "failed",
-                      requestId,
-                      error: (err?.message || String(err)).slice(0, 120),
+                      protocol: verifier.name,
+                      line: `[chain-truth ✗] ${verifier.name}: ${(err?.message || String(err)).slice(0, 80)}`,
                     });
                   }
                 }
               };
               const workers = Array.from(
-                { length: Math.min(CONCURRENCY, avantTargets.length) },
+                { length: Math.min(CONCURRENCY, targets.length) },
                 () => runOne(),
               );
               await Promise.allSettled(workers);
             }
-            if (avantTruth.size > 0) {
-              externalChainTruth = { avant: avantTruth };
+            if (truthMap.size > 0) {
+              externalChainTruth = truthMap;
             }
           } catch (verifyErr) {
             console.error(
