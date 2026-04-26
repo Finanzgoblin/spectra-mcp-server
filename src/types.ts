@@ -834,6 +834,7 @@ export type ChainReadWarningCode =
   | "block-range-too-large"                // warn: requested fromBlock..toBlock exceeded 500K cap (Phase 3 events)
   | "event-decode-failed"                  // info: ≥1 raw log was malformed and could not be decoded (skipped)
   | "logs-partial-coverage"                // warn: fetchLogs succeeded for some chunks but not all — events may be missing
+  | "balanceof-partial-coverage"           // warn: balanceOf reads failed for some candidates (OQ-L probe and similar) — residual list is a LOWER BOUND
   | "share-events-fallback";               // info: infraVault not supplied; share events read from outer wrapper (different scope)
 
 // =============================================================================

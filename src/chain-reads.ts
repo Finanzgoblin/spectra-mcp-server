@@ -1456,6 +1456,247 @@ function makeAllNullEventResult(
 }
 
 // =============================================================================
+// OQ-L probe — readInfraVaultMintEvents
+//
+// RELIC-WHEN: chain-reads gains a generic `readShareTokenMintEvents(chain,
+// address, fromBlock, toBlock)` — same logic, parameterized over the reason
+// for the scan. Rename or retire then. (Diverger Round-7 audit dissolution
+// condition externalized into the substrate.)
+// =============================================================================
+//
+// Sibling to `readMetaVaultEvents`, but TARGETED at a single share-token
+// surface (the infraVault address) for `Transfer(from=0x0, to=*)` events ONLY.
+// `readMetaVaultEvents` scans Transfer events at the UNDERLYING token (Safe-
+// filtered) and Deposit/Withdraw events at the share token — neither covers
+// the share-token MINT event surface OQ-L needs to enumerate every address
+// that has ever received infraVault shares from the zero address.
+//
+// Why a separate function (and not a flag on `readMetaVaultEvents`)?
+//   1. Different topic filter: `topics[1] = padded(0x0)`, no `to` filter.
+//   2. Different consumer: investigation surface, not dashboard-render path.
+//   3. Different prohibition: this surface enumerates ADDRESSES that hold
+//      vault-scope receipts. Surfacing it casually creates a surveillance shape
+//      `readMetaVaultEvents` doesn't have. Architect's call: keep them separate.
+//
+// Reuses everything `readMetaVaultEvents` reuses: `pickWorkingRpc`,
+// `withRpcFallback` (transitively, via fetchLogs's chunking), `fetchLogs`'s
+// 500K block range cap (MAX_EVENT_BLOCK_RANGE), `decodeTransferLog` for the
+// log shape (Transfer is one ABI regardless of token).
+//
+// Failure modes (mirroring `readMetaVaultEvents`):
+//   - RPC bootstrap fails → empty result + `rpc-all-failed` warning.
+//   - Range > 500K → clamps `toBlock`, emits `block-range-too-large`, continues.
+//   - Per-chunk fetchLogs fails → partial-coverage warning + audit log.
+//   - Decoders drop ≥1 malformed log → emits `event-decode-failed` info.
+
+/** Pre-computed zero-address topic word for mint-event filtering. */
+const ZERO_ADDRESS_TOPIC = "0x" + "0".repeat(64);
+
+/**
+ * Output of `readInfraVaultMintEvents`. Mirrors `MetaVaultEventResult` shape
+ * but narrowed to the single mint-event stream — no Deposit/Withdraw, no
+ * underlying-token transfers. The address scanned is `infraVaultAddress`
+ * (the share token); the only events returned are `Transfer(from=0x0, to=*)`.
+ *
+ * Empty `mintEvents` with empty `warnings` means "no mints in this range" —
+ * a valid signal, not a failure. Inspect `warnings` to disambiguate.
+ */
+export interface InfraVaultMintEventResult {
+  chain: ChainKey;
+  fromBlock: number;
+  /** Effective `toBlock` after any range-cap clamping. */
+  toBlock: number;
+  rpcUsed: string;
+  /** The share-token contract that was scanned (the infraVault). */
+  infraVaultAddress: string;
+  mintEvents: ParsedTransferEvent[];
+  warnings: ChainReadWarning[];
+}
+
+/**
+ * Phase 3 sibling — fetch decoded `Transfer(from=0x0, to=*)` mint events at
+ * the infraVault SHARE token over a block range.
+ *
+ * The single eth_getLogs filter is `[TransferTopic, padded(0x0), null]` —
+ * `topics[1]` is the indexed `from` slot, pinned to the zero-address word.
+ * `topics[2]` (`to`) is left wild. Logs are decoded via `decodeTransferLog`
+ * (the same Transfer ABI that the underlying-side path uses) and returned in
+ * (block, logIndex) ascending order.
+ *
+ * @param chain Chain to read from. RPC list resolved via the existing
+ *              `resolveRpcUrlsWithFallbacks`.
+ * @param infraVaultAddress The share token to scan. MUST be a 20-byte EVM
+ *              address (no validation here; caller is the investigation
+ *              substrate which already typechecks inputs).
+ * @param fromBlock Inclusive lower bound. Pass the deployment block when
+ *              you want full history; otherwise a recent window for a sweep.
+ * @param toBlock Inclusive upper bound. Will be clamped to `fromBlock + 500K`
+ *              with a `block-range-too-large` warning if the range exceeds
+ *              MAX_EVENT_BLOCK_RANGE.
+ *
+ * @returns Mint events + warnings. NEVER throws at the function boundary.
+ *          Bootstrap failure ⇒ empty result + `rpc-all-failed` warning.
+ *          Partial-coverage chunk failures ⇒ warning + whatever chunks did
+ *          succeed (do NOT treat empty `mintEvents` as conclusive).
+ */
+export async function readInfraVaultMintEvents(
+  chain: ChainKey,
+  infraVaultAddress: string,
+  fromBlock: number,
+  toBlock: number,
+): Promise<InfraVaultMintEventResult> {
+  const warnings: ChainReadWarning[] = [];
+
+  // Step 1: RPC bootstrap. Same fail-soft contract as readMetaVaultEvents.
+  let rpcCtx: RpcContext;
+  try {
+    rpcCtx = await pickWorkingRpc(chain);
+  } catch (err) {
+    if (err instanceof RpcAllFailedError) {
+      return makeAllNullMintEventResult(chain, infraVaultAddress, fromBlock, toBlock, err);
+    }
+    throw err;
+  }
+  if (rpcCtx.fellBack) {
+    warnings.push({
+      severity: "info",
+      code: "rpc-fallback-used",
+      detail: `primary RPC failed; succeeded on ${rpcCtx.url}`,
+      nextProbe:
+        "check primary RPC health if pattern persists for >24h; consider promoting a fallback to primary in CHAIN_RPC_URLS",
+    });
+  }
+
+  // Step 2: range-cap clamp. Same MAX_EVENT_BLOCK_RANGE as readMetaVaultEvents.
+  let effectiveTo = toBlock;
+  if (toBlock > fromBlock && toBlock - fromBlock > MAX_EVENT_BLOCK_RANGE) {
+    effectiveTo = fromBlock + MAX_EVENT_BLOCK_RANGE;
+    warnings.push({
+      severity: "warn",
+      code: "block-range-too-large",
+      detail: `requested ${toBlock - fromBlock} blocks exceeds ${MAX_EVENT_BLOCK_RANGE}-block cap; scanning ${fromBlock}..${effectiveTo}`,
+      nextProbe: `re-call with a narrower window or paginate (current cap matches src/tools/onchain.ts MAX_TOTAL_BLOCK_RANGE)`,
+    });
+  }
+
+  // Step 3: fetch mint logs. Topic filter pins `from` to the zero-address word
+  // and leaves `to` wild — exactly the `Transfer(from=0, to=*)` shape OQ-L spec
+  // §11 calls for.
+  const mintTopics: (string | string[] | null)[] = [
+    SELECTORS.TransferTopic,
+    ZERO_ADDRESS_TOPIC,
+    null,
+  ];
+
+  let mintRaw: RawEventLog[] = [];
+  try {
+    const [logs, ok, total] = await fetchLogs(
+      rpcCtx.url,
+      infraVaultAddress,
+      mintTopics,
+      fromBlock,
+      effectiveTo,
+    );
+    mintRaw = logs;
+
+    // Partial-coverage detection — same shape as readMetaVaultEvents (round-3
+    // audit S1 / STAK-class scar). chunk-success ≠ complete coverage; if any
+    // chunk failed, surface it so the consumer doesn't reason on an incomplete
+    // mint history.
+    if (ok < total) {
+      warnings.push({
+        severity: "warn",
+        code: "logs-partial-coverage",
+        detail: `eth_getLogs partial coverage — Mint (Transfer-from-0): ${ok}/${total} chunks. Returned events may be incomplete.`,
+        nextProbe:
+          "narrow the block range to a smaller window, OR retry with a more reliable RPC. Treat 'no mints' as 'unknown coverage' until the partial-coverage warning clears.",
+      });
+    }
+  } catch (err) {
+    return makeAllNullMintEventResult(
+      chain,
+      infraVaultAddress,
+      fromBlock,
+      effectiveTo,
+      new RpcAllFailedError(chain, [rpcCtx.url], err),
+    );
+  }
+
+  // Step 4: decode. Drop nulls but track the count so a single info-warning
+  // surfaces if anything was malformed.
+  let decodeFailures = 0;
+  const mintEvents: ParsedTransferEvent[] = [];
+  for (const raw of mintRaw) {
+    const parsed = decodeTransferLog(raw, infraVaultAddress);
+    if (!parsed) {
+      decodeFailures++;
+      continue;
+    }
+    // Defense in depth: the topic filter already pinned `from = 0x0` at the
+    // RPC level, but if a malformed log slipped through the upper-12-byte
+    // guard in `decodeAddressTopic`, double-check the post-decode `from` is
+    // the zero address before counting it as a mint.
+    if (parsed.from !== "0x0000000000000000000000000000000000000000") {
+      decodeFailures++;
+      continue;
+    }
+    mintEvents.push(parsed);
+  }
+
+  // fetchLogs already sorts by (block, logIndex) — but we re-sort defensively
+  // so contract holds independent of the helper's invariants.
+  mintEvents.sort((a, b) =>
+    a.blockNumber !== b.blockNumber ? a.blockNumber - b.blockNumber : a.logIndex - b.logIndex,
+  );
+
+  if (decodeFailures > 0) {
+    warnings.push({
+      severity: "info",
+      code: "event-decode-failed",
+      detail: `${decodeFailures} raw log(s) failed to decode (or non-zero from) and were skipped`,
+      nextProbe: `inspect the failed logs by re-fetching the same range; verify the contract emits the canonical ERC-20 Transfer signature`,
+    });
+  }
+
+  return {
+    chain,
+    fromBlock,
+    toBlock: effectiveTo,
+    rpcUsed: rpcCtx.url,
+    infraVaultAddress: infraVaultAddress.toLowerCase(),
+    mintEvents,
+    warnings,
+  };
+}
+
+/** Empty mint-event result with a single `rpc-all-failed` warning — the
+ *  graceful tail when bootstrap fails or batch throws mid-flight. */
+function makeAllNullMintEventResult(
+  chain: ChainKey,
+  infraVaultAddress: string,
+  fromBlock: number,
+  toBlock: number,
+  err: RpcAllFailedError,
+): InfraVaultMintEventResult {
+  return {
+    chain,
+    fromBlock,
+    toBlock,
+    rpcUsed: "",
+    infraVaultAddress: infraVaultAddress.toLowerCase(),
+    mintEvents: [],
+    warnings: [
+      {
+        severity: "error",
+        code: "rpc-all-failed",
+        detail: `all RPCs failed for ${chain}: ${err.message} (tried ${err.attemptedUrls.length} endpoint(s))`,
+        nextProbe: `use a premium RPC (Alchemy, Infura) for chain ${chain}; mint-event scan degraded. Failed URLs: ${err.attemptedUrls.join(", ") || "(none configured)"}`,
+      },
+    ],
+  };
+}
+
+// =============================================================================
 // Curator-tempo cache (Phase 2, spec BLOCKER #7 / OQ-E promoted)
 // =============================================================================
 //
