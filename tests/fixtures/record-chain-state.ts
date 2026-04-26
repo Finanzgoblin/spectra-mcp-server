@@ -94,6 +94,10 @@ const SELECTORS = {
   owner: "0x8da5cb5b",
   paused: "0x5c975abb",
   masterCopy: "0xa619486e",
+  // Phase 2 (BLOCKER #4) — capacity reads
+  maxWithdraw: "0xce96cb77",
+  maxRedeem: "0xd905777e",
+  previewRedeem: "0x4cdad506",
 } as const;
 
 function encodeBalanceOf(address: string): string {
@@ -159,9 +163,16 @@ async function tryBatch(
   }
 }
 
-// Build the Phase 1 call list at a specific historical block. Order MUST match
+// Build the call list at a specific historical block. Order MUST match
 // the engine in src/chain-reads.ts (see comments there for why).
+//
+// Phase 2 (BLOCKER #4): secondaryVault block grew from 8 to 11 calls
+// (maxWithdraw(self), maxRedeem(self), previewRedeem(1 share)). The
+// wrapper-signature call shifted from index 22 to index 25.
 function buildCalls(rv: RefVault, blockTag: string): RpcCall[] {
+  const oneShareForPreview =
+    "0x" + (10n ** BigInt(rv.underlying.decimals)).toString(16).padStart(64, "0");
+  const vaultAsHolder = rv.vault.toLowerCase().replace(/^0x/, "").padStart(64, "0");
   return [
     // [0..3] Safe block
     { method: "eth_getCode", params: [rv.address, blockTag] },
@@ -179,7 +190,7 @@ function buildCalls(rv: RefVault, blockTag: string): RpcCall[] {
     { method: "eth_call", params: [{ to: rv.infraVault, data: SELECTORS.owner }, blockTag] },
     { method: "eth_call", params: [{ to: rv.infraVault, data: SELECTORS.paused }, blockTag] },
     { method: "eth_call", params: [{ to: rv.underlying.address, data: encodeBalanceOf(rv.infraVault) }, blockTag] },
-    // [14..21] secondaryVault block
+    // [14..24] secondaryVault block (Phase 2: +3 capacity reads)
     { method: "eth_getCode", params: [rv.vault, blockTag] },
     { method: "eth_call", params: [{ to: rv.vault, data: SELECTORS.totalAssets }, blockTag] },
     { method: "eth_call", params: [{ to: rv.vault, data: SELECTORS.totalSupply }, blockTag] },
@@ -188,7 +199,10 @@ function buildCalls(rv: RefVault, blockTag: string): RpcCall[] {
     { method: "eth_call", params: [{ to: rv.vault, data: SELECTORS.name }, blockTag] },
     { method: "eth_call", params: [{ to: rv.vault, data: SELECTORS.symbol }, blockTag] },
     { method: "eth_call", params: [{ to: rv.underlying.address, data: encodeBalanceOf(rv.vault) }, blockTag] },
-    // [22] wrapper-signature: infraVault.balanceOf(secondaryVault)
+    { method: "eth_call", params: [{ to: rv.vault, data: SELECTORS.maxWithdraw + vaultAsHolder }, blockTag] },
+    { method: "eth_call", params: [{ to: rv.vault, data: SELECTORS.maxRedeem + vaultAsHolder }, blockTag] },
+    { method: "eth_call", params: [{ to: rv.vault, data: SELECTORS.previewRedeem + oneShareForPreview.replace(/^0x/, "") }, blockTag] },
+    // [25] wrapper-signature: infraVault.balanceOf(secondaryVault)
     { method: "eth_call", params: [{ to: rv.infraVault, data: encodeBalanceOf(rv.vault) }, blockTag] },
   ];
 }

@@ -105,6 +105,13 @@ export const SELECTORS = {
   owner: "0x8da5cb5b",
   paused: "0x5c975abb",
   masterCopy: "0xa619486e",
+  // Phase 2 (spec BLOCKER #4) — ERC-4626 capacity reads.
+  // keccak256("maxWithdraw(address)") = 0xce96cb77...
+  // keccak256("maxRedeem(address)")   = 0xd905777e...
+  // keccak256("previewRedeem(uint256)") = 0x4cdad506...
+  maxWithdraw: "0xce96cb77",
+  maxRedeem: "0xd905777e",
+  previewRedeem: "0x4cdad506",
 } as const;
 
 // =============================================================================
@@ -500,8 +507,10 @@ function encodeBalanceOf(address: string): string {
  * the warning is the runtime version of the discipline. OQ-L tracks the
  * residual provenance gap; agents reason on `infraVault.totalAssets` only.
  *
- * Phase 1 boundary: NO `maxWithdraw`/`maxRedeem`/`previewRedeem` reads — those
- * are spec BLOCKER #4, Phase 2 work.
+ * Phase 2 (BLOCKER #4): adds `maxWithdraw(self)`, `maxRedeem(self)`,
+ * `previewRedeem(1 share)` reads to the secondaryVault block. These are CAPACITY
+ * metrics surfaced for LP-side risk reads — they do NOT propagate the
+ * secondaryVault prohibition (capacity ≠ entitlement-vs-aggregate).
  */
 export async function readMetaVaultChainState(
   chain: ChainKey,
@@ -573,10 +582,22 @@ export async function readMetaVaultChainState(
     );
   }
 
-  // secondaryVault block: 8 calls (no owner/paused — outer wrappers are
+  // secondaryVault block: 11 calls (was 8 in Phase 1; Phase 2 adds 3 capacity
+  // reads per spec BLOCKER #4). No owner/paused — outer wrappers are
   // structurally lighter; agents shouldn't reason on this state per the
-  // prohibition in SecondaryVaultState's type comment).
+  // prohibition in SecondaryVaultState's type comment.
+  //
+  // Phase 2 additions (indices secondaryStart+8..+10): maxWithdraw(self),
+  // maxRedeem(self), previewRedeem(1 share). The HOLDER argument for the first
+  // two is the secondaryVault's OWN address — see SecondaryVaultState's type
+  // comment for the spec-deviation rationale (no need to thread a caller EOA).
+  // `previewRedeem` is called with `1 * 10^underlying.decimals` (one share's
+  // worth) — note we use `underlying.decimals`, not the secondary's decimals,
+  // because we don't yet know the secondary's decimals at call-build time and
+  // wrapper conventionally matches underlying.
   const secondaryStart = calls.length;
+  const oneShareForPreview =
+    "0x" + (10n ** BigInt(input.underlying.decimals)).toString(16).padStart(64, "0");
   calls.push(
     { method: "eth_getCode", params: [input.vault, "latest"] },
     { method: "eth_call", params: [{ to: input.vault, data: SELECTORS.totalAssets }, "latest"] },
@@ -586,6 +607,10 @@ export async function readMetaVaultChainState(
     { method: "eth_call", params: [{ to: input.vault, data: SELECTORS.name }, "latest"] },
     { method: "eth_call", params: [{ to: input.vault, data: SELECTORS.symbol }, "latest"] },
     { method: "eth_call", params: [{ to: input.underlying.address, data: encodeBalanceOf(input.vault) }, "latest"] },
+    // Phase 2 capacity reads (BLOCKER #4)
+    { method: "eth_call", params: [{ to: input.vault, data: SELECTORS.maxWithdraw + input.vault.toLowerCase().replace(/^0x/, "").padStart(64, "0") }, "latest"] },
+    { method: "eth_call", params: [{ to: input.vault, data: SELECTORS.maxRedeem + input.vault.toLowerCase().replace(/^0x/, "").padStart(64, "0") }, "latest"] },
+    { method: "eth_call", params: [{ to: input.vault, data: SELECTORS.previewRedeem + oneShareForPreview.replace(/^0x/, "") }, "latest"] },
   );
 
   // wrapper-signature read (last position): only meaningful when both vaults
@@ -757,6 +782,13 @@ export async function readMetaVaultChainState(
   const secName = decodeString(results[secondaryStart + 5]?.result);
   const secSymbol = decodeString(results[secondaryStart + 6]?.result);
   const secSelfAssetBalance = decodeUint256(results[secondaryStart + 7]?.result);
+  // Phase 2: capacity reads (BLOCKER #4). Many implementations revert when
+  // called by/for an address with zero shares — that surfaces as `result.error`
+  // and `decodeUint256` returns null. The footer treats null as "unverifiable"
+  // and skips the line; healthy capacity reads surface as a number.
+  const secMaxWithdrawSelf = decodeUint256(results[secondaryStart + 8]?.result);
+  const secMaxRedeemSelf = decodeUint256(results[secondaryStart + 9]?.result);
+  const secPreviewRedeemOneShare = decodeUint256(results[secondaryStart + 10]?.result);
   const wrapperShareBalance =
     wrapperSignatureIndex >= 0 ? decodeUint256(results[wrapperSignatureIndex]?.result) : null;
 
@@ -772,6 +804,9 @@ export async function readMetaVaultChainState(
     symbol: secSymbol,
     selfAssetBalance: secSelfAssetBalance,
     infraVaultShareBalance: wrapperShareBalance,
+    maxWithdrawSelf: secMaxWithdrawSelf,
+    maxRedeemSelf: secMaxRedeemSelf,
+    previewRedeemOneShare: secPreviewRedeemOneShare,
   };
 
   if (!secBytecodePresent) {
@@ -901,6 +936,114 @@ export async function readMetaVaultChainState(
     remoteModifiers,
     warnings,
   };
+}
+
+// =============================================================================
+// Curator-tempo cache (Phase 2, spec BLOCKER #7 / OQ-E promoted)
+// =============================================================================
+//
+// Curators look at dashboards every few minutes; the chain block hasn't moved
+// meaningfully (mainnet ~12s/block, Base ~2s/block) but the RPC bill compounds
+// fast. A 5-minute TTL is the curator-tempo sweet spot: stale-tolerant for
+// human consumption, fresh enough that a new audit signal surfaces within a
+// session.
+//
+// Key shape: `{chain}:{vault.address}:{block}` — scoped to the input we
+// actually batched against. Block is included so different consumers asking
+// for different blocks don't collide.
+//
+// Cache only applies to the implicit "latest" read path (Phase 2 default). If
+// historical-block reads are added later, those should be cached forever (block
+// is final) — but Phase 2 only exposes "latest" so we don't yet need that
+// branch. Dissolution: if Phase 5 adds historical reads, split this into two
+// caches with distinct TTL policies.
+//
+// Failures NOT silent: cache misses + RPC failures still log to `console.error`
+// via `withRpcFallback` upstream.
+
+const CHAIN_TRUTH_TTL_MS = 5 * 60 * 1000; // 5 minutes — see header comment
+
+interface CacheEntry {
+  /** Wall-clock ms when this entry was stored. */
+  storedAt: number;
+  /** The cached state (a frozen MetaVaultChainState). */
+  state: MetaVaultChainState;
+}
+
+/**
+ * Bounded LRU cache for chain-truth reads. The size cap prevents unbounded
+ * growth in long-running processes; it's generous (50 entries) since each
+ * entry is small (~3 KB) and eviction is O(1) amortized.
+ *
+ * `Map` preserves insertion order, so the LRU eviction loop drops the
+ * oldest-inserted entry when we exceed the cap.
+ */
+const CHAIN_TRUTH_CACHE = new Map<string, CacheEntry>();
+const CHAIN_TRUTH_CACHE_MAX = 50;
+
+function cacheKey(chain: ChainKey, vaultAddress: string, block: number | "latest"): string {
+  return `${chain}:${vaultAddress.toLowerCase()}:${block}`;
+}
+
+/**
+ * Read MetaVault chain state with a 5-minute curator-tempo cache.
+ *
+ * Cache hit ⇒ return cached state, no RPC. Cache miss ⇒ run the engine, store,
+ * return. `forceRefresh: true` bypasses the cache and re-runs.
+ *
+ * The cache is keyed on `(chain, vault, block)`. Because Phase 2 only exposes
+ * "latest" reads, the block tag is the literal string "latest" and the TTL is
+ * what gates staleness. When the engine runs, it returns a concrete block
+ * number — but we deliberately don't re-key by that, because the next request
+ * with the same input/timestamp would also be `latest` and we want it to hit
+ * the cache.
+ *
+ * Spec line: BLOCKER #7 (D-Curator1, OQ-E promoted from Phase 5 to Phase 2).
+ */
+export async function readMetaVaultChainStateCached(
+  chain: ChainKey,
+  input: ChainReadInput,
+  opts: { forceRefresh?: boolean } = {},
+): Promise<MetaVaultChainState> {
+  const key = cacheKey(chain, input.vault, "latest");
+  const now = Date.now();
+
+  if (!opts.forceRefresh) {
+    const hit = CHAIN_TRUTH_CACHE.get(key);
+    if (hit && now - hit.storedAt < CHAIN_TRUTH_TTL_MS) {
+      // LRU touch: re-insert to move to most-recent.
+      CHAIN_TRUTH_CACHE.delete(key);
+      CHAIN_TRUTH_CACHE.set(key, hit);
+      return hit.state;
+    }
+  }
+
+  // Cache miss (or expired, or forced refresh).
+  const state = await readMetaVaultChainState(chain, input);
+
+  // Don't cache hard-failed reads; the next caller deserves a retry.
+  const allFailed = state.warnings.some((w) => w.code === "rpc-all-failed");
+  if (!allFailed) {
+    CHAIN_TRUTH_CACHE.set(key, { storedAt: now, state });
+    // LRU eviction: drop oldest until we're at cap.
+    while (CHAIN_TRUTH_CACHE.size > CHAIN_TRUTH_CACHE_MAX) {
+      const firstKey = CHAIN_TRUTH_CACHE.keys().next().value;
+      if (firstKey === undefined) break;
+      CHAIN_TRUTH_CACHE.delete(firstKey);
+    }
+  }
+
+  return state;
+}
+
+/** Test-only: clear the cache. Production code should never call this. */
+export function _clearChainTruthCacheForTest(): void {
+  CHAIN_TRUTH_CACHE.clear();
+}
+
+/** Test-only: inspect cache size. */
+export function _chainTruthCacheSizeForTest(): number {
+  return CHAIN_TRUTH_CACHE.size;
 }
 
 // =============================================================================

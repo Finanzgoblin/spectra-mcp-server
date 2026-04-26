@@ -756,6 +756,38 @@ export interface SecondaryVaultState {
   selfAssetBalance: bigint | null;
   /** infraVault.balanceOf(secondaryVault) — wrapper signature (≥99% of infraVault.totalSupply expected). */
   infraVaultShareBalance: bigint | null;
+  /**
+   * Phase 2 (spec BLOCKER #4) — vault-side withdraw capacity reads.
+   *
+   * These are CAPACITY metrics, NOT entitlement-vs-aggregate comparisons. They
+   * answer: "if a holder of secondaryVault shares tried to exit RIGHT NOW, what
+   * does the contract say is available?" — important for LP-side risk reads.
+   *
+   * Holder argument: the secondaryVault's OWN address is passed as the holder
+   * (i.e. `maxWithdraw(vault.address)`). This gives a vault-side reading that
+   * doesn't require knowing a specific user's identity. For implementations
+   * that vary capacity by holder (e.g. allowlists), this is a representative
+   * sample; the real per-user value can drift. Spec deviation note: the spec
+   * left "caller is the curator EOA OR the secondaryVault's own address" open;
+   * Phase 2 takes the second option for simplicity (no need to thread the
+   * caller's identity through the engine).
+   *
+   * Importantly, this DOES NOT propagate the secondaryVault prohibition
+   * violation: we read the contract's stated capacity, not its totalAssets-
+   * versus-aggregate position.
+   */
+  maxWithdrawSelf: bigint | null;
+  maxRedeemSelf: bigint | null;
+  /**
+   * `previewRedeem(1 * 10^decimals)` — what the contract says ONE share converts
+   * to (in underlying). Spec BLOCKER #4 named three selectors; the brief
+   * explicitly listed only two state fields (`maxWithdrawSelf`/`maxRedeemSelf`),
+   * but dropping the third selector entirely would silently leave it on the
+   * floor. We surface it as `previewRedeemOneShare` so the formatter can
+   * cross-check the per-share computation derived from totalAssets/totalSupply.
+   * Deviation acknowledged in the diff brief.
+   */
+  previewRedeemOneShare: bigint | null;
 }
 
 /** Flat projection of Zodiac modifier addresses (data-only — no on-chain reads). */

@@ -529,7 +529,10 @@ describe("CSfusionMVWETH fixture (mainnet, pre-onboarding state)", () => {
   });
 
   it("wrapper-signature is mechanically zero (covered by pre-onboarding, not separately flagged)", () => {
-    const sig = decodeUint256(r[22].result);
+    // Phase 2 (BLOCKER #4): wrapper-signature shifted from index 22 to 25
+    // because three secondaryVault capacity reads (maxWithdraw, maxRedeem,
+    // previewRedeem) were inserted at indices 22..24.
+    const sig = decodeUint256(r[25].result);
     const supply = decodeUint256(r[6].result);
     assert.equal(sig, 0n);
     // isWrapperSignatureBroken returns true here, BUT the engine suppresses
@@ -586,7 +589,8 @@ describe("gamisUSDC fixture (Base, fully-loaded wrapper)", () => {
   });
 
   it("wrapper-signature is healthy (≥99% of infraVault.totalSupply held by secondaryVault)", () => {
-    const sig = decodeUint256(r[22].result);
+    // Phase 2 (BLOCKER #4): wrapper-signature shifted from index 22 to 25.
+    const sig = decodeUint256(r[25].result);
     const supply = decodeUint256(r[6].result);
     assert.equal(isWrapperSignatureBroken(sig, supply), false);
     const pct = Number(sig!) / Number(supply!);
@@ -639,5 +643,33 @@ describe("readMetaVaultChainState [integration]", { skip: !RUN_INTEGRATION }, ()
         codes.includes("pre-onboarding-state"),
       `expected secondaryvault advisory, got: ${codes.join(", ")}`,
     );
+  });
+});
+
+// =============================================================================
+// Phase 2 — secondaryVault capacity reads (spec BLOCKER #4)
+// =============================================================================
+
+describe("Phase 2 capacity reads — secondaryVault.maxWithdraw / maxRedeem / previewRedeem", () => {
+  it("CSfusionMVWETH (pre-onboarding): capacity reads decode to 0 (zero-supply wrapper)", () => {
+    const f = loadFixture("csfusionmvweth-mainnet-24962385");
+    const r = f.results;
+    // Indices 22..24 are maxWithdraw(self), maxRedeem(self), previewRedeem(1share).
+    // For a pre-onboarding vault with totalSupply=0, all three return 0
+    // (or revert — null is the alternative outcome). Either is acceptable;
+    // the formatter handles both.
+    const maxWith = decodeUint256(r[22]?.result);
+    const maxRed = decodeUint256(r[23]?.result);
+    // Either zero or null — both signal "no capacity" to the formatter.
+    assert.ok(maxWith === null || maxWith === 0n);
+    assert.ok(maxRed === null || maxRed === 0n);
+  });
+
+  it("gamisUSDC (fully-loaded): wrapper-signature read at index 25 returns the share balance", () => {
+    const f = loadFixture("gamisusdc-base-45197827");
+    const r = f.results;
+    const sig = decodeUint256(r[25]?.result);
+    assert.notEqual(sig, null);
+    assert.ok(sig! > 0n);
   });
 });

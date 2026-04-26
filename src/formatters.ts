@@ -2,7 +2,7 @@
  * Data formatting helpers — USD, percentages, dates, balances, pool/position/Morpho summaries.
  */
 
-import type { SpectraPt, SpectraPool, SpectraMetavault, SpectraMetavaultPosition, MorphoMarket, MorphoVault, MorphoVaultAllocation, MorphoMarketSupplier, PendleMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavaultBridgeTx, MerklTokenReward, CrossProtocolMatch, CuratorOpportunity, MerklCampaign, MorphoUserPositions, MorphoHistoricalAnalysis, MorphoRateStats, MorphoPublicAllocatorLiquidity, CuratorRiskSummary, LiquidationAlert, RiskAlertLevel, MetaVaultChainState } from "./types.js";
+import type { SpectraPt, SpectraPool, SpectraMetavault, SpectraMetavaultPosition, MorphoMarket, MorphoVault, MorphoVaultAllocation, MorphoMarketSupplier, PendleMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavaultBridgeTx, MerklTokenReward, CrossProtocolMatch, CuratorOpportunity, MerklCampaign, MorphoUserPositions, MorphoHistoricalAnalysis, MorphoRateStats, MorphoPublicAllocatorLiquidity, CuratorRiskSummary, LiquidationAlert, RiskAlertLevel, MetaVaultChainState, ChainReadWarning } from "./types.js";
 import { lookupMerklCampaigns } from "./api.js";
 import {
   formatUsd,
@@ -5189,18 +5189,346 @@ export function formatSchemaWarningFooter(
 }
 
 // =============================================================================
-// Theme A — formatChainTruthFooter (Phase 1 stub)
+// Theme A — formatChainTruthFooter (Phase 2 — spec §7.1)
 // =============================================================================
 //
-// Phase 1 invariant (spec §9 / round-2 N15): the Theme A engine ships with a
-// type-stable consumer at the formatter boundary so `MetaVaultChainState`
-// has somewhere to be rendered. The body is intentionally empty in Phase 1 —
-// Phase 2 replaces it with the §7.1 worked-example renderer (footer lines for
-// the curator dashboard). Type signature is FROZEN across phases.
+// Render shape per spec §7.1, with the round-3 BLOCKER-resolved framing:
+//   - Capital scope as DECOMPOSITION (BLOCKER #2), not "ammunition" (BLOCKER #1)
+//   - "outer-wrapper aggregate user claim" label (BLOCKER #5)
+//   - Per-share value computation as separate line (BLOCKER #5)
+//   - Withdraw capacity line from Phase 2 capacity reads (BLOCKER #4)
+//   - Warning-driven render: COMPACT when no warn/error, VERBOSE otherwise (BLOCKER #6)
+//   - Stakeholder-conditional severity for `pre-onboarding-state` (BLOCKER #11)
 //
-// Returning an empty array (not [""]) means callers can `lines.push(...
-// formatChainTruthFooter(state))` without inserting blank lines into output.
-// Phase 2 will return non-empty arrays driven by warning severity.
-export function formatChainTruthFooter(_state: MetaVaultChainState): string[] {
-  return [];
+// Type signature: extended with `opts` (verbose flag + viewMode) while keeping
+// the original `(state)` arity working via default opts. The Phase 1 stub
+// signature was `(state) => string[]`; Phase 2 keeps that exact call working
+// while admitting the new options.
+//
+// Read the rendered output back as Gami Labs reading it about themselves: does
+// it sound like (a) honest transparency they'd embrace, or (b) hostile audit
+// they'd resent? Aim (a). The Curator reviewer's reframe IS the discipline.
+
+/**
+ * Stakeholder lens — affects severity routing for ambiguous warnings.
+ *
+ * `curator` is the operator: pre-onboarding state is expected (info).
+ * `lp` is the depositor-facing render: pre-onboarding state for a HIDDEN vault
+ * exposes the first-depositor inflation-attack risk and warrants warn.
+ */
+export type ChainTruthViewMode = "curator" | "lp";
+
+/**
+ * Optional API context — when passed, enables the `── API ↔ chain ──` block,
+ * the per-share value line, and the price-feed-zero detection. When absent,
+ * the formatter renders chain-truth lines only (no API comparisons).
+ *
+ * `underlyingPriceUsd === 0` triggers a STAK-class warning addendum (the scar
+ * this engine was built around — see SOUL.md).
+ *
+ * `underlyingSymbol` lets the caller pass the truth-symbol from the API
+ * (e.g. "WETH", "USDC") for rendering. Without it, the formatter falls back
+ * to the secondary's symbol, then "tokens" — neither is wrong, but symbol
+ * disambiguation matters for cross-source reconciliation.
+ */
+export interface ChainTruthApiContext {
+  tvlUnderlying?: number;
+  underlyingPriceUsd?: number;
+  underlyingSymbol?: string;
+}
+
+export interface ChainTruthFooterOpts {
+  /** Force verbose render even when warnings are clean. Default: false. */
+  verbose?: boolean;
+  /** Stakeholder lens. Default: "curator". */
+  viewMode?: ChainTruthViewMode;
+  /** API context for cross-source reconciliation. Default: undefined. */
+  api?: ChainTruthApiContext;
+}
+
+/** Format an integer + N decimals from a bigint, with thousands separators. */
+function formatBigIntAsDecimal(
+  value: bigint | null,
+  decimals: number,
+  fractionDigits: number,
+): string {
+  if (value === null || decimals == null) return "?";
+  const d = 10n ** BigInt(decimals);
+  const whole = value / d;
+  const frac = value % d;
+  // Render with the requested fractionDigits.
+  const fracStr = (Number(frac) / Number(d))
+    .toFixed(fractionDigits)
+    .slice(2); // drop "0."
+  const wholeFmt = whole.toLocaleString("en-US");
+  return `${wholeFmt}.${fracStr}`;
+}
+
+/** Approximate share fraction as a percent string with 2 decimals. */
+function pctOfShares(numer: bigint | null, denom: bigint | null): string {
+  if (numer == null || denom == null || denom === 0n) return "?";
+  // (numer * 10000) / denom → integer basis points
+  const bps = Number((numer * 10000n) / denom);
+  return (bps / 100).toFixed(2) + "%";
+}
+
+/** Map severity to display severity using the stakeholder lens.
+ *
+ *  Spec §BLOCKER-11 (D-LP1): the engine emits `pre-onboarding-state` with
+ *  severity `info` because that's correct for the curator (expected state for
+ *  HIDDEN vaults). For an LP encountering the same state, the
+ *  first-depositor inflation-attack risk is real; we promote to `warn`.
+ *
+ *  Open emergence: the same routing pattern can apply to other warning codes
+ *  if a future stakeholder asymmetry surfaces. Add the case here, not in the
+ *  engine. Dissolution: if the stakeholder split stops carrying signal, this
+ *  function reduces to identity. */
+function effectiveSeverity(
+  w: ChainReadWarning,
+  view: ChainTruthViewMode,
+): "info" | "warn" | "error" {
+  if (view === "lp" && w.code === "pre-onboarding-state") return "warn";
+  return w.severity;
+}
+
+export function formatChainTruthFooter(
+  state: MetaVaultChainState,
+  opts: ChainTruthFooterOpts = {},
+): string[] {
+  const view: ChainTruthViewMode = opts.viewMode ?? "curator";
+
+  // Apply stakeholder-conditional severity once so render decisions and
+  // the warning section render from the same reading.
+  const viewedWarnings = state.warnings.map((w) => ({
+    raw: w,
+    severity: effectiveSeverity(w, view),
+  }));
+  const hasActionable = viewedWarnings.some(
+    (w) => w.severity === "warn" || w.severity === "error",
+  );
+  // STAK-class signal lives in the API-context (price feed went to zero), not
+  // in the engine's warnings array. Without this, a clean-engine vault with a
+  // broken price oracle silently renders "all checks pass" — exactly the scar
+  // SOUL.md teaches against (Phase 1 Diverger's protected finding).
+  // Dissolution: when API + chain are unified into a single source upstream.
+  const stakClassSignal = opts.api?.underlyingPriceUsd === 0;
+  const verbose = opts.verbose === true || hasActionable || stakClassSignal;
+
+  const decimals = state.infraVault?.decimals ?? state.secondaryVault?.decimals ?? 18;
+
+  // Symbol resolution priority:
+  //   1. Caller-supplied api.underlyingSymbol (the truth-symbol from the API)
+  //   2. secondaryVault.symbol or infraVault.symbol (chain-decoded — may be
+  //      vault-share name like "gamisUSDC", not underlying like "USDC")
+  //   3. "tokens" (generic — only fires when nothing else is available)
+  // Long names (>12 chars) collapse to "tokens" because the chain symbol is
+  // probably the vault's share-name, not the underlying.
+  const chainSymbol = state.infraVault?.symbol ?? state.secondaryVault?.symbol ?? null;
+  const tokenSymbol =
+    opts.api?.underlyingSymbol ||
+    (chainSymbol && chainSymbol.length <= 12 ? chainSymbol : "tokens");
+
+  // ---- COMPACT MODE ----
+  // Default for clean reads: a single confirmation line. The Curator reviewer
+  // reframe (BLOCKER #6): don't fire noise on every healthy vault render.
+  if (!verbose) {
+    const block = state.block ? state.block.toLocaleString("en-US") : "?";
+    const rpc = state.rpcUsed || "(uncached read failed)";
+    const infoCount = viewedWarnings.filter((w) => w.severity === "info").length;
+    const tail = infoCount > 0 ? ` [${infoCount} informational]` : "";
+    return [`Chain truth (block ${block}, RPC ${rpc}): all checks pass.${tail}`];
+  }
+
+  // ---- VERBOSE MODE ----
+  const lines: string[] = [];
+  const block = state.block ? state.block.toLocaleString("en-US") : "?";
+  lines.push(`--- Chain Truth (block ${block}, via ${state.rpcUsed || "(no RPC)"}) ---`);
+
+  // Safe block.
+  if (state.safe.bytecodePresent) {
+    const safeLabel = state.safe.singletonKnown ?? (state.safe.isSafeProxy ? "safe-proxy" : "non-proxy");
+    const balStr =
+      state.safe.assetBalance != null
+        ? `${formatBigIntAsDecimal(state.safe.assetBalance, decimals, 6)} ${tokenSymbol}`
+        : "(balance unverifiable)";
+    lines.push(`  Safe (${safeLabel}): ${balStr}`);
+  } else {
+    lines.push(`  Safe: NO BYTECODE at ${state.safe.address}`);
+  }
+
+  // infraVault block — load-bearing primary.
+  if (state.infraVault) {
+    const iv = state.infraVault;
+    const taStr =
+      iv.totalAssets != null
+        ? formatBigIntAsDecimal(iv.totalAssets, decimals, 6)
+        : "?";
+    const tsStr =
+      iv.totalSupply != null
+        ? formatBigIntAsDecimal(iv.totalSupply, decimals, 6) + " shares"
+        : "? shares";
+    lines.push(
+      `  infraVault [PRIMARY]: totalAssets=${taStr} ${tokenSymbol}, totalSupply=${tsStr}`,
+    );
+  } else {
+    lines.push(`  infraVault [PRIMARY]: (not read — input had no infraVault address)`);
+  }
+
+  // secondaryVault block — wrapper.
+  if (state.secondaryVault) {
+    const sv = state.secondaryVault;
+    const taStr =
+      sv.totalAssets != null
+        ? formatBigIntAsDecimal(sv.totalAssets, decimals, 6)
+        : "?";
+    // BLOCKER #5 reframe: "outer-wrapper aggregate user claim" — describes
+    // what the number IS (an aggregate, scoped to the outer wrapper, what
+    // users have claim to via the wrapped accounting), not "user-entitlement"
+    // which suggested per-user.
+    lines.push(
+      `  secondaryVault [WRAPPER]: totalAssets=${taStr} ${tokenSymbol} (outer-wrapper aggregate user claim; NOT comparable to API TVL)`,
+    );
+
+    // BLOCKER #5 — per-share value (separate line).
+    //
+    // We compute it two ways for cross-check, but only show one (the
+    // wrapper-accounting one), with the previewRedeem cross-check as a
+    // suffix when both diverge by >1bp. Edge case: totalSupply=0n means the
+    // wrapper hasn't been seeded; per-share is undefined. Skip the line.
+    if (sv.totalSupply != null && sv.totalSupply > 0n && sv.totalAssets != null) {
+      const perShareWei = (sv.totalAssets * 10n ** BigInt(decimals)) / sv.totalSupply;
+      const perShareStr = formatBigIntAsDecimal(perShareWei, decimals, 6);
+      let crossCheck = "";
+      if (sv.previewRedeemOneShare != null) {
+        // previewRedeemOneShare was called with 1*10^decimals as input, so
+        // the result is "underlying per 1 share" in the same decimals.
+        const diff =
+          sv.previewRedeemOneShare > perShareWei
+            ? sv.previewRedeemOneShare - perShareWei
+            : perShareWei - sv.previewRedeemOneShare;
+        // 1bp of perShareWei = perShareWei / 10000
+        if (perShareWei > 0n && diff * 10000n > perShareWei) {
+          const previewStr = formatBigIntAsDecimal(sv.previewRedeemOneShare, decimals, 6);
+          crossCheck = ` (previewRedeem disagrees: ${previewStr})`;
+        }
+      }
+      lines.push(`  Per-share: ${perShareStr} ${tokenSymbol} (wrapped accounting)${crossCheck}`);
+    }
+
+    // BLOCKER #4 — withdraw capacity (vault-side).
+    //
+    // This is what `vault.maxWithdraw(vault)` returned — capacity from the
+    // contract's perspective at this moment. For implementations that revert
+    // when the holder has zero shares, the read returns null and we omit the
+    // line. Zero is also omitted: the vault holds no shares of itself by
+    // construction, so a 0n response is the expected vacuous answer rather
+    // than meaningful capacity — rendering "0 USDC" misleads a reader into
+    // thinking withdrawals are blocked.
+    // Dissolution: when a curator-EOA holder argument is plumbed through
+    // ChainReadInput, this becomes per-user capacity and 0 IS meaningful.
+    if (sv.maxWithdrawSelf != null && sv.maxWithdrawSelf > 0n) {
+      const cap = formatBigIntAsDecimal(sv.maxWithdrawSelf, decimals, 6);
+      lines.push(`  Withdraw capacity (vault-side): ${cap} ${tokenSymbol}`);
+    }
+
+    // Wrapper signature.
+    if (state.infraVault?.totalSupply != null && sv.infraVaultShareBalance != null) {
+      const pct = pctOfShares(sv.infraVaultShareBalance, state.infraVault.totalSupply);
+      lines.push(`  Wrapper signature: secondaryVault holds ${pct} of infraVault shares`);
+    }
+  }
+
+  // ── API ↔ chain ──
+  if (opts.api && state.infraVault?.totalAssets != null) {
+    const apiTvl = opts.api.tvlUnderlying;
+    const chainPrimaryNum = Number(state.infraVault.totalAssets) / 10 ** decimals;
+    lines.push(`  ── API ↔ chain ──`);
+    if (apiTvl != null) {
+      const delta = Math.abs(chainPrimaryNum - apiTvl);
+      const pct =
+        apiTvl > 0 ? (delta / apiTvl) * 100 : delta > 0 ? Infinity : 0;
+      const pctStr = isFinite(pct) ? pct.toFixed(3) + "%" : "n/a";
+      lines.push(
+        `  api.tvl.underlying:   ${apiTvl.toLocaleString("en-US", { maximumFractionDigits: 6 })} ${tokenSymbol}`,
+      );
+      lines.push(
+        `  chain primary:        ${chainPrimaryNum.toLocaleString("en-US", { maximumFractionDigits: 6 })} ${tokenSymbol}  →  divergence ${pctStr}`,
+      );
+    } else {
+      lines.push(`  api.tvl.underlying:   (not provided)`);
+      lines.push(
+        `  chain primary:        ${chainPrimaryNum.toLocaleString("en-US", { maximumFractionDigits: 6 })} ${tokenSymbol}`,
+      );
+    }
+
+    // BLOCKER #2 — Capital scope decomposition (the round-3 reframe).
+    //
+    // When secondaryVault has supply, we can split the deployed capital into
+    // "via outer wrapper" (user deposits, what the Spectra app surfaces) and
+    // "via direct paths" (curator self-seed, cross-chain transit, infra-
+    // direct). This is honest transparency a curator would embrace, NOT
+    // ammunition framing — describing the topology, not pitching the gap.
+    const sv = state.secondaryVault;
+    if (sv?.totalAssets != null && sv.totalAssets > 0n) {
+      const wrapperNum = Number(sv.totalAssets) / 10 ** decimals;
+      const directPathsNum = Math.max(0, chainPrimaryNum - wrapperNum);
+      // Only render the decomposition when the gap is non-trivial (>0.01% of
+      // the total). For pre-onboarding vaults the wrapper is zero and the
+      // total IS the direct path — no decomposition to show.
+      if (directPathsNum > chainPrimaryNum * 0.0001) {
+        lines.push(
+          `  Capital scope: ${chainPrimaryNum.toLocaleString("en-US", { maximumFractionDigits: 2 })} ${tokenSymbol} deployed in infraVault total`,
+        );
+        lines.push(
+          `    via outer wrapper (user deposits): ${wrapperNum.toLocaleString("en-US", { maximumFractionDigits: 2 })} ${tokenSymbol}`,
+        );
+        lines.push(
+          `    via direct paths:                  ${directPathsNum.toLocaleString("en-US", { maximumFractionDigits: 2 })} ${tokenSymbol}  [curator self-seed, cross-chain transit, infraVault-direct]`,
+        );
+      }
+    }
+  }
+
+  // STAK-class price-feed-zero — surfaced inline because it's load-bearing for
+  // any USD-denominated reasoning the caller might do downstream.
+  //
+  // The Diverger's protected finding (engineering-brief landmine #2): if the
+  // upstream API price feed has gone to zero, the caller MUST know — silently
+  // computing $0 USD on a healthy vault is the STAK scar. We surface it even
+  // when the engine itself didn't flag it (the engine doesn't see the API).
+  if (opts.api && opts.api.underlyingPriceUsd === 0) {
+    lines.push(`  ── STAK-class signal ──`);
+    lines.push(
+      `  [warn] price-feed-zero: api.underlying.price.usd === 0 — DeFiLlama or Spectra price oracle stale.`,
+    );
+    lines.push(
+      `    Next probe: chain-side TVL above is trustworthy; tvl.usd is broken until the feed recovers.`,
+    );
+  }
+
+  // ── Warnings ──
+  const hasTvlDivergence = viewedWarnings.some(
+    (w) => w.raw.code === "tvl-divergence-large" || w.raw.code === "tvl-divergence-small",
+  );
+  const renderableWarnings = viewedWarnings.filter((w) => {
+    // `secondaryvault-reasoning-prohibited` is a structural reminder that the
+    // WRAPPER label already carries on the secondaryVault line. Default: drop
+    // it when other actionable warnings would already make the footer noisy.
+    // Exception: when TVL divergence fires, the prohibition is precisely the
+    // anchor that prevents misinterpreting the gap as a primary-aggregate
+    // mismatch. Keep both — the reminder pairs with the divergence finding.
+    if (w.raw.code === "secondaryvault-reasoning-prohibited") {
+      return !hasActionable || hasTvlDivergence;
+    }
+    return true;
+  });
+  if (renderableWarnings.length > 0) {
+    lines.push(`  ── Warnings (${renderableWarnings.length}) ──`);
+    for (const w of renderableWarnings) {
+      lines.push(`  [${w.severity}] ${w.raw.code}: ${w.raw.detail}`);
+      lines.push(`    Next probe: ${w.raw.nextProbe}`);
+    }
+  }
+
+  return lines;
 }

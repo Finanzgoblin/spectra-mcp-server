@@ -2478,3 +2478,410 @@ describe("formatPendleMarketSummary", () => {
     assert.ok(result.includes("SY"), "Should include SY in reserves");
   });
 });
+
+// =============================================================================
+// Theme A Phase 2 — formatChainTruthFooter (spec §7.1)
+// =============================================================================
+//
+// Tests cover:
+//   - Compact mode (clean state) on both reference vaults
+//   - Verbose mode (warn/error firing or explicit verbose flag)
+//   - Stakeholder-conditional severity (curator vs lp viewMode)
+//   - Per-share value math edge cases (totalSupply = 0n)
+//   - Capital scope decomposition (when wrapper has supply and gap is non-trivial)
+//   - Withdraw capacity line presence
+//   - STAK-class price-feed-zero rendering
+//
+// The reference state objects below mirror what the engine would produce
+// against the fixtures at tests/fixtures/{csfusionmvweth,gamisusdc}-*.json.
+
+import { formatChainTruthFooter } from "./formatters.js";
+import type { MetaVaultChainState, ChainReadWarning, SafeState, InfraVaultState, SecondaryVaultState } from "./types.js";
+
+function makeCleanState(overrides: Partial<MetaVaultChainState> = {}): MetaVaultChainState {
+  return {
+    chain: "base",
+    block: 45_197_827,
+    rpcUsed: "https://base-rpc.publicnode.com",
+    fetchedAt: 1_700_000_000_000,
+    safe: {
+      address: "0x5e93e1193a5e297cba0856e9b3f22b6e05429b9a",
+      bytecodePresent: true,
+      bytecodeSize: 171,
+      isSafeProxy: true,
+      singleton: "0xfb1bffc9d739b8d520daf37df666da4c687191ea",
+      singletonKnown: "safe-v1.3.0-l2",
+      assetBalance: 32_743_210_000n, // 32,743.21 USDC
+    } satisfies SafeState,
+    infraVault: {
+      address: "0xc62734aecb095d2cb74b3ccebfdf973ec23fbaa1",
+      bytecodePresent: true,
+      bytecodeSize: 1129,
+      totalAssets: 5_125_392_650_000n, // 5,125,392.65 USDC
+      totalSupply: 5_018_927_000_000n, // 5,018,927 shares (6 decimals)
+      asset: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      decimals: 6,
+      name: "gamisUSDC infra",
+      symbol: "gamisUSDC",
+      owner: "0x5e93e1193a5e297cba0856e9b3f22b6e05429b9a",
+      paused: false,
+      selfAssetBalance: 0n,
+    } satisfies InfraVaultState,
+    secondaryVault: {
+      address: "0x776f95321a0285f8bcde149e3264d16dc08da69a",
+      bytecodePresent: true,
+      bytecodeSize: 1129,
+      totalAssets: 2_963_474_720_000n, // 2,963,474.72 USDC
+      totalSupply: 2_902_571_123_061n, // ~2.9M shares
+      asset: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      decimals: 6,
+      name: "gamisUSDC",
+      symbol: "gamisUSDC",
+      selfAssetBalance: 0n,
+      infraVaultShareBalance: 5_017_223_000_000n, // ~99.97% of infra supply
+      maxWithdrawSelf: 0n,
+      maxRedeemSelf: 0n,
+      previewRedeemOneShare: 1_020_990n, // ~1.020990 USDC per share
+    } satisfies SecondaryVaultState,
+    modifiers: null,
+    remoteModifiers: {},
+    warnings: [
+      {
+        severity: "info",
+        code: "secondaryvault-reasoning-prohibited",
+        detail: "secondaryVault accounting is wrapper-scope; do not directly compare its totalAssets against infraVault or api.tvl.underlying",
+        nextProbe: "OQ-L tracks the residual provenance gap; agents should reason on infraVault.totalAssets only.",
+      } satisfies ChainReadWarning,
+    ],
+    ...overrides,
+  };
+}
+
+function makePreOnboardingState(): MetaVaultChainState {
+  return makeCleanState({
+    chain: "mainnet",
+    block: 24_962_385,
+    rpcUsed: "https://ethereum-rpc.publicnode.com",
+    safe: {
+      address: "0x3b1913e474c37cbcf375e644d1af51589d8e44ea",
+      bytecodePresent: true,
+      bytecodeSize: 171,
+      isSafeProxy: true,
+      singleton: "0x41675c099f32341bf84bfc5382af534df5c7461a",
+      singletonKnown: "safe-v1.4.1",
+      assetBalance: 3_000_000_010_000_000_000n, // ~3.000000010 WETH
+    },
+    infraVault: {
+      address: "0x2151c851c1808c6609f24535dd77d8216f17118f",
+      bytecodePresent: true,
+      bytecodeSize: 1129,
+      totalAssets: 3_006_398_000_000_000_000n, // 3.006398 WETH
+      totalSupply: 3_000_000_000_000_000_000n,
+      asset: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+      decimals: 18,
+      name: "CSfusionMVWETH infra",
+      symbol: "CSfusionMVWETH",
+      owner: "0x3b1913e474c37cbcf375e644d1af51589d8e44ea",
+      paused: false,
+      selfAssetBalance: 0n,
+    },
+    secondaryVault: {
+      address: "0xefda9a1d6b5f4a0279c05b616924776c4d9dc13d",
+      bytecodePresent: true,
+      bytecodeSize: 1129,
+      totalAssets: 0n,
+      totalSupply: 0n, // pre-onboarding
+      asset: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+      decimals: 18,
+      name: "CSfusionMVWETH",
+      symbol: "CSfusionMVWETH",
+      selfAssetBalance: 0n,
+      infraVaultShareBalance: 0n,
+      maxWithdrawSelf: 0n,
+      maxRedeemSelf: 0n,
+      previewRedeemOneShare: null,
+    },
+    warnings: [
+      {
+        severity: "info",
+        code: "pre-onboarding-state",
+        detail: "secondaryVault has 0 supply; infraVault populated. Vault is in pre-onboarding state.",
+        nextProbe: "expected for HIDDEN vaults; cross-check api.status field — if status is VISIBLE, investigate why outer wrapper has no shares",
+      },
+    ],
+  });
+}
+
+describe("formatChainTruthFooter — compact mode", () => {
+  it("returns single-line summary on clean info-only state (curator view)", () => {
+    const state = makeCleanState();
+    const lines = formatChainTruthFooter(state, { viewMode: "curator" });
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /Chain truth \(block 45,?197,?827, RPC https/);
+    assert.match(lines[0], /all checks pass/);
+    // 1 informational notice from secondaryvault-reasoning-prohibited.
+    assert.match(lines[0], /\[1 informational\]/);
+  });
+
+  it("does not include 'ammunition' or 'consulting' wording (round-3 BLOCKER #1, 5-lens convergence)", () => {
+    const state = makeCleanState();
+    const lines = formatChainTruthFooter(state, { viewMode: "curator", verbose: true, api: { tvlUnderlying: 5_125_544.79, underlyingPriceUsd: 1 } });
+    const joined = lines.join("\n");
+    assert.equal(joined.toLowerCase().includes("ammunition"), false, "ammunition should not appear");
+    assert.equal(joined.toLowerCase().includes("consulting"), false, "consulting should not appear");
+  });
+
+  it("does not include 'plasma vault' / 'ipor fusion' wording (BLOCKER #3 + handover note)", () => {
+    const state = makeCleanState();
+    const lines = formatChainTruthFooter(state, { viewMode: "curator", verbose: true });
+    const joined = lines.join("\n").toLowerCase();
+    assert.equal(joined.includes("plasma"), false);
+    assert.equal(joined.includes("ipor fusion"), false);
+  });
+});
+
+describe("formatChainTruthFooter — verbose mode (warn/error triggers)", () => {
+  it("renders verbose output when a warn-level warning fires", () => {
+    const state = makeCleanState({
+      warnings: [
+        {
+          severity: "warn",
+          code: "tvl-divergence-large",
+          detail: "chain TVL diverges from API by 7.2%",
+          nextProbe: "check externalPositions for unreconciled position",
+        },
+      ],
+    });
+    const lines = formatChainTruthFooter(state, { viewMode: "curator" });
+    assert.ok(lines.length > 1, "verbose should produce multiple lines");
+    assert.ok(lines.some((l) => l.includes("--- Chain Truth")), "header line missing");
+    assert.ok(lines.some((l) => l.includes("[warn] tvl-divergence-large")));
+  });
+
+  it("renders verbose output when explicitly requested even with no warnings", () => {
+    const state = makeCleanState({ warnings: [] });
+    const lines = formatChainTruthFooter(state, { viewMode: "curator", verbose: true });
+    assert.ok(lines.some((l) => l.includes("--- Chain Truth")), "header line missing");
+    assert.ok(lines.some((l) => l.includes("Safe (safe-v1.3.0-l2):")));
+    assert.ok(lines.some((l) => l.includes("infraVault [PRIMARY]:")));
+    assert.ok(lines.some((l) => l.includes("secondaryVault [WRAPPER]:")));
+  });
+
+  it("uses 'outer-wrapper aggregate user claim' label (BLOCKER #5)", () => {
+    const state = makeCleanState({ warnings: [] });
+    const lines = formatChainTruthFooter(state, { viewMode: "curator", verbose: true });
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("outer-wrapper aggregate user claim"));
+    // The old label "user-entitlement" should NOT appear in user-facing output.
+    assert.equal(joined.includes("user-entitlement"), false);
+  });
+
+  it("renders per-share value as separate line (BLOCKER #5)", () => {
+    const state = makeCleanState({ warnings: [] });
+    const lines = formatChainTruthFooter(state, { viewMode: "curator", verbose: true });
+    assert.ok(lines.some((l) => l.includes("Per-share:")));
+    assert.ok(lines.some((l) => l.includes("(wrapped accounting)")));
+  });
+
+  it("skips per-share line when totalSupply is 0n (divide-by-zero edge case)", () => {
+    const state = makePreOnboardingState();
+    const lines = formatChainTruthFooter(state, { viewMode: "curator", verbose: true });
+    // Pre-onboarding has totalSupply=0n; no per-share line should render.
+    assert.equal(lines.some((l) => l.includes("Per-share:")), false);
+  });
+
+  it("renders withdraw capacity line when maxWithdrawSelf is non-null (BLOCKER #4)", () => {
+    const state = makeCleanState({
+      secondaryVault: {
+        ...makeCleanState().secondaryVault!,
+        maxWithdrawSelf: 1_500_000_000_000n, // 1.5M USDC
+      },
+      warnings: [],
+    });
+    const lines = formatChainTruthFooter(state, { viewMode: "curator", verbose: true });
+    assert.ok(lines.some((l) => l.includes("Withdraw capacity (vault-side):")));
+  });
+
+  it("omits withdraw capacity line when maxWithdrawSelf is null (read reverted)", () => {
+    const state = makeCleanState({
+      secondaryVault: {
+        ...makeCleanState().secondaryVault!,
+        maxWithdrawSelf: null,
+      },
+      warnings: [],
+    });
+    const lines = formatChainTruthFooter(state, { viewMode: "curator", verbose: true });
+    assert.equal(lines.some((l) => l.includes("Withdraw capacity")), false);
+  });
+
+  it("renders capital scope decomposition (BLOCKER #2 — round-3 reframe)", () => {
+    const state = makeCleanState({ warnings: [] });
+    const lines = formatChainTruthFooter(state, {
+      viewMode: "curator",
+      verbose: true,
+      api: { tvlUnderlying: 5_125_544.79, underlyingPriceUsd: 1 },
+    });
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("Capital scope:"), "decomposition heading missing");
+    assert.ok(joined.includes("via outer wrapper (user deposits):"));
+    assert.ok(joined.includes("via direct paths:"));
+    assert.ok(joined.includes("[curator self-seed, cross-chain transit, infraVault-direct]"));
+  });
+
+  it("renders STAK-class signal when api.underlyingPriceUsd === 0", () => {
+    const state = makeCleanState({ warnings: [] });
+    const lines = formatChainTruthFooter(state, {
+      viewMode: "curator",
+      verbose: true,
+      api: { tvlUnderlying: 5_125_544.79, underlyingPriceUsd: 0 },
+    });
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("STAK-class signal"));
+    assert.ok(joined.includes("price-feed-zero"));
+    // The chain-side TVL line should also still render (tvl.usd is broken,
+    // tvl.underlying is fine).
+    assert.ok(joined.includes("chain-side TVL above is trustworthy"));
+  });
+
+  // Phase-2 audit: 2-lens convergence (Diverger + DeFi-analyst inversion test).
+  // STAK is an API-context signal, not an engine warning — without this,
+  // production callers (no explicit verbose:true) would see "all checks pass"
+  // when the price feed is broken. The Phase 1 Diverger named exactly this.
+  it("STAK alone (no engine warns) triggers verbose render WITHOUT explicit verbose:true", () => {
+    const state = makeCleanState({ warnings: [] });
+    const lines = formatChainTruthFooter(state, {
+      viewMode: "curator",
+      // NOTE: no verbose:true — production caller path
+      api: { tvlUnderlying: 5_125_544.79, underlyingPriceUsd: 0 },
+    });
+    assert.ok(lines.length > 1, "STAK alone should NOT collapse to compact mode");
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("STAK-class signal"), "STAK warning section must render");
+    assert.ok(joined.includes("price-feed-zero"));
+  });
+
+  // Phase-2 audit: Sonnet semantic Bug 1.
+  // maxWithdraw(vault) returns 0 because the vault holds no shares of itself.
+  // Rendering "0 USDC" misleads readers into thinking withdrawals are blocked.
+  it("omits withdraw capacity line when maxWithdrawSelf is 0n (vacuous answer)", () => {
+    const state = makeCleanState({
+      secondaryVault: {
+        ...makeCleanState().secondaryVault!,
+        maxWithdrawSelf: 0n,
+      },
+      warnings: [],
+    });
+    const lines = formatChainTruthFooter(state, { viewMode: "curator", verbose: true });
+    assert.equal(
+      lines.some((l) => l.includes("Withdraw capacity")),
+      false,
+      "0n must be treated like null — vacuous, not informative",
+    );
+  });
+
+  // Phase-2 audit: Diverger sensing-gap #7.
+  // The prohibition reminder is most-needed when divergence is being
+  // investigated — that's exactly when an agent might confuse wrapper-scope
+  // accounting with primary-aggregate. Keep both warnings together.
+  it("keeps secondaryvault-reasoning-prohibited when paired with tvl-divergence-large", () => {
+    const state = makeCleanState({
+      warnings: [
+        {
+          severity: "warn",
+          code: "tvl-divergence-large",
+          detail: "API ↔ chain divergence at 7.3% on infraVault.totalAssets",
+          nextProbe: "external position not yet reconciled by indexer",
+        },
+        {
+          severity: "info",
+          code: "secondaryvault-reasoning-prohibited",
+          detail: "secondaryVault accounting is wrapper-scope",
+          nextProbe: "OQ-L tracks the residual provenance gap",
+        },
+      ],
+    });
+    const lines = formatChainTruthFooter(state, { viewMode: "curator" });
+    const joined = lines.join("\n");
+    assert.ok(joined.includes("tvl-divergence-large"), "divergence warning must render");
+    assert.ok(
+      joined.includes("secondaryvault-reasoning-prohibited"),
+      "reminder must NOT be suppressed when divergence is firing — anchors interpretation",
+    );
+  });
+});
+
+describe("formatChainTruthFooter — stakeholder-conditional severity (BLOCKER #11)", () => {
+  it("for curator view: pre-onboarding-state stays info — render is COMPACT", () => {
+    const state = makePreOnboardingState();
+    const lines = formatChainTruthFooter(state, { viewMode: "curator" });
+    // info-only → compact, single line.
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /all checks pass/);
+  });
+
+  it("for lp view: pre-onboarding-state promoted to warn — render is VERBOSE", () => {
+    const state = makePreOnboardingState();
+    const lines = formatChainTruthFooter(state, { viewMode: "lp" });
+    // warn → verbose, multi-line, with the warning marked [warn].
+    assert.ok(lines.length > 1);
+    assert.ok(lines.some((l) => l.includes("[warn] pre-onboarding-state")));
+  });
+});
+
+describe("formatChainTruthFooter — type-signature backward-compat", () => {
+  it("the (state) arity from Phase 1 still works (no opts)", () => {
+    const state = makeCleanState();
+    const lines = formatChainTruthFooter(state);
+    // Default viewMode is "curator"; default opts collapse info-only to compact.
+    assert.equal(lines.length, 1);
+  });
+});
+
+// =============================================================================
+// Theme A Phase 2 — chain-truth cache (spec BLOCKER #7 / OQ-E promoted)
+// =============================================================================
+
+import {
+  readMetaVaultChainStateCached,
+  _clearChainTruthCacheForTest,
+  _chainTruthCacheSizeForTest,
+} from "./chain-reads.js";
+
+describe("readMetaVaultChainStateCached — 5-min curator-tempo cache", () => {
+  it("starts empty after _clearChainTruthCacheForTest()", () => {
+    _clearChainTruthCacheForTest();
+    assert.equal(_chainTruthCacheSizeForTest(), 0);
+  });
+
+  // Note: full cache hit/miss verification requires either mocking the engine
+  // or running against live RPCs. We verify the cache mechanism via the
+  // observable effect: a forceRefresh:false call after a successful cached
+  // read should not increase cache size beyond 1 for the same key.
+  //
+  // The integration test below (gated by INTEGRATION_TEST=1) exercises the
+  // full path against live RPCs.
+
+  it("integration: second call hits cache (no second RPC blast)", { skip: process.env.INTEGRATION_TEST !== "1" }, async () => {
+    _clearChainTruthCacheForTest();
+    const input = {
+      address: "0x5e93e1193a5e297cba0856e9b3f22b6e05429b9a",
+      vault: "0x776f95321a0285f8bcde149e3264d16dc08da69a",
+      infraVault: "0xc62734aecb095d2cb74b3ccebfdf973ec23fbaa1",
+      underlying: { address: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", decimals: 6, symbol: "USDC" },
+    };
+    const t0 = Date.now();
+    const first = await readMetaVaultChainStateCached("base", input, { forceRefresh: false });
+    const t1 = Date.now();
+    const second = await readMetaVaultChainStateCached("base", input, { forceRefresh: false });
+    const t2 = Date.now();
+
+    // Cached read should be near-instant (< 50ms is generous).
+    assert.ok(t2 - t1 < 50, `expected cached read <50ms, got ${t2 - t1}ms`);
+    assert.ok(t1 - t0 > t2 - t1, "first call should take longer than second");
+
+    // Same state object reference (or at least same block).
+    assert.equal(first.block, second.block);
+    assert.equal(first.rpcUsed, second.rpcUsed);
+    assert.equal(_chainTruthCacheSizeForTest(), 1);
+  });
+});

@@ -52,10 +52,12 @@ import {
   formatMetavaultStrategy,
   formatMetavaultList,
   formatCuratorDashboard,
+  formatChainTruthFooter,
 } from "../formatters.js";
 import type { CuratorDashboardOpts } from "../formatters.js";
 import { generateActionItems } from "../protocols/engine.js";
 import type { TypedExternalPosition } from "../protocols/engine.js";
+import { readMetaVaultChainStateCached, projectChainReadInput } from "../chain-reads.js";
 
 function computeLoopRows(
   baseApy: number,
@@ -1241,6 +1243,35 @@ Use spectra_get_address_activity on the curator's EOA for cross-pool curator act
           } else {
             text += "\n" + perfText;
           }
+        }
+
+        // ── Chain truth footer (Theme A Phase 2) ──
+        // Wrapped in try/catch — chain-truth must NEVER block the dashboard
+        // render. Per PR0 + the graceful-degradation invariant: the existing
+        // dashboard is the load-bearing artifact; chain truth is additive
+        // confirmation. If the engine, the cache, or the formatter throws,
+        // log to stderr and ship the dashboard without the footer.
+        try {
+          const chainInput = projectChainReadInput(mv);
+          const chainState = await readMetaVaultChainStateCached(chain, chainInput, {
+            forceRefresh: false,
+          });
+          const footerLines = formatChainTruthFooter(chainState, {
+            viewMode: "curator",
+            api: {
+              tvlUnderlying: mv.tvl?.underlying,
+              underlyingPriceUsd,
+              underlyingSymbol: mv.underlying?.symbol,
+            },
+          });
+          if (footerLines.length > 0) {
+            text += "\n\n" + footerLines.join("\n");
+          }
+        } catch (footerErr) {
+          // Failures NOT silent — but the dashboard ships either way.
+          console.error(
+            `[spectra_get_curator_dashboard] chain-truth footer suppressed: ${(footerErr as Error)?.message ?? footerErr}`,
+          );
         }
 
         return { content: [{ type: "text" as const, text }] };
