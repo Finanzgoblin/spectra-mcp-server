@@ -43,5 +43,21 @@ export type {
   TypedExternalPosition,
   StressClassification,
   DriftWarning,
+  ExternalChainTruthMap,
 } from "./engine.js";
 export { getMeta } from "./registry.js";
+export {
+  verifyAvantPosition,
+  formatAvantVerification,
+  decodeBurnRequest,
+  AVANT_REQUESTS_MANAGER_AVAX,
+  AVANT_SELECTORS,
+  AVANT_REQUEST_STATE,
+  AVANT_VERIFY_TIMEOUT_MS,
+} from "./avant-verifier.js";
+export type {
+  AvantVerification,
+  AvantVerificationOk,
+  AvantVerificationFailed,
+  AvantRequestState,
+} from "./avant-verifier.js";

@@ -23,6 +23,10 @@ import type {
   SettlementWindow,
 } from "./types.js";
 import { formatUsd, formatPct, formatDate } from "../primitives.js";
+import {
+  type AvantVerification,
+  formatAvantVerification,
+} from "./avant-verifier.js";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Drift visibility — read once at module load. Silent default; tests/CI set loud.
@@ -50,6 +54,23 @@ export interface StressClassification {
   settlementDaysTypical: number | "unknown";
   stressExclude: boolean;
   windowLabelRendered: string;
+}
+
+/**
+ * Per-position chain-truth verification result map (Theme E first slice).
+ *
+ * The engine itself never makes RPC calls — verifications are computed at
+ * the tool boundary (where flags + concurrency control + per-call timeouts
+ * live) and passed in pre-resolved. This keeps the engine purely synchronous
+ * and unit-testable without RPC mocking, mirroring the Phase-2 chain-truth
+ * footer pattern.
+ *
+ * Map keys: `<protocol>:<id>` lowercased. Today only avant uses
+ * `avant:<requestId>`. Pendle externals etc. would extend this with their
+ * own protocol-prefixed keys in subsequent slices.
+ */
+export interface ExternalChainTruthMap {
+  avant?: Map<number, AvantVerification>;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -214,6 +235,7 @@ export function renderExternalPosition(
   tvlUsd: number,
   ctx: RenderContext,
   driftCollector?: DriftCollector,
+  chainTruth?: ExternalChainTruthMap,
 ): string {
   const meta = PROTOCOL_METADATA[ext.protocol] ?? PROTOCOL_METADATA._unknown;
   const isUnknown = meta.name === "_unknown";
@@ -265,7 +287,36 @@ export function renderExternalPosition(
     ? `${meta.label}: ${primary} — ${valueStr}${shareSuffix} | ${context} | settle ${settlement}${freshness}`
     : `${meta.label}: ${primary} — ${valueStr}${shareSuffix} | settle ${settlement}${freshness}`;
 
-  return lead.length > 0 ? `${lead.join(" ")}\n${body}` : body;
+  // Chain-truth augmentation (Theme E first slice). Avant only this slice;
+  // pendle verifier is a separate next-session slice. When the caller
+  // provides a verification result, append it as a separate line under the
+  // body. When no entry is present (off-flag, or per-position fetch
+  // failure that wasn't even attempted), the line is omitted — render
+  // stays identical to the pre-flag default.
+  let chainTruthLine = "";
+  if (chainTruth?.avant && meta.name === "avant") {
+    const requestIdRaw = ext.requestId;
+    const requestId = typeof requestIdRaw === "number" ? requestIdRaw : null;
+    if (requestId != null) {
+      const v = chainTruth.avant.get(requestId);
+      if (v) {
+        const expectedProvider = typeof ext.provider === "string" ? ext.provider : undefined;
+        const burnt = ext.burnt as { balance?: string } | undefined;
+        let expectedAmountWei: bigint | undefined;
+        if (burnt && typeof burnt.balance === "string") {
+          try {
+            expectedAmountWei = BigInt(burnt.balance);
+          } catch {
+            expectedAmountWei = undefined;
+          }
+        }
+        chainTruthLine = "\n    " + formatAvantVerification(v, expectedProvider, expectedAmountWei);
+      }
+    }
+  }
+
+  const fullBody = body + chainTruthLine;
+  return lead.length > 0 ? `${lead.join(" ")}\n${fullBody}` : fullBody;
 }
 
 // ────────────────────────────────────────────────────────────────────────────

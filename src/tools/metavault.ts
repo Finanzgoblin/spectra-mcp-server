@@ -56,7 +56,9 @@ import {
 } from "../formatters.js";
 import type { CuratorDashboardOpts, ChainTruthSummaryResult } from "../formatters.js";
 import { generateActionItems } from "../protocols/engine.js";
-import type { TypedExternalPosition } from "../protocols/engine.js";
+import type { TypedExternalPosition, ExternalChainTruthMap } from "../protocols/engine.js";
+import { verifyAvantPosition } from "../protocols/avant-verifier.js";
+import type { AvantVerification } from "../protocols/avant-verifier.js";
 import { readMetaVaultChainStateCached, projectChainReadInput } from "../chain-reads.js";
 
 function computeLoopRows(
@@ -807,7 +809,14 @@ from share rate deltas — actual yield may differ. Use share price trend to cor
 Requires chain + metavault_address. Use spectra_list_metavaults to discover addresses.
 Use spectra_model_metavault for leverage modeling after reviewing the dashboard.
 Use spectra_get_pool_activity on specific pool addresses for trading pattern analysis.
-Use spectra_get_address_activity on the curator's EOA for cross-pool curator activity.`,
+Use spectra_get_address_activity on the curator's EOA for cross-pool curator activity.
+
+When verify_externals=true (off by default), each avant external position is probed
+on Avalanche's RequestsManager — confirms state (CREATED/COMPLETED/CANCELLED), provider
+attribution, on-chain amount (with PPM tolerance for API rounding), global counter, and
+pause flag. A [chain-truth ✓/⚠/✗] line is appended under each avant position. Per-order
+failures degrade gracefully and never poison sibling positions or block the dashboard.
+Pendle externals are NOT yet probed in this slice.`,
     {
       chain: CHAIN_ENUM
         .describe("The blockchain network where the MetaVault lives."),
@@ -819,8 +828,16 @@ Use spectra_get_address_activity on the curator's EOA for cross-pool curator act
         .max(100)
         .default(10)
         .describe("Curator performance fee as % of vault yield (default 10%). Used for fee revenue estimation."),
+      verify_externals: z.boolean()
+        .optional()
+        .describe(
+          "Verify each externalPosition on its target chain (Theme E). Today probes Avant burn orders against Avalanche RequestsManager — confirms state (CREATED/COMPLETED/CANCELLED), provider attribution, on-chain amount, queue counter, and pause flag. Off by default — adds RPC latency and pressure on each external. Use when an avant external is load-bearing for a curator decision (large redemption-in-flight, stuck claim, suspected stale API). " +
+          "Per-position failures degrade to a [chain-truth ✗] line but never poison sibling positions. " +
+          "Pendle external verification is a separate next-session slice. " +
+          "Dissolution: if telemetry shows zero verify_externals=true invocations within 60 days of ship, the flag is fossil — fold the verifier into list-mode default or remove."
+        ),
     },
-    async ({ chain, metavault_address, curator_fee_pct }) => {
+    async ({ chain, metavault_address, curator_fee_pct, verify_externals }) => {
       try {
         const mvs = await fetchMetavaults(chain);
         const mv = mvs.find(
@@ -1307,6 +1324,72 @@ Use spectra_get_address_activity on the curator's EOA for cross-pool curator act
           estimatedAnnualFeeRevenueUsd = (curator_fee_pct / 100) * (liveApyTotal / 100) * mv.tvl.usd;
         }
 
+        // ── External chain-truth verification (Theme E first slice) ──
+        // Off by default. When verify_externals=true, walks every avant
+        // externalPosition and probes its on-chain RequestsManager state
+        // on Avalanche. Per-position failures become [chain-truth ✗]
+        // lines but never poison sibling positions or block the
+        // dashboard. Concurrency capped at 4 simultaneous reads (avant
+        // burns are sparse — typical vault has 0-5 entries; 4 in flight
+        // is enough headroom without hammering Avalanche public RPC).
+        // The whole block is try/catch — a catastrophic engine failure
+        // never blocks the existing dashboard.
+        let externalChainTruth: ExternalChainTruthMap | undefined;
+        if (verify_externals && mv.externalPositions && mv.externalPositions.length > 0) {
+          try {
+            const avantTruth = new Map<number, AvantVerification>();
+            const avantTargets: Array<{ requestId: number }> = [];
+            for (const ep of mv.externalPositions) {
+              if (ep.protocol === "avant" && typeof (ep as any).requestId === "number") {
+                avantTargets.push({ requestId: (ep as any).requestId });
+              }
+            }
+            if (avantTargets.length > 0) {
+              const CONCURRENCY = 4;
+              let cursor = 0;
+              const runOne = async (): Promise<void> => {
+                while (true) {
+                  const idx = cursor++;
+                  if (idx >= avantTargets.length) return;
+                  const { requestId } = avantTargets[idx];
+                  try {
+                    // verifyAvantPosition is itself bounded by
+                    // AVANT_VERIFY_TIMEOUT_MS (15s, single batched RPC) and
+                    // never throws — it returns {kind:"failed",error}. We
+                    // still wrap in try/catch as defense-in-depth: a future
+                    // refactor that introduces a throw must not poison the
+                    // worker pool.
+                    const v = await verifyAvantPosition(requestId);
+                    avantTruth.set(requestId, v);
+                  } catch (err: any) {
+                    console.error(
+                      `[spectra_get_curator_dashboard] avant-verify uncaught for request=${requestId}: ${err?.message || err}`,
+                    );
+                    avantTruth.set(requestId, {
+                      kind: "failed",
+                      requestId,
+                      error: (err?.message || String(err)).slice(0, 120),
+                    });
+                  }
+                }
+              };
+              const workers = Array.from(
+                { length: Math.min(CONCURRENCY, avantTargets.length) },
+                () => runOne(),
+              );
+              await Promise.allSettled(workers);
+            }
+            if (avantTruth.size > 0) {
+              externalChainTruth = { avant: avantTruth };
+            }
+          } catch (verifyErr) {
+            console.error(
+              `[spectra_get_curator_dashboard] verify_externals block aborted: ${(verifyErr as Error)?.message ?? verifyErr}`,
+            );
+            externalChainTruth = undefined;
+          }
+        }
+
         const dashOpts: CuratorDashboardOpts = {
           chain,
           metavaultAddress: metavault_address,
@@ -1346,6 +1429,7 @@ Use spectra_get_address_activity on the curator's EOA for cross-pool curator act
           vaultMerklRewards: vaultMerklRewards.length > 0 ? vaultMerklRewards : undefined,
           merklWarnings: dashMerklWarnings.length > 0 ? dashMerklWarnings : undefined,
           pendleEnrichment: pendleEnrichment.size > 0 ? pendleEnrichment : undefined,
+          externalChainTruth,
         };
 
         let text = formatCuratorDashboard(dashOpts);

@@ -16,6 +16,7 @@ import {
   renderExternalPosition,
   DriftCollector,
   type TypedExternalPosition,
+  type ExternalChainTruthMap,
 } from "./protocols/index.js";
 
 // Primitives now live in primitives.ts. Re-exported here for backward compat
@@ -4203,6 +4204,13 @@ export interface CuratorDashboardOpts {
     aggregatedApy: number; maxBoostedApy: number;
     liquidity: number; tvl: number; volume: number;
   }>;
+
+  // Theme E first slice — pre-resolved chain-truth verifications for
+  // external positions. Today only avant requestIds are mapped; future
+  // slices add other protocol prefixes. Optional; absent = no verification
+  // line appended (default behavior, indistinguishable from before this
+  // flag shipped).
+  externalChainTruth?: ExternalChainTruthMap;
 }
 
 /**
@@ -4453,7 +4461,13 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
     for (const e of opts.externalPositions) {
       const usd = e.valueUsd || 0;
       totalExtUsd += usd;
-      const rendered = renderExternalPosition(e as TypedExternalPosition, opts.tvlUsd, ctx, drift);
+      const rendered = renderExternalPosition(
+        e as TypedExternalPosition,
+        opts.tvlUsd,
+        ctx,
+        drift,
+        opts.externalChainTruth,
+      );
       for (const sub of rendered.split("\n")) {
         lines.push(`  ${sub}`);
       }
