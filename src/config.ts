@@ -251,7 +251,7 @@ export const CHAIN_RPC_URLS: Partial<Record<string, string>> = {
   hemi:      "https://rpc.hemi.network/rpc",
   hyperevm:  "https://rpc.hyperliquid.xyz/evm",
   sei:       "https://evm-rpc.sei-apis.com",
-  // monad: no well-known public RPC; will return "unknown"
+  monad:     "https://rpc.monad.xyz",   // QuickNode — official community RPC; 25 rps rate limit
 };
 
 // =============================================================================
@@ -296,9 +296,29 @@ export const CHAIN_RPC_FALLBACKS: Partial<Record<string, string[]>> = {
     "https://rpc.ankr.com/flare",
   ],
 
-  // katana / hemi / hyperevm / sei: primary RPC only (in CHAIN_RPC_URLS), no
-  // fallback yet — a single RPC outage exhausts the list immediately. Add
-  // alternatives when they are discovered. monad has no primary either.
+  monad: [
+    "https://rpc1.monad.xyz",  // Alchemy — fastest tested (~208ms); 15 rps
+    "https://rpc3.monad.xyz",  // Ankr — highest rate limit (300/10s); ~218ms
+  ],
+
+  hyperevm: [
+    "https://hyperliquid.drpc.org",   // dRPC public: ~250ms avg, batch ✓, chainId 999 verified 2026-04-25
+    "https://1rpc.io/hyperliquid",    // 1RPC public: ~700ms avg, batch ✓, chainId 999 verified 2026-04-25
+  ],
+
+  katana: [
+    "https://katana.drpc.org",         // dRPC: ~270ms, batch ✓, chainId 747474 verified 2026-04-26
+    "https://rpc.katanarpc.com",       // Conduit-operated: ~430ms, batch ✓
+    "https://747474.rpc.thirdweb.com", // thirdweb: ~650ms, batch ✓
+  ],
+  hemi: [
+    "https://hemi.drpc.org",            // dRPC: ~200ms, batch ✓, chainId 43111 verified 2026-04-26
+    "https://43111.rpc.thirdweb.com",   // thirdweb: ~650ms, batch ✓
+  ],
+  sei: [
+    "https://sei-evm-rpc.publicnode.com",  // publicnode: ~193ms, batch ✓, chainId 1329 verified 2026-04-26
+    "https://evm-rpc-sei.stingray.plus",   // stingray: ~285ms, batch ✓
+  ],
 };
 
 // =============================================================================
