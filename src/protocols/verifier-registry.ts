@@ -18,6 +18,7 @@
 
 import type { ProtocolVerifier } from "./verifier-types.js";
 import { avantVerifier } from "./avant-verifier.js";
+import { pendleVerifier } from "./pendle-verifier.js";
 
 /**
  * The strategy list. Order is irrelevant (lookups are by name). Adding
@@ -25,6 +26,7 @@ import { avantVerifier } from "./avant-verifier.js";
  */
 const VERIFIERS: ReadonlyArray<ProtocolVerifier> = [
   avantVerifier,
+  pendleVerifier,
 ];
 
 const BY_NAME: ReadonlyMap<string, ProtocolVerifier> = (() => {

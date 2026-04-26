@@ -80,3 +80,21 @@ export type {
   AvantVerificationFailed,
   AvantRequestState,
 } from "./avant-verifier.js";
+
+// Pendle verifier — exported for direct unit testing. Production callers
+// consume via getVerifier("pendle"); see avant-verifier comment above for
+// the dispatch contract.
+export {
+  verifyPendlePosition,
+  formatPendleVerification,
+  decodePendleMarketState,
+  chainIdToSlug,
+  pendleVerifier,
+  PENDLE_MARKET_SELECTORS,
+  PENDLE_VERIFY_TIMEOUT_MS,
+} from "./pendle-verifier.js";
+export type {
+  PendleVerification,
+  PendleVerificationOk,
+  PendleVerificationFailed,
+} from "./pendle-verifier.js";

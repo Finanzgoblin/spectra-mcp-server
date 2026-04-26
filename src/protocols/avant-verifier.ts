@@ -64,6 +64,25 @@
  * Per-call timeout 15s (Promise.race with cleared `setTimeout` to prevent
  * the timer leak pattern from earlier theme phases). Failures degrade to
  * a structured error result; never throws at the engine boundary.
+ *
+ * 60-day dissolution review (Diverger Round-6 backport from pendle-verifier
+ * — the second slice taught the first what it should have done):
+ *   - If telemetry shows zero `verify_externals=true` invocations against
+ *     avant positions within 60 days of ship (b7e6046 + 85d4dea), the
+ *     verifier is fossil and should be folded into list-mode default OR
+ *     removed alongside the dashboard's verify_externals flag.
+ *   - If Avant migrates settlement to a contract-encoded timer (per-order
+ *     ETA exposed via a new contract method), collapse the `[✓ eligible]`
+ *     qualifier to plain `[✓]` and surface the on-chain ETA timestamp.
+ *   - If Avant publishes a verified ABI under a stable URL (or a
+ *     curator-context plumbing arrives that exposes provider attribution
+ *     without the per-position `provider` field), revisit the selector
+ *     hand-rolling here.
+ *   - If `AVANT_AMOUNT_DRIFT_TOLERANCE_PPM = 100n` produces false-positive
+ *     drift warnings on >5% of healthy live reads over 7 days, recalibrate
+ *     and consider promoting the constant into metadata.ts as
+ *     `InterpretedValue<bigint>` (Diverger Round-5 follow-up — also
+ *     justified once a third verifier needs its own PPM tolerance).
  */
 
 import { resolveRpcUrlsWithFallbacks, FETCH_TIMEOUT_MS } from "../config.js";

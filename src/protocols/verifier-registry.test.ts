@@ -16,6 +16,7 @@ import {
   listVerifiers,
 } from "./verifier-registry.js";
 import { avantVerifier } from "./avant-verifier.js";
+import { pendleVerifier } from "./pendle-verifier.js";
 import { PROTOCOL_METADATA } from "./metadata.js";
 
 describe("verifier-registry — registration contract", () => {
@@ -25,8 +26,13 @@ describe("verifier-registry — registration contract", () => {
     assert.equal(v, avantVerifier);
   });
 
+  it("returns pendle verifier by name", () => {
+    const v = getVerifier("pendle");
+    assert.equal(v?.name, "pendle");
+    assert.equal(v, pendleVerifier);
+  });
+
   it("returns undefined for unregistered protocols", () => {
-    assert.equal(getVerifier("pendle"), undefined);
     assert.equal(getVerifier("parallel"), undefined);
     assert.equal(getVerifier("nonexistent-protocol"), undefined);
     assert.equal(getVerifier(""), undefined);
@@ -34,21 +40,24 @@ describe("verifier-registry — registration contract", () => {
 
   it("hasVerifier mirrors getVerifier presence", () => {
     assert.equal(hasVerifier("avant"), true);
-    assert.equal(hasVerifier("pendle"), false);
+    assert.equal(hasVerifier("pendle"), true);
+    assert.equal(hasVerifier("parallel"), false);
     assert.equal(hasVerifier(""), false);
   });
 
-  it("listVerifierNames returns at least avant in stable order", () => {
+  it("listVerifierNames returns at least avant + pendle in stable order", () => {
     const names = listVerifierNames();
     assert.ok(names.includes("avant"), "avant must be registered");
+    assert.ok(names.includes("pendle"), "pendle must be registered");
     // Stable order property: same call twice returns same array contents
     assert.deepEqual(listVerifierNames(), names);
   });
 
   it("listVerifiers returns the strategy objects (not just names)", () => {
     const verifiers = listVerifiers();
-    assert.ok(verifiers.length >= 1);
+    assert.ok(verifiers.length >= 2);
     assert.ok(verifiers.find((v) => v.name === "avant"));
+    assert.ok(verifiers.find((v) => v.name === "pendle"));
   });
 });
 
@@ -122,6 +131,62 @@ describe("verifier-registry — avant strategy through the dispatcher", () => {
     const result = await v!.verify({} as never);
     assert.equal(result.kind, "failed");
     assert.equal(result.protocol, "avant");
+    assert.match(result.line, /\[chain-truth ✗\]/);
+  });
+});
+
+describe("verifier-registry — pendle strategy through the dispatcher", () => {
+  it("pendle positionKey produces pendle:<chainId>:<address> for valid input", () => {
+    const v = getVerifier("pendle");
+    assert.ok(v);
+    const key = v!.positionKey({
+      protocol: "pendle",
+      chainId: 1,
+      market: { address: "0x559E61C5647FA13D87a3C1Dc1229189FCb52227A" },
+    } as never);
+    // Address gets lowercased; key shape is pendle:<chainId>:<addr>
+    assert.equal(key, "pendle:1:0x559e61c5647fa13d87a3c1dc1229189fcb52227a");
+  });
+
+  it("pendle positionKey returns null when market.address missing", () => {
+    const v = getVerifier("pendle");
+    assert.equal(v!.positionKey({} as never), null);
+    assert.equal(v!.positionKey({ chainId: 1 } as never), null);
+    assert.equal(
+      v!.positionKey({ chainId: 1, market: {} } as never),
+      null,
+      "missing market.address",
+    );
+    assert.equal(
+      v!.positionKey({
+        chainId: 1,
+        market: { address: "not-an-address" },
+      } as never),
+      null,
+      "non-hex market.address",
+    );
+    assert.equal(
+      v!.positionKey({
+        market: { address: "0x559e61c5647fa13d87a3c1dc1229189fcb52227a" },
+      } as never),
+      null,
+      "missing chainId",
+    );
+    assert.equal(
+      v!.positionKey({
+        chainId: 0,
+        market: { address: "0x559e61c5647fa13d87a3c1dc1229189fcb52227a" },
+      } as never),
+      null,
+      "chainId=0 invalid",
+    );
+  });
+
+  it("pendle verify returns failed result (no throw) when shape malformed", async () => {
+    const v = getVerifier("pendle");
+    const result = await v!.verify({} as never);
+    assert.equal(result.kind, "failed");
+    assert.equal(result.protocol, "pendle");
     assert.match(result.line, /\[chain-truth ✗\]/);
   });
 });
