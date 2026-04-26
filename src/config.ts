@@ -105,7 +105,7 @@ export const SUPPORTED_CHAINS: Record<string, { name: string; id: number }> = SU
 // =============================================================================
 
 // All valid values a caller can pass as "chain"
-type ChainKey = keyof typeof SUPPORTED_CHAINS_INTERNAL;
+export type ChainKey = keyof typeof SUPPORTED_CHAINS_INTERNAL;
 export const CHAIN_KEYS = Object.keys(SUPPORTED_CHAINS_INTERNAL) as [ChainKey, ...ChainKey[]];
 export const CHAIN_ENUM = z.enum(CHAIN_KEYS);
 
@@ -295,6 +295,10 @@ export const CHAIN_RPC_FALLBACKS: Partial<Record<string, string[]>> = {
   flare: [
     "https://rpc.ankr.com/flare",
   ],
+
+  // katana / hemi / hyperevm / sei: primary RPC only (in CHAIN_RPC_URLS), no
+  // fallback yet — a single RPC outage exhausts the list immediately. Add
+  // alternatives when they are discovered. monad has no primary either.
 };
 
 // =============================================================================

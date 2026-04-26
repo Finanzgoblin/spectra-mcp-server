@@ -1344,7 +1344,7 @@ export async function fetchSpectraPtAddresses(): Promise<Set<string>> {
 // fetchVeBalance's 2N+1 calls), the ENTIRE sequence is retried on a new RPC
 // to avoid cross-RPC inconsistency.
 
-async function withRpcFallback<T>(
+export async function withRpcFallback<T>(
   rpcs: string[],
   operation: (rpcUrl: string) => Promise<T>,
   label: string,
@@ -1373,7 +1373,7 @@ async function withRpcFallback<T>(
  * Make an eth_call with RPC fallback for a given chain. Returns raw hex result
  * or null if all RPCs fail. Used by fetchCurveGetDy, fetchTokenDecimals, etc.
  */
-async function ethCallWithFallback(
+export async function ethCallWithFallback(
   chainSlug: string,
   to: string,
   data: string,
