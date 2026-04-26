@@ -808,9 +808,73 @@ export async function readMetaVaultChainState(
   // and skips the line; healthy capacity reads surface as a number.
   const secMaxWithdrawSelf = decodeUint256(results[secondaryStart + 8]?.result);
   const secMaxRedeemSelf = decodeUint256(results[secondaryStart + 9]?.result);
-  const secPreviewRedeemOneShare = decodeUint256(results[secondaryStart + 10]?.result);
+  const secPreviewRedeemBatch1 = decodeUint256(results[secondaryStart + 10]?.result);
   const wrapperShareBalance =
     wrapperSignatureIndex >= 0 ? decodeUint256(results[wrapperSignatureIndex]?.result) : null;
+
+  // ===========================================================================
+  // Decimals-aware previewRedeem retry (correctness fix)
+  //
+  // Batch 1 sent `previewRedeem(1 * 10^underlying.decimals)`. This is correct
+  // ONLY when the wrapper's share-decimals equal underlying decimals — true for
+  // all 6 currently-deployed Spectra MetaVaults (verified empirically). For a
+  // future MetaVault with non-matching decimals, the batch-1 input is
+  // wrong-magnitude and the result is meaningless. The cross-check in
+  // formatters.ts would then either trivially "agree" (both wrong in the same
+  // direction) or always fire the disagreement suffix.
+  //
+  // Three branches:
+  //   (a) secDecimals == underlying.decimals  → batch-1 result is correct, use as-is
+  //   (b) secDecimals != underlying.decimals  → retry previewRedeem with 1 * 10^secDecimals; emit `wrapper-decimals-divergence`
+  //   (c) secDecimals == null but bytecode present → suppress; emit `wrapper-decimals-unknown`
+  //
+  // Cost: zero extra round-trips in branch (a). One extra eth_call only when
+  // wrapper decimals diverge — which is rare today, but the fix keeps the
+  // cross-check meaningful for future divergent wrappers.
+  //
+  // Dissolution: if Spectra publishes a MetaVault contract ABI with deterministic
+  // decimals semantics, this branch logic becomes redundant and the read can
+  // collapse back into batch 1.
+  // ===========================================================================
+  let secPreviewFinal: bigint | null = secPreviewRedeemBatch1;
+  if (secBytecodePresent) {
+    if (secDecimals === null) {
+      // (c) bytecode exists but decimals() failed to decode — input scale unverifiable
+      secPreviewFinal = null;
+      warnings.push({
+        severity: "info",
+        code: "wrapper-decimals-unknown",
+        detail: `secondaryVault ${input.vault} has bytecode but decimals() did not decode at block ${block} — previewRedeemOneShare suppressed`,
+        nextProbe:
+          "verify the wrapper exposes ERC-20 decimals(); if it does, the RPC may have truncated this read — retry on a different RPC",
+      });
+    } else if (secDecimals !== input.underlying.decimals) {
+      // (b) divergent decimals — retry previewRedeem with correct share-decimals
+      const oneShareInShareDecimals =
+        "0x" + (10n ** BigInt(secDecimals)).toString(16).padStart(64, "0");
+      const data =
+        SELECTORS.previewRedeem + oneShareInShareDecimals.replace(/^0x/, "");
+      try {
+        const retryBatch = await ethBatchCall(
+          rpcCtx.url,
+          [{ method: "eth_call", params: [{ to: input.vault, data }, "latest"] }],
+          10,
+        );
+        secPreviewFinal = decodeUint256(retryBatch.results[0]?.result);
+      } catch {
+        // Single-call retry failed — graceful degradation (cross-check skipped)
+        secPreviewFinal = null;
+      }
+      warnings.push({
+        severity: "warn",
+        code: "wrapper-decimals-divergence",
+        detail: `secondaryVault decimals=${secDecimals}, underlying decimals=${input.underlying.decimals} — previewRedeem reconstructed with share-decimals; per-share render must scale by share-decimals not underlying-decimals`,
+        nextProbe:
+          "wrapper convention diverges from underlying decimals — verify intentional; if unintentional, the topology may have shifted (audit the wrapper deployment)",
+      });
+    }
+    // (a) implicit: secDecimals === input.underlying.decimals → keep batch-1 result
+  }
 
   const secondaryVault: SecondaryVaultState = {
     address: input.vault,
@@ -826,7 +890,7 @@ export async function readMetaVaultChainState(
     infraVaultShareBalance: wrapperShareBalance,
     maxWithdrawSelf: secMaxWithdrawSelf,
     maxRedeemSelf: secMaxRedeemSelf,
-    previewRedeemOneShare: secPreviewRedeemOneShare,
+    previewRedeemOneShare: secPreviewFinal,
   };
 
   if (!secBytecodePresent) {

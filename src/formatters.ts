@@ -5397,13 +5397,31 @@ export function formatChainTruthFooter(
     // wrapper-accounting one), with the previewRedeem cross-check as a
     // suffix when both diverge by >1bp. Edge case: totalSupply=0n means the
     // wrapper hasn't been seeded; per-share is undefined. Skip the line.
+    //
+    // Decimals correctness (post-Phase-3 fix): totalAssets is in
+    // underlying-decimals (asset-side), totalSupply is in share-decimals.
+    // Per-share-in-underlying-decimals = (totalAssets × 10^shareDecimals) /
+    // totalSupply. Using underlying-decimals in the numerator-scale is correct
+    // ONLY when shareDecimals == underlyingDecimals (the common case for all
+    // currently-deployed Spectra MetaVaults). For divergent wrappers, the
+    // engine emits `wrapper-decimals-divergence` and reconstructs
+    // previewRedeemOneShare with share-decimals; this formula must match.
+    //
+    // sv.decimals is the share-decimals from the wrapper's decimals() call.
+    // Fallback to underlying-decimals when sv.decimals is null — in that case
+    // the engine has already set previewRedeemOneShare = null (suppression
+    // path), so the cross-check is skipped and the displayed per-share value
+    // matches the legacy compute exactly for null-decimals.
     if (sv.totalSupply != null && sv.totalSupply > 0n && sv.totalAssets != null) {
-      const perShareWei = (sv.totalAssets * 10n ** BigInt(decimals)) / sv.totalSupply;
+      const shareDecimals = sv.decimals ?? decimals;
+      const perShareWei = (sv.totalAssets * 10n ** BigInt(shareDecimals)) / sv.totalSupply;
       const perShareStr = formatBigIntAsDecimal(perShareWei, decimals, 6);
       let crossCheck = "";
       if (sv.previewRedeemOneShare != null) {
-        // previewRedeemOneShare was called with 1*10^decimals as input, so
-        // the result is "underlying per 1 share" in the same decimals.
+        // previewRedeemOneShare was called with 1*10^shareDecimals as input
+        // (after the engine's decimals-aware retry), so the result is
+        // "underlying per 1 share" in underlying-decimals. perShareWei is in
+        // the same scale. Both are dimensionally consistent.
         const diff =
           sv.previewRedeemOneShare > perShareWei
             ? sv.previewRedeemOneShare - perShareWei

@@ -824,6 +824,8 @@ export type ChainReadWarningCode =
   | "asset-mismatch-secondaryvault"
   | "owner-mismatch"                       // infraVault.owner() != Safe address
   | "wrapper-signature-broken"             // infraVault.balanceOf(secondaryVault) < 50% of totalSupply (OQ-J pattern violated)
+  | "wrapper-decimals-divergence"          // warn: secondaryVault.decimals() != underlying.decimals — engine retried previewRedeem with share-decimals; per-share render must use share-decimals (formatters.ts)
+  | "wrapper-decimals-unknown"             // info: secondaryVault has bytecode but decimals() did not decode — previewRedeemOneShare suppressed (cross-check skipped)
   | "tvl-divergence-small"
   | "tvl-divergence-large"
   | "price-feed-zero"                      // API price oracle reports $0 while chain state is healthy

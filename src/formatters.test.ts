@@ -2690,6 +2690,88 @@ describe("formatChainTruthFooter — verbose mode (warn/error triggers)", () => 
     assert.equal(lines.some((l) => l.includes("Per-share:")), false);
   });
 
+  // Decimals-divergence fix: per-share computation must scale by share-decimals
+  // (sv.decimals), not underlying-decimals. The legacy formula (* 10^underlying)
+  // gave wrong-magnitude results when shareDecimals != underlyingDecimals.
+  it("uses share-decimals not underlying-decimals when wrapper decimals diverge (decimals-divergence fix)", () => {
+    // Synthetic divergent state: same USDC totalAssets (6-decimal) but the
+    // wrapper supplies 18-decimal shares.
+    //
+    //   Fixed formula: perShareWei = (totalAssets × 10^18) / (2902571 × 10^18)
+    //                              = 2_963_474_720_000 / 2_902_571
+    //                              ≈ 1_020_982  (in 6-decimal scale = 1.020982 USDC/share)
+    //
+    //   Legacy bug:    perShareWei = (totalAssets × 10^6)  / (2902571 × 10^18)
+    //                              = 2_963_474_720_000_000_000 / 2.9e24
+    //                              = 0n (bigint floor — divisor exceeds dividend)
+    //                              → would render "Per-share: 0.000000 USDC" silently.
+    const cleanState = makeCleanState({ warnings: [] });
+    const sv = cleanState.secondaryVault!;
+    const divergentState: MetaVaultChainState = {
+      ...cleanState,
+      secondaryVault: {
+        ...sv,
+        totalSupply: 2_902_571n * 10n ** 18n, // 18-decimal shares
+        decimals: 18,
+        // previewRedeem retry reconstructs in underlying-decimals scale to
+        // match perShareWei. ~1.020982 USDC per share.
+        previewRedeemOneShare: 1_020_982n,
+      },
+      warnings: [
+        {
+          severity: "warn",
+          code: "wrapper-decimals-divergence",
+          detail: "synthetic test — share-decimals 18 vs underlying 6",
+          nextProbe: "synthetic",
+        } satisfies ChainReadWarning,
+      ],
+    };
+    const lines = formatChainTruthFooter(divergentState, {
+      viewMode: "curator",
+      verbose: true,
+    });
+    const perShareLine = lines.find((l) => l.includes("Per-share:"));
+    assert.ok(perShareLine, "Per-share line missing");
+    // ~1.020982 USDC/share — legacy bug would produce 0.000000.
+    assert.match(perShareLine!, /Per-share: 1\.020/);
+    // Cross-check must NOT fire — engine retry put previewRedeem in
+    // matching scale, so they agree to within 1bp.
+    assert.equal(perShareLine!.includes("disagrees"), false);
+  });
+
+  it("falls back to underlying-decimals when sv.decimals is null (decimals-unknown branch)", () => {
+    // When the wrapper's decimals() failed to decode, the engine emits
+    // wrapper-decimals-unknown and sets previewRedeemOneShare = null. The
+    // formatter falls back to underlying-decimals for per-share computation
+    // (legacy behavior — preserves render for unverifiable wrappers).
+    const cleanState = makeCleanState({ warnings: [] });
+    const sv = cleanState.secondaryVault!;
+    const unknownDecimalsState: MetaVaultChainState = {
+      ...cleanState,
+      secondaryVault: {
+        ...sv,
+        decimals: null,
+        previewRedeemOneShare: null,
+      },
+      warnings: [
+        {
+          severity: "info",
+          code: "wrapper-decimals-unknown",
+          detail: "synthetic test — decimals() did not decode",
+          nextProbe: "synthetic",
+        } satisfies ChainReadWarning,
+      ],
+    };
+    const lines = formatChainTruthFooter(unknownDecimalsState, {
+      viewMode: "curator",
+      verbose: true,
+    });
+    const perShareLine = lines.find((l) => l.includes("Per-share:"));
+    assert.ok(perShareLine, "Per-share line missing — fallback path should still render");
+    // Cross-check is suppressed (previewRedeemOneShare = null) — no "disagrees".
+    assert.equal(perShareLine!.includes("disagrees"), false);
+  });
+
   it("renders withdraw capacity line when maxWithdrawSelf is non-null (BLOCKER #4)", () => {
     const state = makeCleanState({
       secondaryVault: {
