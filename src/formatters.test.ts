@@ -2967,3 +2967,274 @@ describe("readMetaVaultChainStateCached — 5-min curator-tempo cache", () => {
     assert.equal(_chainTruthCacheSizeForTest(), 1);
   });
 });
+
+// =============================================================================
+// Theme A Phase 4 — verify_onchain on spectra_list_metavaults
+// =============================================================================
+//
+// Tests the formatter-level integration of chain-truth summary lines into
+// formatMetavaultList. Tool-level wiring (concurrency cap, Promise.allSettled,
+// readMetaVaultChainStateCached) is exercised via the formatter contract:
+//   - chainResults undefined  → output identical to current (verify_onchain=false)
+//   - chainResults map populated with `ok` state → [✓] line per MV
+//   - chainResults map populated with `failed` → [✗] line per MV (one bad
+//     MV does NOT break list rendering)
+
+import {
+  formatMetavaultList,
+  formatChainTruthSummaryLine,
+  type ChainTruthSummaryResult,
+} from "./formatters.js";
+import type { SpectraMetavault } from "./types.js";
+
+/**
+ * Build a minimal SpectraMetavault that survives formatMetavaultSummary
+ * without choking on missing fields. The tests assert on chain-truth lines
+ * only — the rest of the body is filler.
+ */
+function makeMinimalMv(overrides: Partial<SpectraMetavault> = {}): SpectraMetavault {
+  return {
+    chainId: 8453,
+    address: "0x5e93e1193a5e297cba0856e9b3f22b6e05429b9a",
+    vault: "0x776f95321a0285f8bcde149e3264d16dc08da69a",
+    infraVault: "0xc62734aecb095d2cb74b3ccebfdf973ec23fbaa1",
+    name: "gamisUSDC",
+    symbol: "gamisUSDC",
+    decimals: 6,
+    status: "VISIBLE",
+    underlying: {
+      address: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      symbol: "USDC",
+      decimals: 6,
+      price: { usd: 1 },
+    },
+    tvl: { usd: 5_125_544.79, underlying: 5_125_392.65 },
+    liveApy: { total: 0.082, details: { base: 0.05 } },
+    avgApy30d: { total: 0.078 },
+    price: { usd: 1.02, underlying: 1.02 },
+    curator: { name: "Test Curator", addresses: ["0xabc"] },
+    metadata: { title: "gamisUSDC", shortDescription: "test" },
+    positions: [],
+    externalPositions: [],
+    epochs: [],
+    bridge: { transactions: [] },
+    ...overrides,
+  } as unknown as SpectraMetavault;
+}
+
+describe("formatChainTruthSummaryLine — single-line per-MV format (Phase 4)", () => {
+  it("renders [✓] for clean info-only state with API↔chain drift suffix", () => {
+    const state = makeCleanState();
+    const line = formatChainTruthSummaryLine({
+      kind: "ok",
+      state,
+      apiTvlUnderlying: 5_125_544.79,
+      apiUnderlyingPriceUsd: 1,
+    });
+    assert.match(line, /\[chain-truth ✓\]/);
+    assert.match(line, /block 45,?197,?827/);
+    assert.match(line, /via https/);
+    assert.match(line, /API↔chain drift/);
+    // 5,125,544.79 vs 5,125,392.65 → 0.003% (none class, threshold 0.5%)
+    assert.match(line, /\(none\)/);
+  });
+
+  it("renders [✓] without drift suffix when apiTvlUnderlying not provided", () => {
+    const state = makeCleanState();
+    const line = formatChainTruthSummaryLine({ kind: "ok", state });
+    assert.match(line, /\[chain-truth ✓\]/);
+    assert.equal(line.includes("API↔chain drift"), false);
+  });
+
+  it("renders [⚠] with warning codes when actionable warnings fire", () => {
+    const state = makeCleanState({
+      warnings: [
+        {
+          severity: "warn",
+          code: "wrapper-signature-broken",
+          detail: "secondaryVault holds 0.0% of infraVault shares",
+          nextProbe: "topology shifted",
+        },
+        {
+          severity: "error",
+          code: "owner-mismatch",
+          detail: "infraVault.owner() != Safe address",
+          nextProbe: "check governance",
+        },
+      ],
+    });
+    const line = formatChainTruthSummaryLine({ kind: "ok", state });
+    assert.match(line, /\[chain-truth ⚠\]/);
+    assert.match(line, /2 warning\(s\)/);
+    assert.match(line, /wrapper-signature-broken/);
+    assert.match(line, /owner-mismatch/);
+    // No drift suffix on warn lines (codes carry the signal).
+    assert.equal(line.includes("API↔chain drift"), false);
+  });
+
+  it("treats info-only warnings as clean (renders [✓], not [⚠])", () => {
+    // The default makeCleanState carries a single info warning
+    // (secondaryvault-reasoning-prohibited) — must NOT escalate to [⚠].
+    const state = makeCleanState();
+    const line = formatChainTruthSummaryLine({ kind: "ok", state });
+    assert.match(line, /\[chain-truth ✓\]/);
+    assert.equal(line.includes("[chain-truth ⚠]"), false);
+  });
+
+  it("renders [✗] from failed kind with truncated error", () => {
+    const longErr = "All RPCs failed for base: tried 3 endpoint(s); the underlying detail goes on and on and on far past the 80-char truncation point";
+    const line = formatChainTruthSummaryLine({ kind: "failed", error: longErr });
+    assert.match(line, /\[chain-truth ✗\]/);
+    assert.match(line, /RPC unavailable/);
+    assert.match(line, /\.\.\./); // truncation marker present
+  });
+
+  it("renders [✗] when state carries rpc-all-failed warning even on ok kind", () => {
+    // Engine returns a state object with rpc-all-failed instead of throwing —
+    // PR0 graceful degradation. Summary line collapses to ✗ shape.
+    const state = makeCleanState({
+      block: 0,
+      rpcUsed: "",
+      warnings: [
+        {
+          severity: "error",
+          code: "rpc-all-failed",
+          detail: "all RPCs failed for base: tried 3 endpoints",
+          nextProbe: "use a premium RPC for chain base",
+        },
+      ],
+    });
+    const line = formatChainTruthSummaryLine({ kind: "ok", state });
+    assert.match(line, /\[chain-truth ✗\]/);
+    assert.match(line, /RPC unavailable/);
+  });
+
+  it("caps shown codes at 4 with overflow suffix", () => {
+    const state = makeCleanState({
+      warnings: [
+        { severity: "warn", code: "wrapper-signature-broken", detail: "", nextProbe: "" },
+        { severity: "warn", code: "owner-mismatch", detail: "", nextProbe: "" },
+        { severity: "warn", code: "asset-mismatch-infravault", detail: "", nextProbe: "" },
+        { severity: "warn", code: "asset-mismatch-secondaryvault", detail: "", nextProbe: "" },
+        { severity: "warn", code: "tvl-divergence-large", detail: "", nextProbe: "" },
+        { severity: "warn", code: "safe-non-proxy", detail: "", nextProbe: "" },
+      ],
+    });
+    const line = formatChainTruthSummaryLine({ kind: "ok", state });
+    assert.match(line, /\+2 more/);
+  });
+
+  it("computes drift class correctly: small (>=0.5%), large (>=5%), none (<0.5%)", () => {
+    const state = makeCleanState();
+    // chain primary = 5,125,392.65 (from infraVault.totalAssets)
+    // small: api ~= 5,150,000 (delta ~24,607, ~0.48%) is still < 0.5% → none.
+    // Pick a clearer pair. small: api=5,150,000 (delta ~0.48%) borderline.
+    // Use api=5,200,000 → delta=74,607 → 1.43% → small.
+    const small = formatChainTruthSummaryLine({
+      kind: "ok",
+      state,
+      apiTvlUnderlying: 5_200_000,
+    });
+    assert.match(small, /\(tvl-divergence-small\)/);
+    // large: api=6,000,000 → delta=874,607 → 14.6% → large.
+    const large = formatChainTruthSummaryLine({
+      kind: "ok",
+      state,
+      apiTvlUnderlying: 6_000_000,
+    });
+    assert.match(large, /\(tvl-divergence-large\)/);
+  });
+});
+
+describe("formatMetavaultList — verify_onchain integration (Phase 4)", () => {
+  it("verify_onchain=false (chainResults undefined) produces output identical to current path", () => {
+    const mv = makeMinimalMv({
+      address: "0xaaaa000000000000000000000000000000000000",
+    });
+    const entries = [{ metavault: mv, chain: "base" }];
+    const before = formatMetavaultList(entries, "base", undefined, undefined);
+    const after = formatMetavaultList(entries, "base", undefined, undefined, undefined);
+    // Byte-for-byte: both omit the chainResults arg → render is identical.
+    assert.equal(after, before);
+    // And no chain-truth chrome leaks in.
+    assert.equal(after.includes("chain-truth"), false);
+  });
+
+  it("verify_onchain=true clean state produces [✓] line in per-MV block", () => {
+    const mvAddr = "0xaaaa000000000000000000000000000000000000";
+    const mv = makeMinimalMv({ address: mvAddr });
+    const state = makeCleanState();
+    const chainResults = new Map<string, ChainTruthSummaryResult>([
+      [
+        `base:${mvAddr.toLowerCase()}`,
+        { kind: "ok", state, apiTvlUnderlying: mv.tvl?.underlying },
+      ],
+    ]);
+    const text = formatMetavaultList([{ metavault: mv, chain: "base" }], "base", undefined, undefined, chainResults);
+    assert.match(text, /\[chain-truth ✓\]/);
+    // The MV block is intact — TVL line, APY line still render.
+    assert.match(text, /TVL: /);
+    assert.match(text, /Live APY/);
+  });
+
+  it("chain-read failure on one MV does NOT break list rendering for the others", () => {
+    const okAddr = "0xbbbb000000000000000000000000000000000000";
+    const failAddr = "0xcccc000000000000000000000000000000000000";
+    const mvOk = makeMinimalMv({
+      address: okAddr,
+      name: "OkVault",
+      symbol: "OK",
+      metadata: { title: "OkVault", shortDescription: "test" },
+    });
+    const mvFail = makeMinimalMv({
+      address: failAddr,
+      name: "FailVault",
+      symbol: "FAIL",
+      metadata: { title: "FailVault", shortDescription: "test" },
+    });
+    const state = makeCleanState();
+    const chainResults = new Map<string, ChainTruthSummaryResult>([
+      [
+        `base:${okAddr.toLowerCase()}`,
+        { kind: "ok", state, apiTvlUnderlying: mvOk.tvl?.underlying },
+      ],
+      [
+        `base:${failAddr.toLowerCase()}`,
+        { kind: "failed", error: "All RPCs failed for base: tried 3 endpoint(s)" },
+      ],
+    ]);
+    const text = formatMetavaultList(
+      [
+        { metavault: mvOk, chain: "base" },
+        { metavault: mvFail, chain: "base" },
+      ],
+      "base",
+      undefined,
+      undefined,
+      chainResults,
+    );
+    // Both MVs render their core block.
+    assert.match(text, /OkVault/);
+    assert.match(text, /FailVault/);
+    // OkVault gets a [✓] line, FailVault gets a [✗] line.
+    assert.match(text, /\[chain-truth ✓\]/);
+    assert.match(text, /\[chain-truth ✗\]/);
+    assert.match(text, /RPC unavailable/);
+    // The failure does NOT poison the OK rendering — both lines coexist.
+    const okIdx = text.indexOf("OkVault");
+    const failIdx = text.indexOf("FailVault");
+    assert.ok(okIdx >= 0 && failIdx > okIdx, "both MV blocks must render in order");
+  });
+
+  it("chainResults map miss for a given MV degrades silently (no chrome)", () => {
+    // If the verify_onchain block ran but somehow skipped an MV (off-by-one,
+    // entry filtered), the formatter must NOT crash and NOT inject empty
+    // chain-truth chrome. The MV block renders as if verify_onchain=false.
+    const mvAddr = "0xdddd000000000000000000000000000000000000";
+    const mv = makeMinimalMv({ address: mvAddr });
+    // Empty map → no entry for this MV.
+    const chainResults = new Map<string, ChainTruthSummaryResult>();
+    const text = formatMetavaultList([{ metavault: mv, chain: "base" }], "base", undefined, undefined, chainResults);
+    assert.equal(text.includes("chain-truth"), false);
+  });
+});

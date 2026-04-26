@@ -54,7 +54,7 @@ import {
   formatCuratorDashboard,
   formatChainTruthFooter,
 } from "../formatters.js";
-import type { CuratorDashboardOpts } from "../formatters.js";
+import type { CuratorDashboardOpts, ChainTruthSummaryResult } from "../formatters.js";
 import { generateActionItems } from "../protocols/engine.js";
 import type { TypedExternalPosition } from "../protocols/engine.js";
 import { readMetaVaultChainStateCached, projectChainReadInput } from "../chain-reads.js";
@@ -255,13 +255,26 @@ for the full operational view with action items.
 
 To investigate curator activity (LP adds/removes, rebalancing), use spectra_get_address_activity
 on the curator's EOA address — MetaVault operations go through the Spectra Router, so
-the vault contract address won't appear in pool activity data.`,
+the vault contract address won't appear in pool activity data.
+
+When verify_onchain=true (off by default), each MetaVault gets a compact chain-truth
+summary line probed via the same engine that powers spectra_get_curator_dashboard.
+Useful for cross-chain triage when the dashboard isn't pre-rendered. Chain-read
+failures degrade to a [chain-truth ✗] line per MV — they NEVER abort the rest of the
+list. Concurrency is capped at 6 simultaneous reads to avoid RPC rate limits.`,
     {
       chain: CHAIN_ENUM
         .optional()
         .describe("Chain to query. Omit to scan all chains."),
+      verify_onchain: z.boolean()
+        .optional()
+        .describe(
+          "Verify each MetaVault on-chain (Safe + infraVault + secondaryVault) and append a compact chain-truth line per MV. Off by default — chain reads add latency and RPC pressure. Use when you need cross-chain triage without pre-rendering the curator dashboard for each MV. " +
+          "When [chain-truth ✗] fires, promote to spectra_get_curator_dashboard for the failed chain to see the full footer with next-probe guidance. " +
+          "Dissolution: if telemetry shows zero verify_onchain=true invocations within 60 days of ship, the flag is fossil — remove and consolidate into the curator_portfolio path (audit-noted by Diverger Round-4).",
+        ),
     },
-    async ({ chain }) => {
+    async ({ chain, verify_onchain }) => {
       try {
         let entries: Array<{ metavault: any; chain: string }>;
 
@@ -310,7 +323,98 @@ the vault contract address won't appear in pool activity data.`,
           }
         }
 
-        let text = formatMetavaultList(entries, chain, merklMaps.size > 0 ? merklMaps : undefined, merklWarnings.length > 0 ? merklWarnings : undefined);
+        // ── Chain-truth probe (Theme A Phase 4) ──
+        // Off by default. When on: parallel chain reads (capped at 6 in flight)
+        // populate a per-MV summary map keyed `${chain}:${address}`. The map is
+        // passed to formatMetavaultList; per-MV failures degrade to a [✗] line
+        // and NEVER abort the rest of the list.
+        //
+        // PR0 invariant (graceful degradation): the entire block is wrapped so
+        // a catastrophic engine failure never blocks the existing list output.
+        // Per-MV failures are surfaced via Promise.allSettled at the inner level.
+        let chainResults: Map<string, ChainTruthSummaryResult> | undefined;
+        if (verify_onchain && entries.length > 0) {
+          try {
+            chainResults = new Map<string, ChainTruthSummaryResult>();
+            const CONCURRENCY = 6;
+            // Per-MV timeout: bounds worst-case latency on slow / unreachable
+            // chains. The engine's own RPC fallback retries sequentially across
+            // all configured RPCs (FETCH_TIMEOUT_MS=15s × N endpoints) and can
+            // legitimately consume tens of seconds on degraded chains. 30s is
+            // long enough for 2 sequential 15s timeouts (one fallback hop) and
+            // short enough that a single bad chain doesn't blow up the list-view
+            // budget. Audit-driven inline-fix (Sonnet+depth NB-2).
+            const PER_MV_TIMEOUT_MS = 30_000;
+            // Simple semaphore via index-driven workers — one worker dequeues
+            // the next entry, runs the engine, writes to the shared map. No
+            // additional dependency, no global mutable state.
+            let cursor = 0;
+            const runOne = async (): Promise<void> => {
+              while (true) {
+                const idx = cursor++;
+                if (idx >= entries.length) return;
+                const { metavault: mv, chain: mvChain } = entries[idx];
+                const key = `${mvChain}:${mv.address.toLowerCase()}`;
+                try {
+                  const chainInput = projectChainReadInput(mv);
+                  // Race the engine call against a hard timeout. If timeout
+                  // fires, the worker writes a failed entry and moves to the
+                  // next MV — the in-flight engine call continues to its own
+                  // resolution but its result is ignored.
+                  const state = await Promise.race([
+                    readMetaVaultChainStateCached(
+                      mvChain as any,
+                      chainInput,
+                      { forceRefresh: false },
+                    ),
+                    new Promise<never>((_, reject) =>
+                      setTimeout(
+                        () =>
+                          reject(
+                            new Error(
+                              `chain-read timed out after ${PER_MV_TIMEOUT_MS}ms`,
+                            ),
+                          ),
+                        PER_MV_TIMEOUT_MS,
+                      ),
+                    ),
+                  ]);
+                  chainResults!.set(key, {
+                    kind: "ok",
+                    state,
+                    apiTvlUnderlying: mv.tvl?.underlying,
+                    apiUnderlyingPriceUsd: mv.underlying?.price?.usd,
+                  });
+                } catch (err: any) {
+                  // One MV's engine failure (or per-MV timeout) must NOT poison
+                  // the rest. Capture the error in the map; the formatter
+                  // renders [✗] for it.
+                  console.error(
+                    `[spectra_list_metavaults] chain-read failed for ${mv?.address || "?"} on ${mvChain}: ${err?.message || err}`,
+                  );
+                  chainResults!.set(key, {
+                    kind: "failed",
+                    error: err?.message || String(err),
+                  });
+                }
+              }
+            };
+            const workers = Array.from(
+              { length: Math.min(CONCURRENCY, entries.length) },
+              () => runOne(),
+            );
+            await Promise.allSettled(workers);
+          } catch (verifyErr) {
+            // Catastrophic: log + continue without chain-truth annotations.
+            // The existing list is still the load-bearing artifact.
+            console.error(
+              `[spectra_list_metavaults] verify_onchain block aborted: ${(verifyErr as Error)?.message ?? verifyErr}`,
+            );
+            chainResults = undefined;
+          }
+        }
+
+        let text = formatMetavaultList(entries, chain, merklMaps.size > 0 ? merklMaps : undefined, merklWarnings.length > 0 ? merklWarnings : undefined, chainResults);
         if (failedChains.length > 0) {
           text += `\nNote: ${failedChains.length} chain(s) unreachable: ${failedChains.join(", ")}. MetaVaults on those chains may be missing.`;
         }

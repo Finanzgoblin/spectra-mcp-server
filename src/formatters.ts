@@ -3042,7 +3042,97 @@ export function formatYtArbitrageResults(
 // MetaVault API Formatting
 // =============================================================================
 
-/** Format a single MetaVault for detailed output. */
+/**
+ * Result of a per-MV chain-truth probe for the list view (Theme A Phase 4).
+ *
+ * Three shapes:
+ *   - `ok`: engine returned a state. Caller may still have warnings to surface.
+ *   - `failed`: every RPC failed (rpc-all-failed). The engine emits a
+ *     structured all-null state, but for the list view we collapse to a single
+ *     compact line so one chain failure doesn't poison the rest.
+ *
+ * The list-view summary is intentionally NOT the same as the dashboard's
+ * full footer — list view is a triage scan, dashboard is a deep-dive. The
+ * formatChainTruthFooter signature stays unchanged per Phase 4 scope.
+ */
+export type ChainTruthSummaryResult =
+  | { kind: "ok"; state: MetaVaultChainState; apiTvlUnderlying?: number; apiUnderlyingPriceUsd?: number }
+  | { kind: "failed"; error: string };
+
+/**
+ * Compose the 1-line per-MV chain-truth summary for the list view.
+ *
+ * Three shapes (matching the architect's spec):
+ *   - clean: `[chain-truth ✓] block N via {rpcUsed} | API↔chain drift {pct}% ({class})`
+ *   - warn:  `[chain-truth ⚠] block N via {rpcUsed} | {n} warning(s): {code1}, {code2}, ...`
+ *   - fail:  `[chain-truth ✗] RPC unavailable: {short error}`
+ *
+ * Why three shapes and not "always verbose"? List view is a cross-chain
+ * triage scan — when the curator dashboard isn't pre-rendered, the curator
+ * needs density. Reserve verbose footer rendering for the dashboard; here
+ * the load-bearing signal is "is this MV verified or not, and if not, why."
+ *
+ * Severity mapping: any warn/error → ⚠ icon. info-only → ✓ (clean). Codes
+ * are listed verbatim (no detail/nextProbe) to keep the line short; the user
+ * promotes to spectra_get_curator_dashboard for full context.
+ */
+export function formatChainTruthSummaryLine(
+  result: ChainTruthSummaryResult,
+): string {
+  if (result.kind === "failed") {
+    // Truncate aggressively — list view density.
+    const shortErr = result.error.length > 80
+      ? result.error.slice(0, 77) + "..."
+      : result.error;
+    return `  [chain-truth ✗] RPC unavailable: ${shortErr}`;
+  }
+
+  const { state, apiTvlUnderlying } = result;
+  const block = state.block ? state.block.toLocaleString("en-US") : "?";
+  const rpc = state.rpcUsed || "(no RPC)";
+
+  // Detect actionable warnings. info-only is treated as clean (matches the
+  // dashboard's compact-mode threshold). The engine can also produce an
+  // all-null state with rpc-all-failed even when readMetaVaultChainState
+  // returns rather than throws — collapse that to the failed line shape.
+  const allFailed = state.warnings.some((w) => w.code === "rpc-all-failed");
+  if (allFailed) {
+    const detail = state.warnings.find((w) => w.code === "rpc-all-failed")?.detail ?? "all RPCs failed";
+    const shortErr = detail.length > 80 ? detail.slice(0, 77) + "..." : detail;
+    return `  [chain-truth ✗] RPC unavailable: ${shortErr}`;
+  }
+
+  const actionable = state.warnings.filter(
+    (w) => w.severity === "warn" || w.severity === "error",
+  );
+
+  if (actionable.length === 0) {
+    // Clean: compute API↔chain drift if we have both inputs.
+    let driftSuffix = "";
+    if (
+      apiTvlUnderlying != null &&
+      state.infraVault?.totalAssets != null &&
+      state.infraVault.decimals != null
+    ) {
+      const chainPrimary =
+        Number(state.infraVault.totalAssets) / 10 ** state.infraVault.decimals;
+      const delta = Math.abs(chainPrimary - apiTvlUnderlying);
+      const pct =
+        apiTvlUnderlying > 0 ? (delta / apiTvlUnderlying) * 100 : delta > 0 ? Infinity : 0;
+      const cls = pct >= 5 ? "tvl-divergence-large" : pct >= 0.5 ? "tvl-divergence-small" : "none";
+      const pctStr = isFinite(pct) ? pct.toFixed(3) + "%" : "n/a";
+      driftSuffix = ` | API↔chain drift ${pctStr} (${cls})`;
+    }
+    return `  [chain-truth ✓] block ${block} via ${rpc}${driftSuffix}`;
+  }
+
+  // Warn/error: list codes (deduped, capped at 4 to keep the line compact).
+  const codes = [...new Set(actionable.map((w) => w.code))];
+  const shown = codes.slice(0, 4);
+  const more = codes.length > shown.length ? `, +${codes.length - shown.length} more` : "";
+  return `  [chain-truth ⚠] block ${block} via ${rpc} | ${actionable.length} warning(s): ${shown.join(", ")}${more}`;
+}
+
 export function formatMetavaultSummary(
   mv: SpectraMetavault,
   chain: string,
@@ -3050,6 +3140,7 @@ export function formatMetavaultSummary(
   vaultMerklRewards?: Array<{ symbol: string; amount: number }>,
   merklWarnings?: string[],
   pendleEnrichment?: CuratorDashboardOpts["pendleEnrichment"],
+  chainTruthSummary?: string,
 ): string {
   const lines: string[] = [];
 
@@ -3369,6 +3460,17 @@ export function formatMetavaultSummary(
     }
   }
 
+  // Chain-truth confirmation (Theme A Phase 4): inserted between snapshot
+  // data (positions / external positions / remote modules) and historical
+  // data (vault flows / bridge transactions). One line per MV — the list
+  // view is a cross-chain triage scan, the dashboard is the deep-dive.
+  // Caller passes `chainTruthSummary` only when verify_onchain=true was
+  // requested; absent param means verify_onchain=false (output unchanged).
+  if (chainTruthSummary) {
+    lines.push(``);
+    lines.push(chainTruthSummary);
+  }
+
   // Deposit/withdrawal flow analysis from epochs
   if (mv.epochs && mv.epochs.length >= 2) {
     const underlyingPrice = mv.underlying?.price?.usd || 0;
@@ -3630,6 +3732,14 @@ export function formatMetavaultList(
   chainFilter: string | undefined,
   merklMaps?: Map<number, Map<string, MerklCampaign[]>>,
   merklWarnings?: string[],
+  /**
+   * Per-MV chain-truth probe results (Theme A Phase 4). Keyed on
+   * `${chain}:${mv.address.toLowerCase()}` so the same MV address on
+   * different chains stays distinct. When undefined, no chain-truth
+   * lines are rendered — output is byte-for-byte identical to the
+   * pre-Phase-4 verify_onchain=false path.
+   */
+  chainResults?: Map<string, ChainTruthSummaryResult>,
 ): string {
   const lines: string[] = [];
 
@@ -3664,11 +3774,28 @@ export function formatMetavaultList(
         }
       }
     }
+    // Look up chain-truth probe result for this MV, if verify_onchain ran.
+    // The map key matches the keying used by the tool wiring layer.
+    let chainTruthLine: string | undefined;
+    if (chainResults) {
+      const key = `${chain}:${metavault.address.toLowerCase()}`;
+      const result = chainResults.get(key);
+      if (result) {
+        try {
+          chainTruthLine = formatChainTruthSummaryLine(result);
+        } catch (e: any) {
+          // Render-side failure must not poison the MV block — log + skip.
+          console.error(
+            `[formatMetavaultList] chain-truth summary render failed for ${metavault?.address || "?"} on ${chain}: ${e?.message || e}`,
+          );
+        }
+      }
+    }
     // Per-MV isolation: one bad MV must not take the whole list down.
     // If formatting throws (unexpected API shape, missing field, etc.), log to stderr
     // and surface a clear skip line so the user sees the gap but still gets the rest.
     try {
-      lines.push(formatMetavaultSummary(metavault, chain, positionMerklMap, undefined, merklWarnings));
+      lines.push(formatMetavaultSummary(metavault, chain, positionMerklMap, undefined, merklWarnings, undefined, chainTruthLine));
     } catch (e: any) {
       const msg = e?.message || String(e);
       console.error(`[formatMetavaultList] failed to format ${metavault?.name || metavault?.address || "?"} on ${chain}: ${msg}`);
