@@ -169,14 +169,20 @@ describe("resolveRpcUrlsWithFallbacks", () => {
     assert.equal(urls[0], "https://custom-rpc.example.com");
   });
 
-  it("returns primary RPC for katana", () => {
+  it("returns primary + fallbacks for katana", () => {
     const urls = resolveRpcUrlsWithFallbacks("katana");
-    assert.equal(urls.length, 1);
+    assert.ok(urls.length >= 2, "katana should have primary + at least 1 fallback");
     assert.equal(urls[0], CHAIN_RPC_URLS["katana"]);
   });
 
-  it("returns empty array for chains without RPCs", () => {
+  it("returns primary + fallbacks for monad", () => {
     const urls = resolveRpcUrlsWithFallbacks("monad");
+    assert.ok(urls.length >= 1, "monad should have at least primary RPC");
+    assert.equal(urls[0], CHAIN_RPC_URLS["monad"]);
+  });
+
+  it("returns empty array for unknown chain", () => {
+    const urls = resolveRpcUrlsWithFallbacks("nonexistent-chain-xyz");
     assert.equal(urls.length, 0);
   });
 
