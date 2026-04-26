@@ -355,29 +355,37 @@ list. Concurrency is capped at 6 simultaneous reads to avoid RPC rate limits.`,
                 if (idx >= entries.length) return;
                 const { metavault: mv, chain: mvChain } = entries[idx];
                 const key = `${mvChain}:${mv.address.toLowerCase()}`;
+                let timeoutId: ReturnType<typeof setTimeout> | undefined;
                 try {
                   const chainInput = projectChainReadInput(mv);
                   // Race the engine call against a hard timeout. If timeout
                   // fires, the worker writes a failed entry and moves to the
                   // next MV — the in-flight engine call continues to its own
                   // resolution but its result is ignored.
+                  //
+                  // Timer-leak fix (Sonnet+depth audit B2): the setTimeout
+                  // handle is stored and cleared in `finally` so the engine
+                  // winning the race does not leave a 30s-lived timer holding
+                  // the event loop reference. Long-running MCP server →
+                  // accumulated dangling timers per call → real leak.
+                  const timeoutPromise = new Promise<never>((_, reject) => {
+                    timeoutId = setTimeout(
+                      () =>
+                        reject(
+                          new Error(
+                            `chain-read timed out after ${PER_MV_TIMEOUT_MS}ms`,
+                          ),
+                        ),
+                      PER_MV_TIMEOUT_MS,
+                    );
+                  });
                   const state = await Promise.race([
                     readMetaVaultChainStateCached(
                       mvChain as any,
                       chainInput,
                       { forceRefresh: false },
                     ),
-                    new Promise<never>((_, reject) =>
-                      setTimeout(
-                        () =>
-                          reject(
-                            new Error(
-                              `chain-read timed out after ${PER_MV_TIMEOUT_MS}ms`,
-                            ),
-                          ),
-                        PER_MV_TIMEOUT_MS,
-                      ),
-                    ),
+                    timeoutPromise,
                   ]);
                   chainResults!.set(key, {
                     kind: "ok",
@@ -396,6 +404,12 @@ list. Concurrency is capped at 6 simultaneous reads to avoid RPC rate limits.`,
                     kind: "failed",
                     error: err?.message || String(err),
                   });
+                } finally {
+                  // Clear the race timer regardless of who won. If the engine
+                  // won, the timer is still pending and would fire later into
+                  // a no-op; clearing prevents the leak. If the timer won, it
+                  // already fired and clearTimeout is a safe no-op.
+                  if (timeoutId !== undefined) clearTimeout(timeoutId);
                 }
               }
             };
