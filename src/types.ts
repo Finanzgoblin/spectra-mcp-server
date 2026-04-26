@@ -556,8 +556,15 @@ export interface SpectraMetavaultRemoteEntry {
 }
 
 export interface SpectraMetavault {
-  address: string;         // MetaVault contract address
-  vault: string;           // Underlying ERC-4626 vault
+  address: string;         // MetaVault contract address (the Safe Proxy in Theme A topology)
+  vault: string;           // Outer ERC-4626 wrapper (secondaryVault in Theme A topology)
+  // Inner / PRIMARY ERC-4626 — this is the "infrastructure ERC-4626 vault"
+  // that aggregates deployed capital (its `totalAssets()` is the load-bearing
+  // chain-truth for `tvl.underlying`). Optional in the schema for forward-
+  // compat (some pre-onboarding API rows omit it); when present, Theme A's
+  // `readMetaVaultChainState` reads it as the primary accounting source.
+  // See docs/onchain-metavault-verification-spec.md §1 (Architecture diagram).
+  infraVault?: string;
   chainId: number;
   name: string;
   symbol: string;
@@ -611,11 +618,185 @@ export interface SpectraMetavault {
   // Module whitelist — module-name → enabled flag. Top-level is same-chain
   // modules; cross-chain modules live under `remote[chainId].modules`.
   modules?: Record<string, boolean>;
+  // Zodiac modifier address record — addresses only, no on-chain reads.
+  // The live API returns `roles` and `delay` as free-form `Record<string,string>`
+  // with at least `default`, `pool`, `swap` keys observed in production. Theme A
+  // captures this as data-only state; on-chain reads of Roles modifier
+  // membership/scope graphs are deferred (Appendix A in the spec).
+  modifier?: {
+    roles?: Record<string, string>;
+    delay?: Record<string, string>;
+  };
   // Cross-chain deployment map. Keys are chain IDs as decimal strings.
   remote?: Record<string, SpectraMetavaultRemoteEntry>;
   exchangeRate: string;
   price: { underlying: number; usd: number };
 }
+
+// =============================================================================
+// Theme A — On-Chain MetaVault Verification (Phase 1)
+// =============================================================================
+//
+// Engine in `src/chain-reads.ts` reads canonical on-chain state for a Spectra
+// MetaVault's three-role topology: Safe Proxy → infraVault (PRIMARY ERC-4626)
+// → secondaryVault (outer ERC-4626 wrapper). Phase 2 will surface this state
+// via `formatChainTruthFooter` in `src/formatters.ts`. The type signature is
+// frozen in Phase 1 so the engine has a stable consumer at the type-export
+// boundary (round-2 N15).
+//
+// Spec: docs/onchain-metavault-verification-spec.md §3.
+
+import type { ChainKey } from "./config.js";
+
+/**
+ * The slice projected from `SpectraMetavault` that the chain-reads engine
+ * consumes. Lives here (not in `chain-reads.ts`) because consumers from other
+ * tools may want to construct it from non-API sources without importing the
+ * engine itself. Decoupling this slice from `SpectraMetavault` keeps the engine
+ * substrate-agnostic.
+ */
+export interface ChainReadInput {
+  /** metavault.address — the Safe Proxy (or, in inverted topologies, the role flagged by `role-inversion-detected`). */
+  address: string;
+  /** metavault.vault — the outer ERC-4626 wrapper (secondaryVault). */
+  vault: string;
+  /** metavault.infraVault — the PRIMARY ERC-4626 (load-bearing accounting source). */
+  infraVault?: string;
+  /** Zodiac modifier addresses — data-only capture; no on-chain reads in Phase 1. */
+  modifier?: {
+    roles?: Record<string, string>;
+    delay?: Record<string, string>;
+  };
+  /** Cross-chain governance map — keys are decimal chain IDs as strings. */
+  remote?: Record<
+    string,
+    {
+      modifier?: {
+        roles?: Record<string, string>;
+        delay?: Record<string, string>;
+      };
+    }
+  >;
+  underlying: { address: string; decimals: number; symbol: string };
+}
+
+/** Top-level output of `readMetaVaultChainState`. */
+export interface MetaVaultChainState {
+  chain: ChainKey;
+  block: number;
+  rpcUsed: string;
+  /** Wall-clock ms timestamp when the engine fired (server-side, NOT block time). */
+  fetchedAt: number;
+  safe: SafeState;
+  infraVault: InfraVaultState | null;
+  secondaryVault: SecondaryVaultState | null;
+  modifiers: ModifierAddresses | null;
+  remoteModifiers: Record<string, ModifierAddresses>;
+  warnings: ChainReadWarning[];
+}
+
+export interface SafeState {
+  address: string;
+  bytecodePresent: boolean;
+  /** Bytecode size in bytes (excluding the `0x` prefix). 171 = canonical Safe Proxy. */
+  bytecodeSize: number;
+  isSafeProxy: boolean;
+  /** Raw masterCopy() return — null when the call reverts or returns malformed data. */
+  singleton: string | null;
+  /** Mapped to a known Safe singleton ID, or null when the masterCopy is unrecognized. */
+  singletonKnown: SafeSingletonId | null;
+  /** Underlying token balance held by the Safe (in raw token units). */
+  assetBalance: bigint | null;
+}
+
+export type SafeSingletonId = "safe-v1.4.1" | "safe-v1.3.0-l2" | "safe-v1.3.0";
+
+export interface InfraVaultState {
+  address: string;
+  bytecodePresent: boolean;
+  bytecodeSize: number;
+  /** ERC-4626 totalAssets() — load-bearing primary that reconciles against `api.tvl.underlying`. */
+  totalAssets: bigint | null;
+  totalSupply: bigint | null;
+  asset: string | null;
+  decimals: number | null;
+  name: string | null;
+  symbol: string | null;
+  /** Expected to equal SafeState.address when the topology is canonical. */
+  owner: string | null;
+  paused: boolean | null;
+  /** Underlying token balance held BY the infraVault contract directly. */
+  selfAssetBalance: bigint | null;
+}
+
+/**
+ * SecondaryVaultState — the OUTER ERC-4626 wrapper around infraVault.
+ *
+ * IMPORTANT (round-2 N2): agent prompts and tool outputs MUST NOT directly
+ * compare or reconcile `secondaryVault.totalAssets` against `api.tvl.underlying`
+ * or any other primary-aggregate metric. The two contracts measure different
+ * things: secondaryVault.totalAssets is user-entitlement (outer-vault scope);
+ * infraVault.totalAssets is total-deployed (primary aggregate). They share a
+ * share rate but not a TVL. See §7 advisory row.
+ *
+ * v1 captures the surface for the OQ-J disambiguation probe and to expose the
+ * outer-inner share-rate identity (a wrapper-pattern signature).
+ */
+export interface SecondaryVaultState {
+  address: string;
+  bytecodePresent: boolean;
+  bytecodeSize: number;
+  /** user-entitlement; do NOT reconcile against tvl.underlying */
+  totalAssets: bigint | null;
+  totalSupply: bigint | null;
+  asset: string | null;
+  decimals: number | null;
+  name: string | null;
+  symbol: string | null;
+  selfAssetBalance: bigint | null;
+  /** infraVault.balanceOf(secondaryVault) — wrapper signature (≥99% of infraVault.totalSupply expected). */
+  infraVaultShareBalance: bigint | null;
+}
+
+/** Flat projection of Zodiac modifier addresses (data-only — no on-chain reads). */
+export interface ModifierAddresses {
+  rolesDefault: string | null;
+  rolesPool: string | null;
+  rolesSwap: string | null;
+  delayDefault: string | null;
+}
+
+export interface ChainReadWarning {
+  severity: "info" | "warn" | "error";
+  code: ChainReadWarningCode;
+  detail: string;
+  /** Required (round-2 N9) — warnings are ammunition, not facts. The next investigation
+   *  step belongs at the construction site, not the consumer. */
+  nextProbe: string;
+  blockNumber?: number;
+}
+
+export type ChainReadWarningCode =
+  | "rpc-fallback-used"                    // ≥1 RPC failed before success
+  | "rpc-all-failed"                       // all RPCs in chain's fallback list failed
+  | "rpc-batch-truncated"                  // batch response length < request length (silent truncation)
+  | "safe-no-bytecode"
+  | "infravault-no-bytecode"
+  | "secondaryvault-no-bytecode"
+  | "secondaryvault-reasoning-prohibited"  // info: reads succeeded; reminds consumers OQ-L is open
+  | "pre-onboarding-state"                 // info: only Safe + infraVault have bytecode; secondaryVault empty
+  | "accounting-state-zero"                // warn: ALL contracts have null/zero supply (broken vault, NOT pre-onboarding)
+  | "safe-non-proxy"
+  | "safe-singleton-unknown"
+  | "asset-mismatch-infravault"            // infraVault.asset() != input.underlying.address
+  | "asset-mismatch-secondaryvault"
+  | "owner-mismatch"                       // infraVault.owner() != Safe address
+  | "wrapper-signature-broken"             // infraVault.balanceOf(secondaryVault) < 50% of totalSupply (OQ-J pattern violated)
+  | "tvl-divergence-small"
+  | "tvl-divergence-large"
+  | "price-feed-zero"                      // STAK-class signal
+  | "role-inversion-detected"              // ERC-4626 reads succeed at metavault.address (would invert the model)
+  | "remote-modifier-detected";            // info: cross-chain modifier present
 
 // =============================================================================
 // MetaVault Strategy Interfaces

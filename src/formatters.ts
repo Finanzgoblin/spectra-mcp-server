@@ -2,7 +2,7 @@
  * Data formatting helpers — USD, percentages, dates, balances, pool/position/Morpho summaries.
  */
 
-import type { SpectraPt, SpectraPool, SpectraMetavault, SpectraMetavaultPosition, MorphoMarket, MorphoVault, MorphoVaultAllocation, MorphoMarketSupplier, PendleMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavaultBridgeTx, MerklTokenReward, CrossProtocolMatch, CuratorOpportunity, MerklCampaign, MorphoUserPositions, MorphoHistoricalAnalysis, MorphoRateStats, MorphoPublicAllocatorLiquidity, CuratorRiskSummary, LiquidationAlert, RiskAlertLevel } from "./types.js";
+import type { SpectraPt, SpectraPool, SpectraMetavault, SpectraMetavaultPosition, MorphoMarket, MorphoVault, MorphoVaultAllocation, MorphoMarketSupplier, PendleMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavaultBridgeTx, MerklTokenReward, CrossProtocolMatch, CuratorOpportunity, MerklCampaign, MorphoUserPositions, MorphoHistoricalAnalysis, MorphoRateStats, MorphoPublicAllocatorLiquidity, CuratorRiskSummary, LiquidationAlert, RiskAlertLevel, MetaVaultChainState } from "./types.js";
 import { lookupMerklCampaigns } from "./api.js";
 import {
   formatUsd,
@@ -5186,4 +5186,21 @@ export function formatSchemaWarningFooter(
   }
   lines.push(`  If this persists, the Spectra API shape changed — update src/schemas/spectra.ts.`);
   return lines.join("\n");
+}
+
+// =============================================================================
+// Theme A — formatChainTruthFooter (Phase 1 stub)
+// =============================================================================
+//
+// Phase 1 invariant (spec §9 / round-2 N15): the Theme A engine ships with a
+// type-stable consumer at the formatter boundary so `MetaVaultChainState`
+// has somewhere to be rendered. The body is intentionally empty in Phase 1 —
+// Phase 2 replaces it with the §7.1 worked-example renderer (footer lines for
+// the curator dashboard). Type signature is FROZEN across phases.
+//
+// Returning an empty array (not [""]) means callers can `lines.push(...
+// formatChainTruthFooter(state))` without inserting blank lines into output.
+// Phase 2 will return non-empty arrays driven by warning severity.
+export function formatChainTruthFooter(_state: MetaVaultChainState): string[] {
+  return [];
 }
