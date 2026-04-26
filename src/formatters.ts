@@ -3133,6 +3133,121 @@ export function formatChainTruthSummaryLine(
   return `  [chain-truth ⚠] block ${block} via ${rpc} | ${actionable.length} warning(s): ${shown.join(", ")}${more}`;
 }
 
+// ─── Source-vault halt-check (Theme A Phase 4 sub-PR 2) ─────────────────────
+//
+// Why a sibling formatter and not a reuse of formatChainTruthSummaryLine?
+//
+// The list-view summary answers "is this MV verified, and how does its chain
+// TVL compare to the API?" — it surfaces drift on the clean path. The
+// rollover halt-check answers a different question: "should the curator
+// reason on this MV at all?" Drift is not a halt signal. Pause is. Role
+// inversion is. The two summaries share a render shape but filter the
+// engine's warning set differently — collapsing them would either bury
+// halt-relevant codes under irrelevant ones or strip useful drift context
+// from the list view. A sibling keeps each frame focused.
+//
+// The halt-check filters to the catastrophic / topology-shifted codes the
+// architect named (safe-no-bytecode, infravault-no-bytecode,
+// role-inversion-detected, accounting-state-zero, wrapper-signature-broken)
+// PLUS a synthetic "infravault-paused" pseudo-code derived from
+// state.infraVault.paused === true (the engine never emits a warning for
+// paused; we read the field directly per spec §6).
+//
+// Cache-age suffix: derived from state.fetchedAt vs render-time. The
+// curator dashboard and rollover share the readMetaVaultChainStateCached
+// 5-min TTL, so a curator who just rendered the dashboard hits the cache
+// and sees "(cached Xm ago)". Fresh reads (<30s) omit the suffix to keep
+// the line compact.
+export type RolloverHaltCheckResult =
+  | { kind: "ok"; state: MetaVaultChainState }
+  | { kind: "failed"; error: string };
+
+/**
+ * The subset of engine warning codes that count as halt-relevant for the
+ * rollover decision. Other codes (drift, info-only) do NOT halt; the
+ * curator can still reason on the source vault.
+ */
+const HALT_CHECK_CODES: ReadonlySet<string> = new Set([
+  "safe-no-bytecode",
+  "infravault-no-bytecode",
+  "role-inversion-detected",
+  "accounting-state-zero",
+  "wrapper-signature-broken",
+]);
+
+/**
+ * Compose the 1-line source-vault halt-check summary for the rollover output.
+ *
+ * Three shapes:
+ *   - clean: `  [source halt-check ✓] block N via {rpc}{cacheSuffix}`
+ *   - warn:  `  [source halt-check ⚠] block N via {rpc} | {n} actionable: code1, code2{cacheSuffix}`
+ *   - fail:  `  [source halt-check ✗] RPC unavailable: {short error}`
+ *
+ * Cache suffix is `" (cached Xm ago)"` when state was fetched ≥30s ago,
+ * blank otherwise. The threshold prevents "cached 0m ago" from cluttering
+ * fresh reads; once Xm ≥1 the suffix carries real signal about staleness.
+ */
+export function formatHaltCheckLine(result: RolloverHaltCheckResult): string {
+  if (result.kind === "failed") {
+    const shortErr = result.error.length > 80
+      ? result.error.slice(0, 77) + "..."
+      : result.error;
+    return `  [source halt-check ✗] RPC unavailable: ${shortErr}`;
+  }
+
+  const { state } = result;
+  const block = state.block ? state.block.toLocaleString("en-US") : "?";
+  const rpc = state.rpcUsed || "(no RPC)";
+
+  // Engine-returned all-null state: collapse to ✗ shape (matches list-view
+  // semantics — see formatChainTruthSummaryLine).
+  const allFailed = state.warnings.some((w) => w.code === "rpc-all-failed");
+  if (allFailed) {
+    const detail = state.warnings.find((w) => w.code === "rpc-all-failed")?.detail ?? "all RPCs failed";
+    const shortErr = detail.length > 80 ? detail.slice(0, 77) + "..." : detail;
+    return `  [source halt-check ✗] RPC unavailable: ${shortErr}`;
+  }
+
+  // Cache-age suffix: only render when ≥60s old, because the suffix uses
+  // minute-precision (`Math.floor(ageMs / 60_000)`). Reads in the 30–59s window
+  // would otherwise render as "cached 0m ago" — the exact noise the threshold
+  // exists to prevent (Sonnet+depth audit B1: original threshold was 30s,
+  // contradicting the comment's stated intent). Fresh reads (<60s) stay clean;
+  // reads ≥1m old surface integer minutes.
+  //
+  // Dissolution: if the engine's CHAIN_TRUTH_TTL_MS (currently 5min) changes,
+  // re-evaluate whether 60s is still the right suffix gate. If sub-minute
+  // staleness becomes load-bearing for a curator (e.g., per-block TTL), switch
+  // to seconds-precision rendering instead of bumping the threshold.
+  const ageMs = Date.now() - state.fetchedAt;
+  const cacheSuffix = ageMs >= 60_000
+    ? ` (cached ${Math.floor(ageMs / 60_000)}m ago)`
+    : "";
+
+  // Filter actionable warnings to the halt-check subset, then add a
+  // synthetic "infravault-paused" pseudo-code if the field is true. Read
+  // the field directly per spec §6 — engine never emits a paused warning.
+  // Cast each code to string to allow the synthetic pseudo-code to coexist
+  // with the engine's typed ChainReadWarningCode union in this local list.
+  const haltCodes: string[] = state.warnings
+    .filter((w) => HALT_CHECK_CODES.has(w.code))
+    .map((w) => w.code as string);
+  if (state.infraVault?.paused === true) {
+    haltCodes.push("infravault-paused");
+  }
+  const dedupedCodes = [...new Set(haltCodes)];
+
+  if (dedupedCodes.length === 0) {
+    return `  [source halt-check ✓] block ${block} via ${rpc}${cacheSuffix}`;
+  }
+
+  const shown = dedupedCodes.slice(0, 4);
+  const more = dedupedCodes.length > shown.length
+    ? `, +${dedupedCodes.length - shown.length} more`
+    : "";
+  return `  [source halt-check ⚠] block ${block} via ${rpc} | ${dedupedCodes.length} actionable: ${shown.join(", ")}${more}${cacheSuffix}`;
+}
+
 export function formatMetavaultSummary(
   mv: SpectraMetavault,
   chain: string,

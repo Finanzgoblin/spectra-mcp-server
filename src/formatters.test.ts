@@ -3238,3 +3238,253 @@ describe("formatMetavaultList — verify_onchain integration (Phase 4)", () => {
     assert.equal(text.includes("chain-truth"), false);
   });
 });
+
+// =============================================================================
+// formatHaltCheckLine — source-vault halt-check (Theme A Phase 4 sub-PR 2)
+// =============================================================================
+//
+// Tests the rollover halt-check formatter contract. Tool-level wiring (the
+// 30s Promise.race timeout, projectChainReadInput, readMetaVaultChainStateCached
+// cache hit) is exercised at the formatter contract level here:
+//   - verify_onchain=false → handler never builds a haltCheckLine, render
+//     contains no "halt-check" chrome (asserted at formatter level by
+//     omitting the line)
+//   - verify_onchain=true clean state → [✓] line, fresh-read no cache suffix
+//   - verify_onchain=true cached state → [✓] line WITH (cached Xm ago)
+//   - chain-read failure → [✗] line (formatter contract — handler builds
+//     RolloverHaltCheckResult with kind: "failed")
+//   - infraVault.paused=true synthesizes "infravault-paused" pseudo-code
+//   - actionable codes (subset filter) → [⚠] line with codes listed
+//   - non-halt codes (e.g., tvl-divergence-large, owner-mismatch) DO NOT
+//     trigger halt — they're list-view drift signals, not source-halt signals
+
+import {
+  formatHaltCheckLine,
+  type RolloverHaltCheckResult,
+} from "./formatters.js";
+
+describe("formatHaltCheckLine — source-vault pre-flight (Phase 4 sub-PR 2)", () => {
+  it("renders [✓] for clean info-only state with NO cache suffix when fresh", () => {
+    // Fresh read: state.fetchedAt within the 30s threshold → no suffix.
+    const state = makeCleanState({ fetchedAt: Date.now() });
+    const line = formatHaltCheckLine({ kind: "ok", state });
+    assert.match(line, /\[source halt-check ✓\]/);
+    assert.match(line, /block 45,?197,?827/);
+    assert.match(line, /via https/);
+    // No "(cached Xm ago)" suffix on fresh reads.
+    assert.equal(line.includes("(cached"), false);
+  });
+
+  it("renders [✓] WITH (cached Xm ago) suffix when fetchedAt is ≥60s old", () => {
+    // 4 minutes ago: cache hit, suffix should read "(cached 4m ago)".
+    const fourMinAgo = Date.now() - 4 * 60_000;
+    const state = makeCleanState({ fetchedAt: fourMinAgo });
+    const line = formatHaltCheckLine({ kind: "ok", state });
+    assert.match(line, /\[source halt-check ✓\]/);
+    assert.match(line, /\(cached 4m ago\)/);
+  });
+
+  it("renders [✓] WITHOUT cache suffix in the 30-59s window (B1 regression test)", () => {
+    // Sonnet+depth audit B1: legacy threshold of 30s combined with minute-
+    // floor rendering produced "(cached 0m ago)" — the noise the threshold
+    // existed to prevent. The fix raised the gate to 60s. This test pins
+    // the corrected behavior so a future regression to 30s is caught.
+    const fortyFiveSecAgo = Date.now() - 45_000;
+    const state = makeCleanState({ fetchedAt: fortyFiveSecAgo });
+    const line = formatHaltCheckLine({ kind: "ok", state });
+    assert.match(line, /\[source halt-check ✓\]/);
+    assert.equal(line.includes("(cached"), false, "30-59s reads must not render cache suffix");
+  });
+
+  it("renders [✗] from failed kind with truncated error", () => {
+    const longErr = "chain-read timed out after 30000ms; the underlying detail extends well past the 80-char truncation point and should be cut";
+    const line = formatHaltCheckLine({ kind: "failed", error: longErr });
+    assert.match(line, /\[source halt-check ✗\]/);
+    assert.match(line, /RPC unavailable/);
+    assert.match(line, /\.\.\./);
+  });
+
+  it("renders [✗] when state carries rpc-all-failed even on ok kind", () => {
+    // Engine returns a state object with rpc-all-failed instead of throwing —
+    // PR0 graceful degradation. Halt-check collapses to ✗ shape.
+    const state = makeCleanState({
+      block: 0,
+      rpcUsed: "",
+      warnings: [
+        {
+          severity: "error",
+          code: "rpc-all-failed",
+          detail: "all RPCs failed for base: tried 3 endpoints",
+          nextProbe: "use a premium RPC for chain base",
+        },
+      ],
+    });
+    const line = formatHaltCheckLine({ kind: "ok", state });
+    assert.match(line, /\[source halt-check ✗\]/);
+    assert.match(line, /RPC unavailable/);
+  });
+
+  it("renders [⚠] when role-inversion-detected fires (catastrophic topology shift)", () => {
+    const state = makeCleanState({
+      fetchedAt: Date.now(),
+      warnings: [
+        {
+          severity: "error",
+          code: "role-inversion-detected",
+          detail: "metavault.address responds to totalAssets()",
+          nextProbe: "halt further chain reasoning",
+        },
+      ],
+    });
+    const line = formatHaltCheckLine({ kind: "ok", state });
+    assert.match(line, /\[source halt-check ⚠\]/);
+    assert.match(line, /1 actionable/);
+    assert.match(line, /role-inversion-detected/);
+  });
+
+  it("renders [⚠] when infraVault.paused=true (synthetic infravault-paused code)", () => {
+    // Engine never emits a 'paused' warning — we read state.infraVault.paused
+    // directly per spec §6. This test guards that behavior.
+    const state = makeCleanState({ fetchedAt: Date.now() });
+    state.infraVault!.paused = true;
+    const line = formatHaltCheckLine({ kind: "ok", state });
+    assert.match(line, /\[source halt-check ⚠\]/);
+    assert.match(line, /infravault-paused/);
+  });
+
+  it("filters out non-halt codes — tvl-divergence-large does NOT trigger ⚠", () => {
+    // Drift is a list-view signal, not a halt signal. The rollover decision
+    // doesn't depend on source TVL accuracy (candidate ranking uses CANDIDATE
+    // pool liquidity), so drift on the source vault stays clean here.
+    const state = makeCleanState({
+      fetchedAt: Date.now(),
+      warnings: [
+        {
+          severity: "warn",
+          code: "tvl-divergence-large",
+          detail: "chain TVL diverges from API by 7.2%",
+          nextProbe: "check externalPositions",
+        },
+      ],
+    });
+    const line = formatHaltCheckLine({ kind: "ok", state });
+    assert.match(line, /\[source halt-check ✓\]/);
+    assert.equal(line.includes("[source halt-check ⚠]"), false);
+  });
+
+  it("filters out owner-mismatch — governance change is list-view signal, not halt", () => {
+    const state = makeCleanState({
+      fetchedAt: Date.now(),
+      warnings: [
+        {
+          severity: "warn",
+          code: "owner-mismatch",
+          detail: "infraVault.owner() != Safe address",
+          nextProbe: "ownership transfer or API drift",
+        },
+      ],
+    });
+    const line = formatHaltCheckLine({ kind: "ok", state });
+    assert.match(line, /\[source halt-check ✓\]/);
+  });
+
+  it("renders [⚠] for accounting-state-zero (broken vault deployment)", () => {
+    const state = makeCleanState({
+      fetchedAt: Date.now(),
+      warnings: [
+        {
+          severity: "warn",
+          code: "accounting-state-zero",
+          detail: "all vault accounting contracts show null/zero supply",
+          nextProbe: "trace deployment txn",
+        },
+      ],
+    });
+    const line = formatHaltCheckLine({ kind: "ok", state });
+    assert.match(line, /\[source halt-check ⚠\]/);
+    assert.match(line, /accounting-state-zero/);
+  });
+
+  it("renders [⚠] for wrapper-signature-broken (OQ-J pattern violated)", () => {
+    const state = makeCleanState({
+      fetchedAt: Date.now(),
+      warnings: [
+        {
+          severity: "warn",
+          code: "wrapper-signature-broken",
+          detail: "secondaryVault holds 0.0% of infraVault shares",
+          nextProbe: "topology shifted",
+        },
+      ],
+    });
+    const line = formatHaltCheckLine({ kind: "ok", state });
+    assert.match(line, /\[source halt-check ⚠\]/);
+    assert.match(line, /wrapper-signature-broken/);
+  });
+
+  it("renders [⚠] for safe-no-bytecode + infravault-no-bytecode (catastrophic)", () => {
+    const state = makeCleanState({
+      fetchedAt: Date.now(),
+      warnings: [
+        {
+          severity: "error",
+          code: "safe-no-bytecode",
+          detail: "Safe address has no code",
+          nextProbe: "verify on Etherscan",
+        },
+        {
+          severity: "error",
+          code: "infravault-no-bytecode",
+          detail: "infraVault address has no code",
+          nextProbe: "primary accounting source missing",
+        },
+      ],
+    });
+    const line = formatHaltCheckLine({ kind: "ok", state });
+    assert.match(line, /\[source halt-check ⚠\]/);
+    assert.match(line, /2 actionable/);
+    assert.match(line, /safe-no-bytecode/);
+    assert.match(line, /infravault-no-bytecode/);
+  });
+
+  it("combines paused field + halt-code warnings without double-counting", () => {
+    // role-inversion warning + paused field → 2 distinct codes.
+    const state = makeCleanState({
+      fetchedAt: Date.now(),
+      warnings: [
+        {
+          severity: "error",
+          code: "role-inversion-detected",
+          detail: "topology shift",
+          nextProbe: "halt",
+        },
+      ],
+    });
+    state.infraVault!.paused = true;
+    const line = formatHaltCheckLine({ kind: "ok", state });
+    assert.match(line, /\[source halt-check ⚠\]/);
+    assert.match(line, /2 actionable/);
+    assert.match(line, /role-inversion-detected/);
+    assert.match(line, /infravault-paused/);
+  });
+
+  it("preserves cache suffix on warn lines", () => {
+    // Both ✓ and ⚠ paths must show the cache age — staleness matters most
+    // when warnings fire (curator may want to force-refresh before halting).
+    const tenMinAgo = Date.now() - 10 * 60_000;
+    const state = makeCleanState({
+      fetchedAt: tenMinAgo,
+      warnings: [
+        {
+          severity: "error",
+          code: "role-inversion-detected",
+          detail: "topology shift",
+          nextProbe: "halt",
+        },
+      ],
+    });
+    const line = formatHaltCheckLine({ kind: "ok", state });
+    assert.match(line, /\[source halt-check ⚠\]/);
+    assert.match(line, /\(cached 10m ago\)/);
+  });
+});

@@ -40,7 +40,11 @@ import {
   cumulativeLeverageAtLoop,
   formatMorphoLltv,
   getEffectiveLiquidityUsd,
+  formatHaltCheckLine,
 } from "../formatters.js";
+import type { RolloverHaltCheckResult } from "../formatters.js";
+import { readMetaVaultChainStateCached, projectChainReadInput } from "../chain-reads.js";
+import type { ChainKey } from "../config.js";
 
 // ─── Formatting helpers (inline, not in formatters.ts) ──────────────────────
 
@@ -154,6 +158,14 @@ Use spectra_get_pool_capacity to assess depth at your capital size for specific 
         .boolean()
         .default(true)
         .describe("Whether to check Morpho looping availability for candidates (default true)."),
+      verify_onchain: z.boolean()
+        .optional()
+        .describe(
+          "Pre-flight halt-check on the SOURCE MetaVault before showing rollover candidates. Off by default — the candidate ranking does NOT depend on chain-truth (it ranks on candidate pool liquidity + lpApy, not source TVL). " +
+          "When true, reads the source vault's Safe + infraVault + secondaryVault via the same engine that powers spectra_get_curator_dashboard (5-min cache shared with the dashboard, so a curator who just rendered the dashboard hits cache for free). " +
+          "A halt-check line at the top of the output flags catastrophic / topology-shifted conditions (paused, role-inversion, missing bytecode, broken accounting, wrapper-signature-broken) that should make the curator pause before executing any rollover. Failures degrade to [✗] — the candidate listing still renders. " +
+          "Dissolution: if telemetry shows zero verify_onchain=true invocations within 60 days of ship, the flag is fossil.",
+        ),
     },
     async ({
       chain,
@@ -163,6 +175,7 @@ Use spectra_get_pool_capacity to assess depth at your capital size for specific 
       capital_usd,
       top_n,
       include_looping,
+      verify_onchain,
     }) => {
       try {
         // ── Fetch MetaVault data ──────────────────────────────────
@@ -174,6 +187,63 @@ Use spectra_get_pool_capacity to assess depth at your capital size for specific 
         if (!mv) {
           const text = `MetaVault ${metavault_address} not found on ${chain}.\nUse spectra_list_metavaults(chain="${chain}") to discover available MetaVaults.`;
           return { content: [{ type: "text" as const, text }], isError: true };
+        }
+
+        // ── Source-vault halt-check (Theme A Phase 4 sub-PR 2) ──────
+        //
+        // Off by default — candidate ranking is built from CANDIDATE pool
+        // liquidity + lpApy, NOT from source-vault TVL, so chain-truth on
+        // the source does not change the recommendation's load-bearing
+        // inputs. What it DOES change: whether the curator should reason
+        // on this source MV at all. A paused infraVault, a role-inverted
+        // Safe, or a broken wrapper signature all mean "halt — the
+        // rollover decision is unsound from the source side."
+        //
+        // Single-MV scope, no concurrency pool needed. Per-MV timeout 30s
+        // matches sub-PR 1 (spectra_list_metavaults) — long enough for one
+        // RPC fallback hop on a degraded chain, short enough that one bad
+        // chain doesn't blow up the rollover output budget.
+        //
+        // Cache shared with spectra_get_curator_dashboard: a curator who
+        // just rendered the dashboard hits cache for free (5-min TTL).
+        // PR0 graceful degradation: any failure → [✗] line, candidates
+        // still render.
+        let haltCheckLine: string | null = null;
+        if (verify_onchain) {
+          const PER_MV_TIMEOUT_MS = 30_000;
+          // Timer-leak fix (Sonnet+depth audit B2 on sub-PR 2; identical
+          // pattern hot-fixed in sub-PR 1 at 378e409): store the setTimeout
+          // handle so the engine winning the race doesn't leave a pending
+          // 30s timer holding the event-loop reference.
+          let timeoutId: ReturnType<typeof setTimeout> | undefined;
+          try {
+            const chainInput = projectChainReadInput(mv);
+            const timeoutPromise = new Promise<never>((_, reject) => {
+              timeoutId = setTimeout(
+                () => reject(new Error(`chain-read timed out after ${PER_MV_TIMEOUT_MS}ms`)),
+                PER_MV_TIMEOUT_MS,
+              );
+            });
+            const state = await Promise.race([
+              readMetaVaultChainStateCached(chain as ChainKey, chainInput, {
+                forceRefresh: false,
+              }),
+              timeoutPromise,
+            ]);
+            const haltResult: RolloverHaltCheckResult = { kind: "ok", state };
+            haltCheckLine = formatHaltCheckLine(haltResult);
+          } catch (err: any) {
+            console.error(
+              `[mv_plan_rollover] halt-check failed for ${mv.address} on ${chain}: ${err?.message || err}`,
+            );
+            const haltResult: RolloverHaltCheckResult = {
+              kind: "failed",
+              error: err?.message || String(err),
+            };
+            haltCheckLine = formatHaltCheckLine(haltResult);
+          } finally {
+            if (timeoutId !== undefined) clearTimeout(timeoutId);
+          }
         }
 
         // ── Identify expiring positions ───────────────────────────
@@ -271,13 +341,19 @@ Use spectra_get_pool_capacity to assess depth at your capital size for specific 
           const msg = pt_address
             ? `Position ${pt_address} not found in MetaVault ${metavault_address}.`
             : `No positions expiring within ${max_maturity_days} days in MetaVault ${mv.metadata?.title || mv.name}.`;
-          const text = [
+          const headerLines: string[] = [
             `== Rollover Planner ==`,
             `  Vault: ${mv.metadata?.title || mv.name} (${chain})`,
+          ];
+          // Halt-check renders right after vault identification — the curator
+          // sees source-vault health before being told there's nothing to roll.
+          if (haltCheckLine) headerLines.push(haltCheckLine);
+          headerLines.push(
             `  ${msg}`,
             ``,
             `  Tip: Use max_maturity_days to expand the window, or pt_address to target a specific position.`,
-          ].join("\n");
+          );
+          const text = headerLines.join("\n");
           return { content: [{ type: "text" as const, text }] };
         }
 
@@ -335,6 +411,12 @@ Use spectra_get_pool_capacity to assess depth at your capital size for specific 
 
         outputSections.push(`== Rollover Planner ==`);
         outputSections.push(`  Vault: ${mv.metadata?.title || mv.name} (${chain})`);
+        // Halt-check sits at the TOP — between vault identification and the
+        // body — so a curator sees catastrophic source-vault conditions
+        // before reading any candidate listing. Skipped silently when
+        // verify_onchain=false; off-by-default behavior is byte-identical
+        // to the pre-Phase-4 output.
+        if (haltCheckLine) outputSections.push(haltCheckLine);
         outputSections.push(`  Underlying: ${underlyingSymbol}`);
         outputSections.push(`  Expiring positions: ${expiringPositions.length}`);
         outputSections.push(``);
