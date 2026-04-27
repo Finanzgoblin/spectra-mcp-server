@@ -3488,3 +3488,525 @@ describe("formatHaltCheckLine — source-vault pre-flight (Phase 4 sub-PR 2)", (
     assert.match(line, /\(cached 10m ago\)/);
   });
 });
+
+// =============================================================================
+// Discard-layer Phase 1 — PR1, PR4, PR12b, PR17 (formatMetavaultSummary +
+// backports to formatPositionSummary + formatPoolSummary)
+// =============================================================================
+//
+// Spec: docs/discard-layer-spec.md §1 PR1, PR4, PR12b, PR17. Tests target the
+// rendering contract; bug-fix backport tests prove the Array-vs-object union
+// no longer silently no-ops on the {lp,yt} shape variant.
+
+import {
+  formatMetavaultSummary,
+  formatMultipliers,
+  hasPointsMultiplier,
+  formatPositionSummary,
+  formatPoolSummary,
+} from "./formatters.js";
+
+describe("formatMultipliers — Array | object union (PR12b core)", () => {
+  it("returns null for undefined input", () => {
+    assert.equal(formatMultipliers(undefined), null);
+  });
+
+  it("returns null for empty Array", () => {
+    assert.equal(formatMultipliers([]), null);
+  });
+
+  it("returns null for object with no populated branches", () => {
+    assert.equal(formatMultipliers({}), null);
+    assert.equal(formatMultipliers({ lp: [], yt: [] }), null);
+  });
+
+  it("renders Array form as comma-joined name-amountX pairs", () => {
+    const out = formatMultipliers([
+      { name: "Avant points", amount: 40 },
+      { name: "Aegis points", amount: 5 },
+    ]);
+    assert.equal(out, "Avant points 40x, Aegis points 5x");
+  });
+
+  it("renders single-item Array form", () => {
+    const out = formatMultipliers([{ name: "Firelight points", amount: 2 }]);
+    assert.equal(out, "Firelight points 2x");
+  });
+
+  it("renders object form with lp + yt branches as bracketed | join", () => {
+    const out = formatMultipliers({
+      lp: [{ name: "Avant points", amount: 40 }],
+      yt: [{ name: "Avant points", amount: 60 }],
+    });
+    assert.equal(out, "lp [Avant points 40x] | yt [Avant points 60x]");
+  });
+
+  it("renders object form with only lp populated (skips empty yt)", () => {
+    const out = formatMultipliers({
+      lp: [{ name: "Avant points", amount: 40 }],
+      yt: [],
+    });
+    assert.equal(out, "lp [Avant points 40x]");
+  });
+
+  it("renders object form with only yt populated (skips missing lp)", () => {
+    const out = formatMultipliers({
+      yt: [{ name: "Avant points", amount: 60 }],
+    });
+    assert.equal(out, "yt [Avant points 60x]");
+  });
+});
+
+describe("hasPointsMultiplier — /points$/i detection across union shapes", () => {
+  it("returns false for undefined / empty", () => {
+    assert.equal(hasPointsMultiplier(undefined), false);
+    assert.equal(hasPointsMultiplier([]), false);
+    assert.equal(hasPointsMultiplier({}), false);
+  });
+
+  it("detects 'Avant points' in Array form (case-insensitive)", () => {
+    assert.equal(hasPointsMultiplier([{ name: "Avant points", amount: 40 }]), true);
+    assert.equal(hasPointsMultiplier([{ name: "avant POINTS", amount: 40 }]), true);
+  });
+
+  it("rejects 'Drops' (does not end in 'points')", () => {
+    assert.equal(hasPointsMultiplier([{ name: "Drops", amount: 3 }]), false);
+  });
+
+  it("detects mixed Array (Drops + InfiniFi points) — second item triggers", () => {
+    assert.equal(
+      hasPointsMultiplier([
+        { name: "Drops", amount: 3 },
+        { name: "InfiniFi points", amount: 12 },
+      ]),
+      true,
+    );
+  });
+
+  it("detects in object form (lp branch)", () => {
+    assert.equal(
+      hasPointsMultiplier({
+        lp: [{ name: "Avant points", amount: 40 }],
+      }),
+      true,
+    );
+  });
+
+  it("detects in object form (yt branch when lp missing)", () => {
+    assert.equal(
+      hasPointsMultiplier({
+        yt: [{ name: "Avant points", amount: 60 }],
+      }),
+      true,
+    );
+  });
+});
+
+describe("formatMetavaultSummary — PR1 inception + track-record bucket", () => {
+  // PR1 — `Inception: <YYYY-MM-DD> (<N>d ago, track-record-class: <bucket>)`.
+  // Buckets: <30d, 30-90d, ≥90d. Silent when createdAt undefined.
+  // Use Math.floor((Date.now()/1000 - createdAt)/86400) — relative to test
+  // run-date, so we frame `createdAt` against `Date.now()`.
+  const NOW = Math.floor(Date.now() / 1000);
+
+  function mkMv(overrides: any): any {
+    return {
+      address: "0xa0",
+      vault: "0xb0",
+      chainId: 8453,
+      decimals: 6,
+      name: "TestVault",
+      symbol: "TV",
+      curator: { name: "Curator", addresses: ["0xabc"] },
+      underlying: { address: "0x1", symbol: "USDC", decimals: 6, price: { usd: 1 } },
+      tvl: { usd: 1000, underlying: 1000 },
+      liveApy: { total: 0.05 },
+      positions: [],
+      epochs: [],
+      bridge: { transactions: [] },
+      ...overrides,
+    };
+  }
+
+  it("renders <30d bucket for fresh vault (5 days old)", () => {
+    const mv = mkMv({ createdAt: NOW - 5 * 86400 });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /Inception: \d{4}-\d{2}-\d{2} \(5d ago, track-record-class: <30d\)/);
+  });
+
+  it("renders 30-90d bucket at lower boundary (30 days old)", () => {
+    const mv = mkMv({ createdAt: NOW - 30 * 86400 });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /track-record-class: 30-90d/);
+  });
+
+  it("renders 30-90d bucket mid-range (60 days old)", () => {
+    const mv = mkMv({ createdAt: NOW - 60 * 86400 });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /\(60d ago, track-record-class: 30-90d\)/);
+  });
+
+  it("renders ≥90d bucket at lower boundary (90 days old)", () => {
+    const mv = mkMv({ createdAt: NOW - 90 * 86400 });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /track-record-class: ≥90d/);
+  });
+
+  it("renders ≥90d bucket for established vault (300 days old)", () => {
+    const mv = mkMv({ createdAt: NOW - 300 * 86400 });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /\(300d ago, track-record-class: ≥90d\)/);
+  });
+
+  it("silent when createdAt undefined", () => {
+    const mv = mkMv({});
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(out.includes("Inception:"), false);
+    assert.equal(out.includes("track-record-class"), false);
+  });
+
+  it("inception line appears between Curator and Underlying lines", () => {
+    const mv = mkMv({ createdAt: NOW - 100 * 86400 });
+    const out = formatMetavaultSummary(mv, "base");
+    const lines = out.split("\n");
+    const curatorIdx = lines.findIndex((l) => l.startsWith("  Curator:"));
+    const inceptionIdx = lines.findIndex((l) => l.startsWith("  Inception:"));
+    const underlyingIdx = lines.findIndex((l) => l.startsWith("  Underlying:"));
+    assert.ok(curatorIdx >= 0 && inceptionIdx > curatorIdx && underlyingIdx > inceptionIdx,
+      "order: Curator → Inception → Underlying");
+  });
+});
+
+describe("formatMetavaultSummary — PR4 vault-level tags", () => {
+  const NOW = Math.floor(Date.now() / 1000);
+  function mkMv(overrides: any): any {
+    return {
+      address: "0xa0",
+      vault: "0xb0",
+      chainId: 8453,
+      decimals: 6,
+      name: "TestVault",
+      symbol: "TV",
+      curator: { name: "Curator", addresses: ["0xabc"] },
+      underlying: { address: "0x1", symbol: "USDC", decimals: 6, price: { usd: 1 } },
+      tvl: { usd: 1000, underlying: 1000 },
+      liveApy: { total: 0.05 },
+      positions: [],
+      epochs: [],
+      bridge: { transactions: [] },
+      createdAt: NOW - 100 * 86400,
+      ...overrides,
+    };
+  }
+
+  it("renders vault tags as bracketed comma-joined list", () => {
+    const mv = mkMv({ tags: ["stable"] });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^  Tags: \[stable\]$/m);
+  });
+
+  it("renders multi-tag vault (the spec's example shape)", () => {
+    const mv = mkMv({ tags: ["stable", "eth"] });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^  Tags: \[stable, eth\]$/m);
+  });
+
+  it("silent when tags undefined", () => {
+    const mv = mkMv({});
+    const out = formatMetavaultSummary(mv, "base");
+    // No vault-level Tags line. (Per-position Tags would have 6-space indent.)
+    assert.equal(/^  Tags:/m.test(out), false);
+  });
+
+  it("silent when tags empty array", () => {
+    const mv = mkMv({ tags: [] });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^  Tags:/m.test(out), false);
+  });
+});
+
+describe("formatMetavaultSummary — fixture-driven PR4/PR12b/PR17 (per-position)", () => {
+  // Tests run from build/; fixtures live at repo-root/test/fixtures.
+  const __dirname_ph1 = dirname(fileURLToPath(import.meta.url));
+  const fixturesDir = resolve(__dirname_ph1, "../test/fixtures");
+  function loadMvFixture(chain: string): any[] {
+    return JSON.parse(readFileSync(resolve(fixturesDir, `metavaults-${chain}.json`), "utf8"));
+  }
+
+  it("base Gami USDC: vault-level Tags renders [stable]", () => {
+    const mv = loadMvFixture("base").find((m: any) => m.name === "Gami USDC");
+    assert.ok(mv, "fixture missing");
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^  Tags: \[stable\]$/m);
+  });
+
+  it("base Gami USDC pos[3] (sw-avUSD): renders Wraps + object-form Multipliers + attribution-creep", () => {
+    const mv = loadMvFixture("base").find((m: any) => m.name === "Gami USDC");
+    const out = formatMetavaultSummary(mv, "base");
+    // PR17 — sw-avUSD wraps avUSD (baseIbt.symbol differs from ibt.symbol).
+    assert.match(out, /^      Wraps: avUSD$/m);
+    // PR12b — object form: lp [Avant points 40x] | yt [Avant points 60x].
+    assert.match(out, /lp \[Avant points 40x\] \| yt \[Avant points 60x\]/);
+    // PR4 — attribution-creep flag (rewards empty + points declared).
+    assert.match(
+      out,
+      /Multipliers: lp \[Avant points 40x\] \| yt \[Avant points 60x\] \(no on-chain rewards populated — points program declared, settlement evidence absent\)/,
+    );
+  });
+
+  it("katana CSMVUSDC pos[2] (sw-syUSD): renders Array-form Multipliers (Drops + InfiniFi)", () => {
+    const mv = loadMvFixture("katana").find((m: any) => m.name === "Clearstar USDC");
+    assert.ok(mv, "fixture missing");
+    const out = formatMetavaultSummary(mv, "katana");
+    // PR12b Array form. PR4: 'InfiniFi points' triggers /points$/i ('Drops' alone would not).
+    assert.match(out, /Multipliers: Drops 3x, InfiniFi points 12x \(no on-chain rewards populated — points program declared, settlement evidence absent\)/);
+    // PR17 — sw-syUSD wraps syUSD.
+    assert.match(out, /^      Wraps: syUSD$/m);
+    // PR4 — per-position Tags (the only fixture chain where pos.tags populates).
+    assert.match(out, /^      Tags: \[stable\]$/m);
+  });
+
+  it("katana CSMVUSDC pos[0,1,3] (yvvbUSDC/yvvbUSDT): no Multipliers line (rewards populated, multipliers absent)", () => {
+    const mv = loadMvFixture("katana").find((m: any) => m.name === "Clearstar USDC");
+    const out = formatMetavaultSummary(mv, "katana");
+    // These positions have rewards but no multipliers — silent on Multipliers,
+    // but per-position Tags still renders since pos.tags = ["stable"].
+    // Match a yvvbUSDC PT block; no Multipliers immediately following.
+    const lines = out.split("\n");
+    const yvIdx = lines.findIndex((l) => /yvvbUSDC.*EXPIRED|yvvbUSDC.*\(\d+d\)/.test(l));
+    assert.ok(yvIdx >= 0, "yvvbUSDC position not found");
+    // Within the next 6 lines (the position's block), no Multipliers should appear
+    // for the yvvbUSDC entry — verify by finding the next position-header line.
+    const nextHeaderRel = lines.slice(yvIdx + 1).findIndex((l) => /^    PT-/.test(l));
+    const blockEnd = nextHeaderRel < 0 ? lines.length : yvIdx + 1 + nextHeaderRel;
+    const block = lines.slice(yvIdx, blockEnd).join("\n");
+    assert.equal(block.includes("Multipliers:"), false, "yvvbUSDC block must be silent on Multipliers");
+  });
+
+  it("flare gamisXRP pos[0]: Array-form Firelight points — attribution-creep fires", () => {
+    const mv = loadMvFixture("flare").find((m: any) => m.name === "Gami Spectra XRP");
+    assert.ok(mv, "fixture missing");
+    const out = formatMetavaultSummary(mv, "flare");
+    assert.match(out, /Multipliers: Firelight points 2x \(no on-chain rewards populated — points program declared, settlement evidence absent\)/);
+    // gamisXRP has tags=undefined at vault level → no vault Tags line.
+    assert.equal(/^  Tags:/m.test(out), false);
+  });
+
+  it("mainnet WETH MetaVault: Fusion points + Wraps fusnstETH", () => {
+    const mv = loadMvFixture("mainnet").find((m: any) => m.name === "WETH MetaVault");
+    assert.ok(mv, "fixture missing");
+    const out = formatMetavaultSummary(mv, "mainnet");
+    assert.match(out, /Multipliers: Fusion points 10x \(no on-chain rewards populated — points program declared, settlement evidence absent\)/);
+    assert.match(out, /^      Wraps: fusnstETH$/m);
+    // Vault-level Tags = ["eth"].
+    assert.match(out, /^  Tags: \[eth\]$/m);
+  });
+
+  it("base UltraYield WETH pos[0] (sw-weETH): Wraps renders, no Multipliers (none populated)", () => {
+    const mv = loadMvFixture("base").find((m: any) => m.name === "UltraYield WETH");
+    assert.ok(mv, "fixture missing");
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^      Wraps: weETH$/m);
+    // pos[0] has no multipliers → flag silent.
+    // Find the sw-weETH block and confirm no Multipliers line within it.
+    const lines = out.split("\n");
+    const wIdx = lines.findIndex((l) => /sw-weETH/.test(l) && /^    PT-/.test(l));
+    assert.ok(wIdx >= 0, "sw-weETH header not found");
+    const nextHeaderRel = lines.slice(wIdx + 1).findIndex((l) => /^    PT-/.test(l));
+    const blockEnd = nextHeaderRel < 0 ? Math.min(wIdx + 8, lines.length) : wIdx + 1 + nextHeaderRel;
+    const block = lines.slice(wIdx, blockEnd).join("\n");
+    assert.equal(block.includes("Multipliers:"), false);
+  });
+});
+
+describe("formatPositionSummary — PR12b backport (formatters.ts:676)", () => {
+  // The pre-fix bug: `pos.multipliers && pos.multipliers.length > 0` silently
+  // no-ops on the object-form `{lp, yt}` variant — `.length` is undefined,
+  // truthy check fails. Backport uses formatMultipliers() which handles both.
+  function mkPos(overrides: any): any {
+    return {
+      name: "PT-test",
+      address: "0xpt",
+      maturity: Math.floor(Date.now() / 1000) + 86400 * 30,
+      decimals: 18,
+      balance: (10n ** 18n).toString(), // 1.0 PT
+      pools: [
+        {
+          address: "0xpool",
+          ptPrice: { usd: 0.95 },
+          ytPrice: { usd: 0.05 },
+          impliedApy: 0.05,
+          lpApy: { total: 0.04 },
+        },
+      ],
+      ibt: { symbol: "iUSDC", address: "0xibt", decimals: 18 },
+      underlying: { symbol: "USDC", address: "0xu", decimals: 6 },
+      ...overrides,
+    };
+  }
+
+  it("renders Array-form multipliers as 'Points: <list>'", () => {
+    const pos = mkPos({
+      multipliers: [
+        { name: "Avant points", amount: 40 },
+        { name: "Aegis points", amount: 5 },
+      ],
+    });
+    const result = formatPositionSummary(pos as SpectraPt, "base");
+    assert.ok(result, "result must not be null");
+    assert.match(result!.text, /^  Points: Avant points 40x, Aegis points 5x$/m);
+  });
+
+  it("renders object-form multipliers (PRE-FIX BUG: would silently no-op)", () => {
+    const pos = mkPos({
+      multipliers: {
+        lp: [{ name: "Avant points", amount: 40 }],
+        yt: [{ name: "Avant points", amount: 60 }],
+      },
+    });
+    const result = formatPositionSummary(pos as SpectraPt, "base");
+    assert.ok(result, "result must not be null");
+    assert.match(result!.text, /^  Points: lp \[Avant points 40x\] \| yt \[Avant points 60x\]$/m);
+  });
+
+  it("silent on undefined multipliers", () => {
+    const pos = mkPos({});
+    const result = formatPositionSummary(pos as SpectraPt, "base");
+    assert.ok(result);
+    assert.equal(result!.text.includes("Points:"), false);
+  });
+
+  it("silent on empty Array multipliers", () => {
+    const pos = mkPos({ multipliers: [] });
+    const result = formatPositionSummary(pos as SpectraPt, "base");
+    assert.ok(result);
+    assert.equal(result!.text.includes("Points:"), false);
+  });
+
+  it("silent on object multipliers with no populated branches", () => {
+    const pos = mkPos({ multipliers: { lp: [], yt: [] } });
+    const result = formatPositionSummary(pos as SpectraPt, "base");
+    assert.ok(result);
+    assert.equal(result!.text.includes("Points:"), false);
+  });
+});
+
+describe("formatPoolSummary — PR12b backport (formatters.ts:592)", () => {
+  // Same bug-class as formatPositionSummary — fixed via formatMultipliers().
+  function mkPt(overrides: any): any {
+    return {
+      name: "PT-test",
+      address: "0xpt",
+      maturity: Math.floor(Date.now() / 1000) + 86400 * 30,
+      decimals: 18,
+      tvl: { usd: 100_000 },
+      pools: [
+        {
+          address: "0xpool",
+          ptPrice: { usd: 0.95, underlying: 0.95 },
+          ytPrice: { usd: 0.05 },
+          ytLeverage: 20,
+          impliedApy: 0.05,
+          ptApy: 0.05,
+          liquidity: { usd: 1_000_000 },
+          ibtAmount: "1000",
+          ptAmount: "1000",
+        },
+      ],
+      ibt: { symbol: "iUSDC", protocol: "TestProtocol" },
+      ...overrides,
+    };
+  }
+
+  it("renders Array-form multipliers as 'Points: <list>'", () => {
+    const pt = mkPt({
+      multipliers: [{ name: "Drops", amount: 3 }, { name: "InfiniFi points", amount: 12 }],
+    });
+    const out = formatPoolSummary(pt as SpectraPt, pt.pools[0] as SpectraPool, "base");
+    assert.match(out, /^  Points: Drops 3x, InfiniFi points 12x$/m);
+  });
+
+  it("renders object-form multipliers (PRE-FIX BUG: would silently no-op)", () => {
+    const pt = mkPt({
+      multipliers: {
+        lp: [{ name: "Avant points", amount: 40 }],
+        yt: [{ name: "Avant points", amount: 60 }],
+      },
+    });
+    const out = formatPoolSummary(pt as SpectraPt, pt.pools[0] as SpectraPool, "base");
+    assert.match(out, /^  Points: lp \[Avant points 40x\] \| yt \[Avant points 60x\]$/m);
+  });
+
+  it("silent on undefined multipliers", () => {
+    const pt = mkPt({});
+    const out = formatPoolSummary(pt as SpectraPt, pt.pools[0] as SpectraPool, "base");
+    assert.equal(out.includes("Points:"), false);
+  });
+
+  it("silent on empty Array multipliers", () => {
+    const pt = mkPt({ multipliers: [] });
+    const out = formatPoolSummary(pt as SpectraPt, pt.pools[0] as SpectraPool, "base");
+    assert.equal(out.includes("Points:"), false);
+  });
+
+  it("silent on object multipliers with no populated branches", () => {
+    const pt = mkPt({ multipliers: {} });
+    const out = formatPoolSummary(pt as SpectraPt, pt.pools[0] as SpectraPool, "base");
+    assert.equal(out.includes("Points:"), false);
+  });
+});
+
+describe("PR12b cross-call-site parity — same input renders consistently", () => {
+  // The three call sites (formatMetavaultSummary, formatPositionSummary,
+  // formatPoolSummary) share the formatMultipliers helper. This guards against
+  // future drift where one site receives a fix the others don't.
+  const objMult = {
+    lp: [{ name: "Avant points", amount: 40 }],
+    yt: [{ name: "Avant points", amount: 60 }],
+  };
+  const expectedRender = "lp [Avant points 40x] | yt [Avant points 60x]";
+
+  it("formatMultipliers (the shared helper) produces the canonical render", () => {
+    assert.equal(formatMultipliers(objMult), expectedRender);
+  });
+
+  it("formatPositionSummary uses the canonical render", () => {
+    const pos: any = {
+      name: "PT-test",
+      address: "0xpt",
+      maturity: Math.floor(Date.now() / 1000) + 86400 * 30,
+      decimals: 18,
+      balance: (10n ** 18n).toString(),
+      pools: [{ address: "0xp", ptPrice: { usd: 0.95 }, ytPrice: { usd: 0.05 }, lpApy: { total: 0 }, impliedApy: 0 }],
+      multipliers: objMult,
+    };
+    const r = formatPositionSummary(pos as SpectraPt, "base");
+    assert.ok(r);
+    assert.ok(r!.text.includes(expectedRender));
+  });
+
+  it("formatPoolSummary uses the canonical render", () => {
+    const pt: any = {
+      name: "PT-test",
+      address: "0xpt",
+      maturity: Math.floor(Date.now() / 1000) + 86400 * 30,
+      decimals: 18,
+      tvl: { usd: 100_000 },
+      pools: [{
+        address: "0xp",
+        ptPrice: { usd: 0.95, underlying: 0.95 },
+        ytPrice: { usd: 0.05 },
+        ytLeverage: 20,
+        ptApy: 0,
+        impliedApy: 0,
+        liquidity: { usd: 1_000_000 },
+        ibtAmount: "1",
+        ptAmount: "1",
+      }],
+      ibt: { symbol: "iUSDC", protocol: "X" },
+      multipliers: objMult,
+    };
+    const out = formatPoolSummary(pt as SpectraPt, pt.pools[0] as SpectraPool, "base");
+    assert.ok(out.includes(expectedRender));
+  });
+});

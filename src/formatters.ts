@@ -338,9 +338,12 @@ export function formatPoolCompact(pt: SpectraPt, pool: SpectraPool, chain: strin
   const lpApy = pool.lpApy?.total ? ` | LP ${formatPct(pool.lpApy.total)}` : "";
   const ibtAddr = pt.ibt?.address ? ` | IBT: ${pt.ibt.address}` : "";
   const tags = pt.tags && pt.tags.length > 0 ? ` | ${pt.tags.join(",")}` : "";
-  const points = pt.multipliers && pt.multipliers.length > 0
-    ? ` | Points: ${pt.multipliers.map(m => `${m.name} ${m.amount}x`).join(", ")}`
-    : "";
+  // PR12b backport (architect inline-fix during Phase 1 audit synthesis):
+  // formatMultipliers handles both Array and {lp,yt} object union shapes
+  // via Array.isArray() disambiguation. Prior `multipliers.length > 0` check
+  // silently no-op'd on object-form (8/15 fixture positions affected).
+  const mFmt = formatMultipliers(pt.multipliers);
+  const points = mFmt ? ` | Points: ${mFmt}` : "";
   const priceFeedWarn = (pt.tvl?.usd || 0) === 0 && (pool.liquidity?.usd || 0) === 0
     && pool.ibtAmount && pool.ptAmount && (Number(pool.ibtAmount) > 0 || Number(pool.ptAmount) > 0)
     ? " | ⚡ $0 USD — likely price feed outage, not empty pool"
@@ -353,9 +356,9 @@ export function formatScanOpportunityCompact(opp: ScanOpportunity, rank: number)
   const loopTag = opp.looping
     ? ` | Loop ${formatPct(opp.looping.optimalEffectiveNetApy)} @${opp.looping.optimalLoops}x`
     : "";
-  const points = opp.pt.multipliers && opp.pt.multipliers.length > 0
-    ? ` | Points: ${opp.pt.multipliers.map(m => `${m.name} ${m.amount}x`).join(", ")}`
-    : "";
+  // PR12b backport (architect inline-fix during Phase 1 audit synthesis).
+  const mFmt = formatMultipliers(opp.pt.multipliers);
+  const points = mFmt ? ` | Points: ${mFmt}` : "";
   // Use sortApy (the same metric used for ranking) to avoid showing wildly negative effectiveApy
   // while sorting by a different field — agents anchor on the displayed number.
   const displayApy = opp.sortApy ?? opp.effectiveApy;
@@ -435,6 +438,78 @@ export function formatMerklCampaignLines(
     lines.push(`${indent}+-- ${tokens} (${action})${eligNote}: ${formatPct(c.apr)} APR${endNote}`);
   }
   return lines;
+}
+
+// =============================================================================
+// Multiplier render helpers (PR12b — discard-layer-spec §1)
+// =============================================================================
+//
+// `position.multipliers` per MultipliersSchema (src/schemas/spectra.ts:185-193)
+// is a UNION:
+//   - Array<{ name, amount }>            — flat per-position program (e.g. Aegis 5x)
+//   - { lp?: [...], yt?: [...] }         — split per role (e.g. Avant 40x lp / 60x yt)
+//
+// Bug-fix backport context: existing code at formatPoolSummary:592 and
+// formatPositionSummary:676 used `multipliers.length > 0`, which silently no-ops
+// on the object-form variant — 8 of 15 fixture positions render nothing where
+// multipliers should appear. These helpers + backport restore parity.
+//
+// Render shape choice (flagged as design choice for architect):
+//   Array  → "Avant points 40x, Aegis points 5x"
+//   Object → "lp [Avant points 40x] | yt [Avant points 60x]"
+//   Object with empty branch → omit that branch (e.g. only lp populated → "lp [...]")
+//
+// Returns null when input is undefined/empty/zero-content so callers can skip
+// the line entirely (silent-on-clean per spec §0).
+
+interface MultiplierItem { name: string; amount: number; }
+
+function formatMultiplierItems(items: MultiplierItem[]): string {
+  return items.map((m) => `${m.name} ${m.amount}x`).join(", ");
+}
+
+/**
+ * Render a multipliers union value to a single inline string.
+ *
+ * Returns null for: undefined, empty Array, object with no populated branches.
+ * Used by formatMetavaultSummary (per-position) AND backported to
+ * formatPoolSummary + formatPositionSummary as the bug-fix path.
+ */
+export function formatMultipliers(multipliers: unknown): string | null {
+  if (!multipliers) return null;
+  if (Array.isArray(multipliers)) {
+    if (multipliers.length === 0) return null;
+    return formatMultiplierItems(multipliers as MultiplierItem[]);
+  }
+  // Object form: { lp?: [...], yt?: [...] }
+  const obj = multipliers as { lp?: MultiplierItem[]; yt?: MultiplierItem[] };
+  const parts: string[] = [];
+  if (Array.isArray(obj.lp) && obj.lp.length > 0) {
+    parts.push(`lp [${formatMultiplierItems(obj.lp)}]`);
+  }
+  if (Array.isArray(obj.yt) && obj.yt.length > 0) {
+    parts.push(`yt [${formatMultiplierItems(obj.yt)}]`);
+  }
+  if (parts.length === 0) return null;
+  return parts.join(" | ");
+}
+
+/**
+ * Detect whether a multipliers value contains any entry whose name ends in
+ * "points" (case-insensitive). Used by PR4 attribution-creep flag — fires when
+ * a points program is declared but on-chain rewards are absent (settlement
+ * evidence missing).
+ *
+ * Walks both Array and object-form shapes. Bare empty/undefined returns false.
+ */
+export function hasPointsMultiplier(multipliers: unknown): boolean {
+  if (!multipliers) return false;
+  const re = /points$/i;
+  const test = (items: unknown): boolean =>
+    Array.isArray(items) && items.some((m) => typeof m?.name === "string" && re.test(m.name));
+  if (Array.isArray(multipliers)) return test(multipliers);
+  const obj = multipliers as { lp?: unknown; yt?: unknown };
+  return test(obj.lp) || test(obj.yt);
 }
 
 // =============================================================================
@@ -589,9 +664,13 @@ export function formatPoolSummary(pt: SpectraPt, pool: SpectraPool, chain: strin
   }
 
   // Points program multipliers (e.g. Drops 3x, InfiniFi 12x)
-  if (pt.multipliers && pt.multipliers.length > 0) {
-    const mParts = pt.multipliers.map(m => `${m.name} ${m.amount}x`);
-    lines.push(`  Points: ${mParts.join(", ")}`);
+  // PR12b backport: schema MultipliersSchema is a union of Array | {lp,yt} — the
+  // prior `pt.multipliers.length > 0` check silently no-op'd on object-form
+  // variants (8 of 15 fixture positions affected). formatMultipliers handles
+  // both shapes and returns null for empty/undefined.
+  const ptMultLine = formatMultipliers(pt.multipliers);
+  if (ptMultLine) {
+    lines.push(`  Points: ${ptMultLine}`);
   }
 
   // Asset tags (stable, eth, etc.)
@@ -673,9 +752,11 @@ export function formatPositionSummary(pos: SpectraPt, chain: string): PositionRe
   }
 
   // Points programs
-  if (pos.multipliers && pos.multipliers.length > 0) {
-    const mParts = pos.multipliers.map(m => `${m.name} ${m.amount}x`);
-    lines.push(`  Points: ${mParts.join(", ")}`);
+  // PR12b backport: see formatPoolSummary above — Array.isArray() disambiguation
+  // via formatMultipliers fixes silent no-op on object-form multipliers.
+  const posMultLine = formatMultipliers(pos.multipliers);
+  if (posMultLine) {
+    lines.push(`  Points: ${posMultLine}`);
   }
 
   // Current rates for context
@@ -2781,10 +2862,11 @@ export function formatScanOpportunity(opp: ScanOpportunity, rank: number, boostI
     lines.push(`    ${scanEntryPath}`);
   }
 
-  // Points programs
-  if (opp.pt.multipliers && opp.pt.multipliers.length > 0) {
-    const mParts = opp.pt.multipliers.map(m => `${m.name} ${m.amount}x`);
-    lines.push(`    Points: ${mParts.join(", ")}`);
+  // Points programs — PR12b backport (architect inline-fix during Phase 1 audit
+  // synthesis). formatMultipliers handles both Array and {lp,yt} shapes.
+  const mFmtFull = formatMultipliers(opp.pt.multipliers);
+  if (mFmtFull) {
+    lines.push(`    Points: ${mFmtFull}`);
   }
 
   // Tags
@@ -2961,10 +3043,11 @@ export function formatYtArbitrageOpportunity(opp: YtArbitrageOpportunity, rank: 
     }
   }
 
-  // Points programs
-  if (opp.pt.multipliers && opp.pt.multipliers.length > 0) {
-    const mParts = opp.pt.multipliers.map(m => `${m.name} ${m.amount}x`);
-    lines.push(`    Points: ${mParts.join(", ")}`);
+  // Points programs — PR12b backport (architect inline-fix during Phase 1 audit
+  // synthesis). Same union-disambiguation pattern as the other 5 sites.
+  const mFmtYt = formatMultipliers(opp.pt.multipliers);
+  if (mFmtYt) {
+    lines.push(`    Points: ${mFmtYt}`);
   }
 
   // Tags
@@ -3271,6 +3354,33 @@ export function formatMetavaultSummary(
   lines.push(`  MetaVault: ${mv.address}`);
   lines.push(`  Vault: ${mv.vault}`);
   lines.push(`  Curator: ${mv.curator?.name || "Unknown"}${mv.curator?.addresses?.length ? ` (${mv.curator.addresses[0]})` : ""}`);
+
+  // PR1 — Vault inception + track-record bucket (discard-layer-spec §1).
+  // `metavault.createdAt` is a Unix timestamp (schema spectra.ts:361). 100%
+  // populated across all fixture chains, but defensive `if` for forward-compat.
+  // Type cast: SpectraMetavault interface in types.ts predates this surface;
+  // schema covers it. Casting `as { createdAt?: number }` rather than `as any`
+  // narrows the read.
+  const createdAt = (mv as { createdAt?: number }).createdAt;
+  if (typeof createdAt === "number") {
+    const daysAgo = Math.floor((Date.now() / 1000 - createdAt) / 86400);
+    // Buckets: <30d (new), 30-90d (early), ≥90d (established).
+    // ASCII operators kept readable: "<30d" / "30-90d" / "≥90d" (U+2265).
+    let bucket: string;
+    if (daysAgo < 30) bucket = "<30d";
+    else if (daysAgo < 90) bucket = "30-90d";
+    else bucket = "≥90d";
+    lines.push(`  Inception: ${formatDate(createdAt)} (${daysAgo}d ago, track-record-class: ${bucket})`);
+  }
+
+  // PR4 — Vault-level tags (asset-class labels: 'stable', 'eth').
+  // Read via schema-mirroring cast since SpectraMetavault.tags is undeclared.
+  // 5/6 fixtures populate; gamisXRP renders silent.
+  const vaultTags = (mv as { tags?: string[] }).tags;
+  if (Array.isArray(vaultTags) && vaultTags.length > 0) {
+    lines.push(`  Tags: [${vaultTags.join(", ")}]`);
+  }
+
   if (mv.metadata?.shortDescription) {
     lines.push(`  Description: ${mv.metadata.shortDescription}`);
   }
@@ -3387,7 +3497,31 @@ export function formatMetavaultSummary(
       const lpBalance = Number(raw / divisor) + Number(raw % divisor) / Number(divisor);
       return lpBalance * pool.lpt.price.usd;
     };
-    // Only show positions with known allocation (skip positions with no balance data)
+    // Only show positions with known allocation (skip positions with no balance data).
+    //
+    // DEVIATION 1 (Phase 1, Option A — accepted by architect, surfaced by Diverger
+    // audit lens): this filter gates the per-position discard-layer renders (PR4
+    // tags + attribution-creep, PR12b multipliers parity, PR17 Wraps:) on the same
+    // allocated-positions criterion that gates PT APY / LP APY display. Consequence
+    // — measured against current fixtures (April 27, 2026):
+    //
+    //   PR4 attribution-creep:  6 of 8 firings render; 2 silent (gamisUSDC pos[1]
+    //                           Aegis expired sw-sYUSD; gamisXRP pos[1] Firelight
+    //                           expired)
+    //   PR17 Wraps:             5 of 7 baseIbt-populated render; 2 silent (the same
+    //                           gamisUSDC pos[1] sw-sYUSD; UltraWETH pos[1] sw-weETH
+    //                           historical)
+    //   Per-position tags:      3 of 5 render; 2 silent (CSMVUSDC pos[0] yvvbUSDT;
+    //                           pos[1] yvvbUSDC)
+    //
+    // All silenced positions are dust/expired/no-LP-balance — the consulting-alpha
+    // class lives on currently-allocated positions, which is what renders. Future
+    // PR candidate: a separate "unallocated discard-layer" iteration that surfaces
+    // PR4/PR12b/PR17 substrate for filter-excluded positions.
+    //
+    // Dissolution: when a stakeholder reports "I expected to see attribution-creep
+    // on a position that's filtered out" or when a Phase 1.5 PR adds the unallocated
+    // iteration, this comment + DEVIATION 1 framing dissolves.
     const allocatedPositions = mv.positions
       .map(pos => ({ pos, alloc: getLpAlloc(pos) }))
       .filter((p): p is { pos: SpectraMetavaultPosition; alloc: number } => p.alloc != null)
@@ -3406,6 +3540,55 @@ export function formatMetavaultSummary(
       const sizeStr = `${vaultPct}% | ${formatUsd(alloc)}`;
       lines.push(`    ${pos.symbol} -- ${formatDate(pos.maturity)} (${matLabel}) -- ${sizeStr}${ptApyStr}${lpApyStr}`);
       lines.push(`      PT: ${pos.address}${pool ? ` | Pool: ${pool.address}` : ""}`);
+
+      // PR4/PR12b/PR17 — per-position discard-layer surface.
+      // Shape-cast: SpectraMetavaultPosition lacks tags/multipliers/baseIbt/ibt
+      // declarations; the schema (PositionSchema) carries them and the live
+      // payload populates them. Treat as a forward-compat read at the access
+      // site rather than mutating the interface (out of Phase 1 scope).
+      const posExt = pos as {
+        tags?: string[];
+        multipliers?: unknown;
+        baseIbt?: { symbol?: string };
+        ibt?: { symbol?: string; apr?: { details?: { rewards?: Record<string, number> } } };
+      };
+
+      // PR4 — per-position tags (asset-class labels). Indented under the
+      // position block alongside Wraps/Multipliers. Silent when empty/missing.
+      if (Array.isArray(posExt.tags) && posExt.tags.length > 0) {
+        lines.push(`      Tags: [${posExt.tags.join(", ")}]`);
+      }
+
+      // PR17 — sw-* wrapper unwrap. Render `Wraps: <baseIbt.symbol>` when
+      // baseIbt is present AND its symbol differs from the IBT's. Non-wrapper
+      // IBTs (no baseIbt) and identical-symbol cases stay silent. Phase 0
+      // baseline measured 7/15 fixture positions populated.
+      const baseIbtSym = posExt.baseIbt?.symbol;
+      const ibtSym = posExt.ibt?.symbol;
+      if (baseIbtSym && ibtSym && baseIbtSym !== ibtSym) {
+        lines.push(`      Wraps: ${baseIbtSym}`);
+      }
+
+      // PR12b — per-position multipliers (Array form OR object {lp,yt} form).
+      // PR4 — attribution-creep flag: when ANY multiplier name matches /points$/i
+      // AND on-chain rewards (ibt.apr.details.rewards) are empty/undefined,
+      // append the settlement-evidence-absent note. NO `⚠` glyph (§7.1
+      // consolidation rule strips marker; the prose carries the signal).
+      // Verified-firing baseline: 8 positions across 4 vaults
+      // (gamisUSDC pos[1,3,4,5], gamisXRP pos[0,1], CSMVUSDC pos[2],
+      //  CSfusionMVWETH pos[0]). NB: only firing-fixtures with allocated
+      // pool LPT render here today — see DEVIATIONS in the architect message.
+      const multLine = formatMultipliers(posExt.multipliers);
+      if (multLine) {
+        const rewards = posExt.ibt?.apr?.details?.rewards;
+        const rewardsEmpty = !rewards || Object.keys(rewards).length === 0;
+        const pointsDeclared = hasPointsMultiplier(posExt.multipliers);
+        const attributionCreep = pointsDeclared && rewardsEmpty;
+        const suffix = attributionCreep
+          ? " (no on-chain rewards populated — points program declared, settlement evidence absent)"
+          : "";
+        lines.push(`      Multipliers: ${multLine}${suffix}`);
+      }
 
       // LP APY breakdown per position — surface composition
       const lpDetails = pool?.lpApy?.details;
