@@ -4010,3 +4010,692 @@ describe("PR12b cross-call-site parity — same input renders consistently", () 
     assert.ok(out.includes(expectedRender));
   });
 });
+
+// ─── Phase 2 (discard-layer-spec v3-final) ──────────────────────────────────
+//
+// The next several describe blocks cover PR2a / PR2b / PR5 / PR6 / PR7b / PR8
+// / PR9. PR7a (export refactor) is exercised by `performance.test.ts` —
+// byte-equivalence of the moved functions is the contract there. Tests here
+// validate the new formatter integration paths.
+
+describe("formatMetavaultSummary — PR2b (curator URL)", () => {
+  const NOW = Math.floor(Date.now() / 1000);
+  function mkMv(overrides: any): any {
+    return {
+      address: "0xa0",
+      vault: "0xb0",
+      chainId: 8453,
+      decimals: 6,
+      name: "TestVault",
+      symbol: "TV",
+      curator: { name: "Curator", addresses: ["0xabc"] },
+      underlying: { address: "0x1", symbol: "USDC", decimals: 6, price: { usd: 1 } },
+      tvl: { usd: 1000, underlying: 1000 },
+      liveApy: { total: 0.05 },
+      positions: [],
+      epochs: [],
+      bridge: { transactions: [] },
+      createdAt: NOW - 100 * 86400,
+      ...overrides,
+    };
+  }
+
+  it("appends URL when curator.url is populated", () => {
+    const mv = mkMv({ curator: { name: "GamiLabs", addresses: ["0xabc"], url: "https://gamilabs.io/" } });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^  Curator: GamiLabs \(0xabc\) \| https:\/\/gamilabs\.io\/$/m);
+  });
+
+  it("silent when curator.url is missing (URL not appended)", () => {
+    const mv = mkMv({ curator: { name: "Anon", addresses: ["0xabc"] } });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^  Curator: Anon \(0xabc\)$/m);
+    assert.equal(out.includes(" | http"), false);
+  });
+
+  it("renders without address (curator.addresses empty) but with URL", () => {
+    const mv = mkMv({ curator: { name: "Anon", addresses: [], url: "https://x.example/" } });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^  Curator: Anon \| https:\/\/x\.example\/$/m);
+  });
+});
+
+describe("formatMetavaultSummary — PR2a (declared strategy + drift detection)", () => {
+  const NOW = Math.floor(Date.now() / 1000);
+  function mkMv(overrides: any): any {
+    return {
+      address: "0xa0",
+      vault: "0xb0",
+      chainId: 8453,
+      decimals: 6,
+      name: "TestVault",
+      symbol: "TV",
+      curator: { name: "Curator", addresses: ["0xabc"] },
+      underlying: { address: "0x1", symbol: "USDC", decimals: 6, price: { usd: 1 } },
+      tvl: { usd: 1000, underlying: 1000 },
+      liveApy: { total: 0.05 },
+      positions: [],
+      epochs: [],
+      bridge: { transactions: [] },
+      createdAt: NOW - 100 * 86400,
+      ...overrides,
+    };
+  }
+
+  it("silent when defaultIbt is undefined", () => {
+    const mv = mkMv({});
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^  Declared:/m.test(out), false);
+    assert.equal(/^    drift:/m.test(out), false);
+  });
+
+  it("silent when positions array is empty (even with defaultIbt populated)", () => {
+    const mv = mkMv({ defaultIbt: "0xdeadbeef", positions: [] });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^  Declared:/m.test(out), false);
+  });
+
+  it("renders Declared without drift when ALL positions match defaultIbt", () => {
+    const mv = mkMv({
+      defaultIbt: "0xDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF",
+      positions: [
+        { address: "0xpt1", maturity: NOW + 86400 * 30, ibt: { address: "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef", symbol: "iUSDC" } },
+      ],
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^  Declared: iUSDC$/m, "Declared line must render with resolved symbol");
+    assert.equal(/^    drift:/m.test(out), false, "no drift line when all positions match");
+  });
+
+  it("appends ' via <option>' when defaultOption is populated", () => {
+    const mv = mkMv({
+      defaultIbt: "0xdead",
+      defaultOption: "0xc0ffee",
+      positions: [{ address: "0xpt1", maturity: NOW + 86400, ibt: { address: "0xdead", symbol: "iWETH" } }],
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^  Declared: iWETH via 0xc0ffee$/m);
+  });
+
+  it("renders drift line when SOME positions diverge from defaultIbt", () => {
+    const mv = mkMv({
+      defaultIbt: "0xDEAD",
+      positions: [
+        { address: "0xpt1", maturity: NOW + 86400, ibt: { address: "0xdead", symbol: "iA" } },
+        { address: "0xpt2", maturity: NOW + 86400, ibt: { address: "0xbeef", symbol: "iB" } },
+        { address: "0xpt3", maturity: NOW + 86400, ibt: { address: "0xc0ffee", symbol: "iC" } },
+      ],
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^  Declared: iA$/m);
+    assert.match(out, /^    drift: 1\/3 positions in declared address$/m);
+  });
+
+  it("renders drift line when NO positions match (full drift, inDeclared = 0)", () => {
+    const mv = mkMv({
+      defaultIbt: "0xDEAD",
+      positions: [
+        { address: "0xpt1", maturity: NOW + 86400, ibt: { address: "0xbeef", symbol: "iB" } },
+      ],
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    // No matched position → declared symbol falls back to the address itself.
+    assert.match(out, /^  Declared: 0xDEAD$/m);
+    assert.match(out, /^    drift: 0\/1 positions in declared address$/m);
+  });
+
+  it("uses no marker glyph (PR2a per §7.1 consolidation rule)", () => {
+    const mv = mkMv({
+      defaultIbt: "0xdead",
+      positions: [
+        { address: "0xpt1", maturity: NOW + 86400, ibt: { address: "0xbeef", symbol: "iB" } },
+      ],
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(out.includes("⚠"), false, "PR2a must NOT use ⚠ glyph");
+  });
+
+  it("denominator is mv.positions.length not positionAddrs.length (architect-inline-fix Phase 2)", () => {
+    // Sonnet+soul depth lens (Phase 2 audit) caught: drift fraction was using
+    // the count of positions WITH ibt.address (the filtered set), not total
+    // positions. Spec says positions.length. With one position lacking an
+    // ibt.address, the bug-shape would produce `0/1` (subset count) instead of
+    // `0/2` (true count). Fix: denominator is mv.positions.length.
+    const mv = mkMv({
+      defaultIbt: "0xDEAD",
+      positions: [
+        { address: "0xpt1", maturity: NOW + 86400, ibt: { address: "0xbeef", symbol: "iB" } }, // address present, doesn't match declared
+        { address: "0xpt2", maturity: NOW + 86400, ibt: { symbol: "iC" /* no address */ } }, // address missing
+      ],
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    // Two positions total; zero match the declared address.
+    // Pre-fix bug would produce `0/1` (only counting the address-populated subset).
+    // Post-fix: `0/2` (true position count per spec).
+    assert.match(out, /^    drift: 0\/2 positions in declared address$/m);
+  });
+});
+
+describe("formatMetavaultSummary — PR2a fixture verification (Clearstar katana)", () => {
+  // Phase 0 verified: only the katana Clearstar USDC fixture has defaultIbt
+  // populated. positions[1] and positions[3] match (Yearn at the declared
+  // address); positions[0] (Yearn alt) and positions[2] (Lucidly) diverge.
+  const __dirname_pr2a = dirname(fileURLToPath(import.meta.url));
+  const fixturesDir = resolve(__dirname_pr2a, "../test/fixtures");
+  function loadMvFixture(chain: string): any[] {
+    return JSON.parse(readFileSync(resolve(fixturesDir, `metavaults-${chain}.json`), "utf8"));
+  }
+
+  it("Clearstar USDC renders Declared + drift line counting matches", () => {
+    const mv = loadMvFixture("katana").find((m: any) => m.name === "Clearstar USDC");
+    assert.ok(mv, "fixture missing");
+    const out = formatMetavaultSummary(mv, "katana");
+    // Declared line renders with resolved IBT symbol from a matching position.
+    assert.match(out, /^  Declared: /m);
+    // Drift line: 2 of 4 positions (Yearn pos[1] + Yearn pos[3]) match
+    // declaredAddr; pos[0] (Yearn at different address) + pos[2] (Lucidly)
+    // diverge.
+    assert.match(out, /^    drift: 2\/4 positions in declared address$/m);
+  });
+
+  it("base Gami USDC has no defaultIbt → silent (no Declared, no drift)", () => {
+    const mv = loadMvFixture("base").find((m: any) => m.name === "Gami USDC");
+    assert.ok(mv, "fixture missing");
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^  Declared:/m.test(out), false);
+    assert.equal(/^    drift:/m.test(out), false);
+  });
+});
+
+describe("formatMetavaultSummary — PR5 (Upstream protocol with registry linkage)", () => {
+  const NOW = Math.floor(Date.now() / 1000);
+  function mkMvWithProto(protoRaw: string): any {
+    return {
+      address: "0xa0",
+      vault: "0xb0",
+      chainId: 8453,
+      decimals: 6,
+      name: "TestVault",
+      symbol: "TV",
+      curator: { name: "Curator", addresses: ["0xabc"] },
+      underlying: { address: "0x1", symbol: "USDC", decimals: 6, price: { usd: 1 } },
+      tvl: { usd: 1_000_000, underlying: 1_000_000 },
+      liveApy: { total: 0.05 },
+      positions: [
+        {
+          symbol: "PT-test",
+          address: "0xpt1",
+          maturity: NOW + 86400 * 30,
+          decimals: 18,
+          tvl: { usd: 100_000 },
+          pools: [
+            {
+              address: "0xpool",
+              lpt: { balance: (10n ** 18n).toString(), decimals: 18, price: { usd: 100 } },
+              ptApy: 0.05,
+              lpApy: { total: 0.04 },
+            },
+          ],
+          ibt: { protocol: protoRaw, symbol: "iUSDC", address: "0xibt" },
+        },
+      ],
+      epochs: [],
+      bridge: { transactions: [] },
+      createdAt: NOW - 100 * 86400,
+    };
+  }
+
+  it("known protocol (avant) renders WITHOUT registry-pending annotation", () => {
+    const mv = mkMvWithProto("Avant");
+    const out = formatMetavaultSummary(mv, "base");
+    // Display value preserves original casing.
+    assert.match(out, /^      Upstream: Avant$/m);
+    assert.equal(out.includes("registry: pending"), false);
+  });
+
+  it("trim-resilient: whitespace-padded 'Avant ' resolves through normalizeProtocolName", () => {
+    const mv = mkMvWithProto("Avant ");
+    const out = formatMetavaultSummary(mv, "base");
+    // Renders the raw display value (with trailing space) but normalization
+    // resolves to `avant` so no annotation fires.
+    assert.match(out, /^      Upstream: Avant $/m);
+    assert.equal(out.includes("registry: pending"), false);
+  });
+
+  it("unmapped CamelCase (Yearn) renders WITH registry-pending annotation", () => {
+    const mv = mkMvWithProto("Yearn");
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(
+      out,
+      /^      Upstream: Yearn \(registry: pending — author entry per protocols-metadata-spec\)$/m,
+    );
+  });
+
+  it("uses no ⚠ glyph (PR5 v3-final tonal fix)", () => {
+    const mv = mkMvWithProto("Yearn");
+    const out = formatMetavaultSummary(mv, "base");
+    // Confirm no marker on the Upstream line specifically.
+    const lines = out.split("\n");
+    const upstreamLine = lines.find((l) => l.includes("Upstream:"));
+    assert.ok(upstreamLine);
+    assert.equal(upstreamLine!.includes("⚠"), false);
+  });
+
+  it("silent when ibt.protocol is undefined", () => {
+    const mv = mkMvWithProto("");
+    // Override with explicit undefined to test the silent path.
+    mv.positions[0].ibt = { symbol: "iUSDC", address: "0xibt" };
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^      Upstream:/m.test(out), false);
+  });
+});
+
+describe("formatMetavaultSummary — PR8 (reward tokens with addresses)", () => {
+  const NOW = Math.floor(Date.now() / 1000);
+  function mkMvWithRewardTokens(rewardTokens: any): any {
+    return {
+      address: "0xa0",
+      vault: "0xb0",
+      chainId: 8453,
+      decimals: 6,
+      name: "TestVault",
+      symbol: "TV",
+      curator: { name: "Curator", addresses: ["0xabc"] },
+      underlying: { address: "0x1", symbol: "USDC", decimals: 6, price: { usd: 1 } },
+      tvl: { usd: 1_000_000, underlying: 1_000_000 },
+      liveApy: { total: 0.05 },
+      positions: [
+        {
+          symbol: "PT-test",
+          address: "0xpt1",
+          maturity: NOW + 86400 * 30,
+          decimals: 18,
+          tvl: { usd: 100_000 },
+          pools: [
+            {
+              address: "0xpool",
+              lpt: { balance: (10n ** 18n).toString(), decimals: 18, price: { usd: 100 } },
+              ptApy: 0.05,
+            },
+          ],
+          ibt: {
+            symbol: "iUSDC",
+            address: "0xibt",
+            apr: { details: { rewardTokens } },
+          },
+        },
+      ],
+      epochs: [],
+      bridge: { transactions: [] },
+      createdAt: NOW - 100 * 86400,
+    };
+  }
+
+  it("renders symbols with shortened addresses when populated", () => {
+    const mv = mkMvWithRewardTokens({
+      rFLR: { address: "0x26d1234567890abcdef1234567890abcdef12345" },
+      AvantPoints: { address: "0xab1234567890abcdef1234567890abcdef123456" },
+    });
+    const out = formatMetavaultSummary(mv, "flare");
+    assert.match(
+      out,
+      /^      Reward tokens: rFLR \(0x26d1\.\.\.2345\), AvantPoints \(0xab12\.\.\.3456\)$/m,
+    );
+  });
+
+  it("renders symbol-only when token lacks address", () => {
+    const mv = mkMvWithRewardTokens({ POINTS: {} });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^      Reward tokens: POINTS$/m);
+  });
+
+  it("silent when rewardTokens record is empty", () => {
+    const mv = mkMvWithRewardTokens({});
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^      Reward tokens:/m.test(out), false);
+  });
+
+  it("silent when rewardTokens is undefined", () => {
+    const mv = mkMvWithRewardTokens(undefined);
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^      Reward tokens:/m.test(out), false);
+  });
+});
+
+describe("formatMetavaultSummary — PR6 (maturity value absolute + delta)", () => {
+  // PR6 architect-inline-fix during Phase 2 audit synthesis (DEVIATION 1):
+  // `maturityValue.usd` is per-share (e.g., $1.00 for USDC-pegged PT at par);
+  // `tvl.usd` is position-total. The render bridges by multiplying per-share ×
+  // balance/10^decimals. Tests set balance = 1 token (10^18 raw at 18 decimals)
+  // so matUsd × 1 = matUsd — the existing test semantics survive verbatim.
+  // A separate dedicated test below exercises the multiplication explicitly.
+  const NOW = Math.floor(Date.now() / 1000);
+  function mkMvWithMaturity(maturityUsd: number | undefined, tvlUsd: number | undefined): any {
+    const ibt: any = { symbol: "iUSDC", address: "0xibt" };
+    const pos: any = {
+      symbol: "PT-test",
+      address: "0xpt1",
+      maturity: NOW + 86400 * 30,
+      decimals: 18,
+      balance: (10n ** 18n).toString(), // 1 token — multiplication identity
+      ibt,
+      pools: [
+        {
+          address: "0xpool",
+          lpt: { balance: (10n ** 18n).toString(), decimals: 18, price: { usd: 100 } },
+          ptApy: 0.05,
+        },
+      ],
+    };
+    if (typeof tvlUsd === "number") pos.tvl = { usd: tvlUsd };
+    if (typeof maturityUsd === "number") pos.maturityValue = { usd: maturityUsd };
+
+    return {
+      address: "0xa0",
+      vault: "0xb0",
+      chainId: 8453,
+      decimals: 6,
+      name: "TestVault",
+      symbol: "TV",
+      curator: { name: "Curator", addresses: ["0xabc"] },
+      underlying: { address: "0x1", symbol: "USDC", decimals: 6, price: { usd: 1 } },
+      tvl: { usd: 1_000_000, underlying: 1_000_000 },
+      liveApy: { total: 0.05 },
+      positions: [pos],
+      epochs: [],
+      bridge: { transactions: [] },
+      createdAt: NOW - 100 * 86400,
+    };
+  }
+
+  it("renders absolute + delta when |delta|/tvl > 1% (positive delta)", () => {
+    const mv = mkMvWithMaturity(128_000, 126_000);
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^      Maturity value: \$128,000\.00 \(\+\$2,000\.00 vs TVL\)$/m);
+  });
+
+  it("renders absolute + delta when |delta|/tvl > 1% (negative delta = capital loss)", () => {
+    const mv = mkMvWithMaturity(120_000, 126_000);
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^      Maturity value: \$120,000\.00 \(-\$6,000\.00 vs TVL\)$/m);
+  });
+
+  it("silent when |delta|/tvl ≤ 1% (within tolerance)", () => {
+    // 126,000 → 126,500 = 0.4% deviation → silent.
+    const mv = mkMvWithMaturity(126_500, 126_000);
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^      Maturity value:/m.test(out), false);
+  });
+
+  it("silent when maturityValue.usd is undefined", () => {
+    const mv = mkMvWithMaturity(undefined, 126_000);
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^      Maturity value:/m.test(out), false);
+  });
+
+  it("silent when tvl.usd is undefined", () => {
+    const mv = mkMvWithMaturity(128_000, undefined);
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^      Maturity value:/m.test(out), false);
+  });
+
+  it("silent when both fields undefined", () => {
+    const mv = mkMvWithMaturity(undefined, undefined);
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^      Maturity value:/m.test(out), false);
+  });
+
+  it("multiplies per-share × balance to position-level (architect-inline-fix DEVIATION 1)", () => {
+    // Realistic PT scenario: 100,000 tokens × $1.00/share = $100,000 expected
+    // at maturity. tvl = $97,000. Delta = +$3,000 ≈ 3.1% > 1% threshold.
+    // Verifies the multiplication bridges per-share API value to position-level
+    // USD before delta comparison — without this, the literal-spec
+    // implementation produces nonsense ($1.00 - $97,000 = -$96,999).
+    const ibt: any = { symbol: "iUSDC", address: "0xibt" };
+    const pos: any = {
+      symbol: "PT-test",
+      address: "0xpt1",
+      maturity: NOW + 86400 * 30,
+      decimals: 18,
+      balance: (100_000n * 10n ** 18n).toString(), // 100,000 tokens
+      ibt,
+      pools: [
+        {
+          address: "0xpool",
+          lpt: { balance: (10n ** 18n).toString(), decimals: 18, price: { usd: 100 } },
+          ptApy: 0.05,
+        },
+      ],
+      tvl: { usd: 97_000 },
+      maturityValue: { usd: 1.0 }, // per-share USD
+    };
+    const mv: any = {
+      address: "0xa0",
+      vault: "0xb0",
+      chainId: 8453,
+      decimals: 6,
+      name: "TestVault",
+      symbol: "TV",
+      curator: { name: "Curator", addresses: ["0xabc"] },
+      underlying: { address: "0x1", symbol: "USDC", decimals: 6, price: { usd: 1 } },
+      tvl: { usd: 1_000_000, underlying: 1_000_000 },
+      liveApy: { total: 0.05 },
+      positions: [pos],
+      epochs: [],
+      bridge: { transactions: [] },
+      createdAt: NOW - 100 * 86400,
+    };
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^      Maturity value: \$100,000\.00 \(\+\$3,000\.00 vs TVL\)$/m);
+  });
+
+  it("silent when decimals is undefined (architect-inline-fix Diverger Phase 2)", () => {
+    // Diverger lens caught: `PositionSchema.decimals: z.number().optional()` —
+    // a future API state could ship `decimals: undefined` for a USDC (6-decimal)
+    // position. Pre-fix `?? 18` default would mis-scale by 10^12 and render
+    // visible-but-wrong output. Post-fix guards on `typeof === "number"`.
+    const ibt: any = { symbol: "iUSDC", address: "0xibt" };
+    const pos: any = {
+      symbol: "PT-test",
+      address: "0xpt1",
+      maturity: NOW + 86400 * 30,
+      // NO decimals field — schema-permitted undefined
+      balance: "100000000000", // 100K USDC scale (would be 100K tokens at 6 decimals)
+      ibt,
+      pools: [{ address: "0xpool", lpt: { balance: (10n ** 18n).toString(), decimals: 18, price: { usd: 100 } }, ptApy: 0.05 }],
+      tvl: { usd: 100_000 },
+      maturityValue: { usd: 1.0 },
+    };
+    const mv: any = {
+      address: "0xa0", vault: "0xb0", chainId: 8453, decimals: 6,
+      name: "TestVault", symbol: "TV",
+      curator: { name: "Curator", addresses: ["0xabc"] },
+      underlying: { address: "0x1", symbol: "USDC", decimals: 6, price: { usd: 1 } },
+      tvl: { usd: 1_000_000, underlying: 1_000_000 },
+      liveApy: { total: 0.05 },
+      positions: [pos],
+      epochs: [],
+      bridge: { transactions: [] },
+      createdAt: NOW - 100 * 86400,
+    };
+    const out = formatMetavaultSummary(mv, "base");
+    // Silent: no Maturity value line at all (better than mis-scaled nonsense).
+    assert.equal(/^      Maturity value:/m.test(out), false);
+  });
+
+  it("silent when balance is missing (defensive — prevents per-share-vs-total nonsense)", () => {
+    // Without balance, the multiplication can't proceed → silent. This is the
+    // defensive guard preventing the DEVIATION 1 nonsense output (e.g., the
+    // builder's flagged `$1.00 (-$449,157.00 vs TVL)` smoke test).
+    const ibt: any = { symbol: "iUSDC", address: "0xibt" };
+    const pos: any = {
+      symbol: "PT-test",
+      address: "0xpt1",
+      maturity: NOW + 86400 * 30,
+      decimals: 18,
+      // NO balance field
+      ibt,
+      pools: [{ address: "0xpool", lpt: { balance: (10n ** 18n).toString(), decimals: 18, price: { usd: 100 } }, ptApy: 0.05 }],
+      tvl: { usd: 97_000 },
+      maturityValue: { usd: 1.0 },
+    };
+    const mv: any = {
+      address: "0xa0", vault: "0xb0", chainId: 8453, decimals: 6,
+      name: "TestVault", symbol: "TV",
+      curator: { name: "Curator", addresses: ["0xabc"] },
+      underlying: { address: "0x1", symbol: "USDC", decimals: 6, price: { usd: 1 } },
+      tvl: { usd: 1_000_000, underlying: 1_000_000 },
+      liveApy: { total: 0.05 },
+      positions: [pos],
+      epochs: [],
+      bridge: { transactions: [] },
+      createdAt: NOW - 100 * 86400,
+    };
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^      Maturity value:/m.test(out), false);
+  });
+});
+
+describe("formatMetavaultSummary — PR9 (bridge aggregate state with completion-collapse)", () => {
+  const NOW = Math.floor(Date.now() / 1000);
+  function mkMvWithBridge(bridge: any): any {
+    return {
+      address: "0xa0",
+      vault: "0xb0",
+      chainId: 8453,
+      decimals: 6,
+      name: "TestVault",
+      symbol: "TV",
+      curator: { name: "Curator", addresses: ["0xabc"] },
+      underlying: { address: "0x1", symbol: "USDC", decimals: 6, price: { usd: 1 } },
+      tvl: { usd: 1000, underlying: 1000 },
+      liveApy: { total: 0.05 },
+      positions: [],
+      epochs: [],
+      bridge,
+      createdAt: NOW - 100 * 86400,
+    };
+  }
+
+  function mkTx(amountUsd: number, ts: number = NOW): any {
+    return {
+      status: "COMPLETED",
+      hash: "0xfeedfacecafe1234567890",
+      srcChainId: 8453,
+      dstChainId: 43114,
+      timestamp: ts,
+      amountUsd,
+    };
+  }
+
+  it("collapse fires: totalPendingUsd === 0 with completed txns → one-line summary", () => {
+    const mv = mkMvWithBridge({
+      transactions: [mkTx(100_000, NOW - 86400), mkTx(50_000, NOW - 2 * 86400)],
+      totalPendingUsd: 0,
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^  Bridge: \$150,000\.00 total, 2 txns completed$/m);
+    // No per-tx detail line.
+    assert.equal(out.includes("  Bridge Transactions ("), false);
+  });
+
+  it("pending-with-no-history: totalPendingUsd > 0, empty txns → pending-only line", () => {
+    const mv = mkMvWithBridge({
+      transactions: [],
+      totalPendingUsd: 75_000,
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^  Bridge: \$75,000\.00 pending \(no historical txns yet\)$/m);
+  });
+
+  it("active bridge: txns + nonzero pending → existing per-tx detail rendering", () => {
+    const mv = mkMvWithBridge({
+      transactions: [mkTx(100_000)],
+      totalPendingUsd: 25_000,
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^  Bridge Transactions \(1\):$/m);
+    assert.match(out, /^    Pending: \$25,000\.00$/m);
+  });
+
+  it("undefined totalPendingUsd with completed txns: falls through to per-tx detail (not collapse)", () => {
+    const mv = mkMvWithBridge({
+      transactions: [mkTx(100_000)],
+      // no totalPendingUsd
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^  Bridge Transactions \(1\):$/m);
+    // No collapse line, no pending line.
+    assert.equal(/^  Bridge: \$.* total, .* txns completed$/m.test(out), false);
+    assert.equal(/^    Pending:/m.test(out), false);
+  });
+
+  it("silent when no txns AND no/zero pending", () => {
+    const mv1 = mkMvWithBridge({ transactions: [], totalPendingUsd: 0 });
+    const out1 = formatMetavaultSummary(mv1, "base");
+    assert.equal(/^  Bridge/m.test(out1), false);
+
+    const mv2 = mkMvWithBridge({ transactions: [] });
+    const out2 = formatMetavaultSummary(mv2, "base");
+    assert.equal(/^  Bridge/m.test(out2), false);
+  });
+
+  it("NaN totalPendingUsd with txns falls through to per-tx detail (no NaN-string render)", () => {
+    const mv = mkMvWithBridge({
+      transactions: [mkTx(100_000)],
+      totalPendingUsd: NaN,
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    // NaN === 0 is false, NaN > 0 is false → falls through to per-tx render.
+    assert.match(out, /^  Bridge Transactions \(1\):$/m);
+    assert.equal(out.includes("NaN"), false);
+  });
+});
+
+describe("formatMetavaultSummary — PR7b (one-line performance integration)", () => {
+  const NOW = Math.floor(Date.now() / 1000);
+  function mkMvWithEpochs(epochs: any[]): any {
+    return {
+      address: "0xa0",
+      vault: "0xb0",
+      chainId: 8453,
+      decimals: 6,
+      name: "TestVault",
+      symbol: "TV",
+      curator: { name: "Curator", addresses: ["0xabc"] },
+      underlying: { address: "0x1", symbol: "USDC", decimals: 6, price: { usd: 1 } },
+      tvl: { usd: 1000, underlying: 1000 },
+      liveApy: { total: 0.05 },
+      positions: [],
+      epochs,
+      bridge: { transactions: [] },
+      createdAt: NOW - 100 * 86400,
+    };
+  }
+
+  it("renders 'Performance: TWR / DD / Sharpe (Xd)' line when epochs sufficient", () => {
+    // 4 epochs over 90d, monotonic growth → TWR positive, DD ~0, Sharpe populated.
+    const wei = 1_000_000;
+    const epochs = [
+      { timestamp: NOW - 90 * 86400, rate: String(1.0 * wei), assets: "0" },
+      { timestamp: NOW - 60 * 86400, rate: String(1.01 * wei), assets: "0" },
+      { timestamp: NOW - 30 * 86400, rate: String(1.02 * wei), assets: "0" },
+      { timestamp: NOW, rate: String(1.03 * wei), assets: "0" },
+    ];
+    const mv = mkMvWithEpochs(epochs);
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^  Performance: TWR \d+\.\d+% \/ DD .+ \/ Sharpe .+ \(\d+d\)/m);
+  });
+
+  it("silent when epochs < 2 (computePerformanceMetrics returns null)", () => {
+    const mv = mkMvWithEpochs([]);
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^  Performance:/m.test(out), false);
+  });
+
+  it("silent when epochs is undefined", () => {
+    const mv = mkMvWithEpochs(undefined as any);
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^  Performance:/m.test(out), false);
+  });
+});

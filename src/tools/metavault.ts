@@ -39,7 +39,7 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { MetavaultLoopRow, MetavaultCuratorEconomics, MetavaultPerformanceMetrics, SpectraMetavault, SpectraMetavaultEpoch } from "../types.js";
+import type { MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavault } from "../types.js";
 import { CHAIN_ENUM, EVM_ADDRESS, SUPPORTED_CHAINS } from "../config.js";
 import { fetchMetavaults, fetchMetavaultsWithWarnings, scanAllMetavaults, fetchChainPoolAddresses, fetchMerklCampaigns, fetchPendleMarketDetail, lookupMerklCampaigns, fetchMerkl, parseMerklRewards } from "../api.js";
 import type { MerklCampaign } from "../types.js";
@@ -60,6 +60,11 @@ import type { TypedExternalPosition, ExternalChainTruthMap } from "../protocols/
 import { getVerifier } from "../protocols/verifier-registry.js";
 import type { ProtocolVerifier, VerifierResult } from "../protocols/verifier-types.js";
 import { readMetaVaultChainStateCached, projectChainReadInput } from "../chain-reads.js";
+// PR7a (discard-layer-spec): performance metrics moved to src/performance.ts.
+// Functions were previously module-private; the export-refactor enables
+// `formatMetavaultSummary` (in formatters.ts) to import the one-line variant
+// without forming a tools/ → formatters/ dependency cycle.
+import { computePerformanceMetrics, formatPerformanceMetrics } from "../performance.js";
 
 function computeLoopRows(
   baseApy: number,
@@ -90,134 +95,10 @@ function findOptimal(rows: MetavaultLoopRow[]): { loop: number; netApy: number; 
   return { loop: best.loop, netApy: best.netApy, leverage: best.leverage };
 }
 
-// ─── Performance metrics computation ────────────────────────────────────────
-
-function computePerformanceMetrics(
-  epochs: SpectraMetavaultEpoch[],
-  riskFreeRatePct: number = 5,
-  underlyingDecimals: number = 6,
-): MetavaultPerformanceMetrics | null {
-  if (!epochs || epochs.length < 2) return null;
-
-  const rateDivisor = Math.pow(10, underlyingDecimals);
-  const sorted = [...epochs].sort((a, b) => a.timestamp - b.timestamp);
-  const rates = sorted.map((e) => Number(e.rate) / rateDivisor);
-  const timestamps = sorted.map((e) => e.timestamp);
-
-  const firstRate = rates[0];
-  const lastRate = rates[rates.length - 1];
-  const startDate = formatDate(timestamps[0]);
-  const endDate = formatDate(timestamps[timestamps.length - 1]);
-  const totalDays = (timestamps[timestamps.length - 1] - timestamps[0]) / 86400;
-
-  if (totalDays <= 0 || firstRate <= 0) return null;
-
-  const annualizedReturnPct = (lastRate / firstRate - 1) * (365 / totalDays) * 100;
-
-  // Max drawdown
-  let peak = rates[0];
-  let maxDrawdownPct = 0;
-  let drawdownStartIdx: number | null = null;
-  let drawdownEndIdx: number | null = null;
-  let currentPeakIdx = 0;
-
-  if (peak <= 0) return null;
-
-  for (let i = 1; i < rates.length; i++) {
-    if (rates[i] > peak) {
-      peak = rates[i];
-      currentPeakIdx = i;
-    }
-    const drawdown = (rates[i] - peak) / peak * 100;
-    if (drawdown < maxDrawdownPct) {
-      maxDrawdownPct = drawdown;
-      drawdownStartIdx = currentPeakIdx;
-      drawdownEndIdx = i;
-    }
-  }
-
-  const drawdownStartDate = drawdownStartIdx !== null ? formatDate(timestamps[drawdownStartIdx]) : null;
-  const drawdownEndDate = drawdownEndIdx !== null ? formatDate(timestamps[drawdownEndIdx]) : null;
-
-  // Volatility
-  const epochReturns: number[] = [];
-  let totalEpochDays = 0;
-  for (let i = 1; i < rates.length; i++) {
-    if (rates[i - 1] > 0) {
-      epochReturns.push((rates[i] - rates[i - 1]) / rates[i - 1]);
-    }
-    totalEpochDays += (timestamps[i] - timestamps[i - 1]) / 86400;
-  }
-
-  let volatilityAnnualizedPct = 0;
-  let sharpeRatio: number | null = null;
-
-  if (epochReturns.length >= 2) {
-    const avgEpochDays = totalEpochDays / epochReturns.length;
-    const mean = epochReturns.reduce((s, r) => s + r, 0) / epochReturns.length;
-    const variance = epochReturns.reduce((s, r) => s + (r - mean) ** 2, 0) / (epochReturns.length - 1);
-    const stdDev = Math.sqrt(variance);
-    const annualizationFactor = avgEpochDays > 0 ? Math.sqrt(365 / avgEpochDays) : 0;
-    volatilityAnnualizedPct = stdDev * annualizationFactor * 100;
-
-    if (volatilityAnnualizedPct > 0) {
-      sharpeRatio = (annualizedReturnPct - riskFreeRatePct) / volatilityAnnualizedPct;
-    }
-  }
-
-  return {
-    startDate,
-    endDate,
-    totalDays: Math.round(totalDays),
-    epochCount: sorted.length,
-    annualizedReturnPct,
-    maxDrawdownPct,
-    drawdownStartDate,
-    drawdownEndDate,
-    volatilityAnnualizedPct,
-    sharpeRatio,
-    riskFreeRatePct,
-  };
-}
-
-function formatPerformanceMetrics(metrics: MetavaultPerformanceMetrics): string {
-  const lines: string[] = [];
-  lines.push(`--- Performance (since inception) ---`);
-  lines.push(`  Period: ${metrics.startDate} to ${metrics.endDate} (${metrics.totalDays} days, ${metrics.epochCount} epochs)`);
-  lines.push(`  Time-Weighted Return: ${formatPct(metrics.annualizedReturnPct)} annualized`);
-
-  if (metrics.maxDrawdownPct < 0 && metrics.drawdownStartDate && metrics.drawdownEndDate) {
-    lines.push(`  Max Drawdown: ${formatPct(metrics.maxDrawdownPct)} (${metrics.drawdownStartDate} to ${metrics.drawdownEndDate})`);
-  } else {
-    lines.push(`  Max Drawdown: none`);
-  }
-
-  lines.push(`  Volatility: ${formatPct(metrics.volatilityAnnualizedPct)} annualized`);
-
-  if (metrics.sharpeRatio !== null) {
-    const sharpeStr = `  Sharpe Ratio: ${metrics.sharpeRatio.toFixed(1)} (vs ${formatPct(metrics.riskFreeRatePct)} risk-free proxy)`;
-    if (metrics.totalDays < 30) {
-      lines.push(`${sharpeStr} ⚠ ${metrics.totalDays}d track record — too short for meaningful Sharpe`);
-    } else if (metrics.totalDays < 90) {
-      lines.push(`${sharpeStr} (${metrics.totalDays}d track record — interpret with caution)`);
-    } else {
-      lines.push(sharpeStr);
-    }
-  } else {
-    lines.push(`  Sharpe Ratio: N/A (insufficient volatility data)`);
-  }
-
-  lines.push(``);
-  lines.push(`  Considerations:`);
-  lines.push(`  - Returns are in underlying terms (not USD) — denomination asset price changes are excluded`);
-  lines.push(`  - Performance based on ${metrics.epochCount} epoch snapshots — granularity is limited by epoch frequency`);
-  lines.push(`  - Max drawdown measures share rate decline, which can reflect LP impermanent loss or pool rebalancing`);
-  if (metrics.totalDays < 90) {
-    lines.push(`  - Short track record (${metrics.totalDays} days) — insufficient for robust statistical inference`);
-  }
-
-  return lines.join("\n");
-}
+// PR7a (discard-layer-spec): `computePerformanceMetrics` and
+// `formatPerformanceMetrics` MOVED to `src/performance.ts`. The dashboard
+// consumer at the bottom of this file imports them now; no other consumer
+// existed prior to the move, so the migration was a single import-site fix.
 
 export function register(server: McpServer): void {
 

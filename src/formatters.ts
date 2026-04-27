@@ -11,6 +11,7 @@ import {
   daysToMaturity,
   estimatePriceImpact,
   chainIdToName,
+  shortenAddress,
 } from "./primitives.js";
 import {
   renderExternalPosition,
@@ -18,6 +19,14 @@ import {
   type TypedExternalPosition,
   type ExternalChainTruthMap,
 } from "./protocols/index.js";
+// Phase 2 (discard-layer-spec):
+//   - PR5 calls `getMeta(normalizeProtocolName(...))` to detect _unknown
+//     protocols and append the `(registry: pending — author entry per
+//     protocols-metadata-spec)` annotation without renaming the rendered name.
+//   - PR7b reads `computePerformanceMetrics` + `formatPerformanceMetricsOneLine`
+//     from the new `src/performance.ts` (PR7a refactor).
+import { getMeta, normalizeProtocolName } from "./protocols/registry.js";
+import { computePerformanceMetrics, formatPerformanceMetricsOneLine } from "./performance.js";
 
 // Primitives now live in primitives.ts. Re-exported here for backward compat
 // with 42+ call sites importing them from "../formatters.js".
@@ -3353,7 +3362,17 @@ export function formatMetavaultSummary(
   lines.push(`  Chain: ${chain}`);
   lines.push(`  MetaVault: ${mv.address}`);
   lines.push(`  Vault: ${mv.vault}`);
-  lines.push(`  Curator: ${mv.curator?.name || "Unknown"}${mv.curator?.addresses?.length ? ` (${mv.curator.addresses[0]})` : ""}`);
+  // PR2b — Curator URL (discard-layer-spec §1, CATEGORY for sub-agent routing).
+  // Append ` | <url>` when populated; silent suffix when missing. The pipe
+  // separator matches the existing `Live APY: ... | 30d avg ...` pattern so
+  // sub-agents reading this line keep the same structural cue across renders.
+  // Schema: `curator.url: z.string().optional()` at schemas/spectra.ts:233.
+  // Type cast: SpectraMetavault.curator (types.ts:576) predates this surface;
+  // the schema covers it. Cast at the read site rather than mutating the
+  // interface (out of Phase 2 scope, mirroring the PR1 createdAt pattern).
+  const curatorUrl = (mv.curator as { url?: string } | undefined)?.url;
+  const curatorUrlSuffix = curatorUrl ? ` | ${curatorUrl}` : "";
+  lines.push(`  Curator: ${mv.curator?.name || "Unknown"}${mv.curator?.addresses?.length ? ` (${mv.curator.addresses[0]})` : ""}${curatorUrlSuffix}`);
 
   // PR1 — Vault inception + track-record bucket (discard-layer-spec §1).
   // `metavault.createdAt` is a Unix timestamp (schema spectra.ts:361). 100%
@@ -3371,6 +3390,67 @@ export function formatMetavaultSummary(
     else if (daysAgo < 90) bucket = "30-90d";
     else bucket = "≥90d";
     lines.push(`  Inception: ${formatDate(createdAt)} (${daysAgo}d ago, track-record-class: ${bucket})`);
+  }
+
+  // PR2a — Declared strategy + drift detection (discard-layer-spec §1, MIXED).
+  // Compares `mv.defaultIbt` (the curator-declared canonical IBT for this
+  // vault) against `positions[].ibt.address` to flag drift when the on-chain
+  // allocations diverge from the declaration.
+  //
+  // Silent paths:
+  //   - `defaultIbt` undefined or empty (5/6 current fixtures — Clearstar
+  //     katana is the only firing case)
+  //   - no positions to compare against
+  //
+  // DESIGN CHOICE (spec did not pin): when `defaultOption` is also undefined
+  // (gamisXRP-flare has `defaultOption` without `defaultIbt`; the inverse —
+  // Clearstar with `defaultIbt` and no `defaultOption` — fires here), the
+  // ` via <option>` suffix is dropped silently. Clearstar today renders
+  // `Declared: <symbol>` with no via-clause. Spec example showed both
+  // populated together; live data shows they're independent fields.
+  //
+  // Drift wording per spec § PR2a: `drift: <inDeclared>/<positions.length>
+  // positions in declared address`. NO `⚠` glyph per §7.1 consolidation rule.
+  //
+  // ARCHITECT-INLINE-FIX (Phase 2 audit synthesis, Sonnet+soul depth lens):
+  // denominator must be `mv.positions.length` (total positions on the vault),
+  // NOT `positionAddrs.length` (the subset where ibt.address is populated).
+  // Spec language explicit. When any position lacks ibt.address, using the
+  // filtered count silently misreports the drift fraction. Current fixtures
+  // show 0 positions lacking ibt.address (15/15 populate), so the bug
+  // doesn't fire on production data — but the future-fixture risk is real.
+  //
+  // Schema: `metavault.defaultIbt: z.string().optional()` (line 363),
+  // `metavault.defaultOption: z.string().optional()` (line 364). Both ride
+  // through `.passthrough()` on SpectraMetavault — the type cast below
+  // narrows the read at the access site rather than mutating the interface.
+  const mvDecl = mv as { defaultIbt?: string; defaultOption?: string };
+  const declaredAddrRaw = mvDecl.defaultIbt;
+  if (declaredAddrRaw && mv.positions && mv.positions.length > 0) {
+    const declaredAddr = declaredAddrRaw.toLowerCase();
+    const positionAddrs = mv.positions
+      .map((p) => (p as { ibt?: { address?: string } }).ibt?.address?.toLowerCase())
+      .filter((a): a is string => Boolean(a));
+    const inDeclared = positionAddrs.filter((a) => a === declaredAddr).length;
+
+    // Resolve a display symbol from a position whose ibt.address matches the
+    // declared address (live human-readable). Fall back to the address itself
+    // when no match exists (full drift case).
+    const matchedPos = mv.positions.find(
+      (p) => (p as { ibt?: { address?: string } }).ibt?.address?.toLowerCase() === declaredAddr,
+    );
+    const declaredSymbol =
+      (matchedPos as { ibt?: { symbol?: string } } | undefined)?.ibt?.symbol ?? declaredAddrRaw;
+
+    const optionSuffix = mvDecl.defaultOption ? ` via ${mvDecl.defaultOption}` : "";
+    lines.push(`  Declared: ${declaredSymbol}${optionSuffix}`);
+
+    // Drift line — fires whenever any position diverges, including full drift
+    // (inDeclared === 0). Denominator is mv.positions.length per spec, NOT
+    // positionAddrs.length (architect-inline-fix above).
+    if (inDeclared < mv.positions.length) {
+      lines.push(`    drift: ${inDeclared}/${mv.positions.length} positions in declared address`);
+    }
   }
 
   // PR4 — Vault-level tags (asset-class labels: 'stable', 'eth').
@@ -3475,6 +3555,21 @@ export function formatMetavaultSummary(
     lines.push(`  Live APY (Max Boost): ${formatPct(mv.liveApy.boostedTotal)}`);
   }
 
+  // PR7b — One-line performance summary (discard-layer-spec §1, AMMUNITION).
+  // Calls into `src/performance.ts`. Computes silently with the existing
+  // riskFreeRate=5 default (matching the dashboard's full-block call site at
+  // tools/metavault.ts:1439, so multi-vault scans align with the deep-dive
+  // that follows). Silent when `computePerformanceMetrics` returns null
+  // (epochs<2, totalDays≤0, or firstRate≤0 — see performance.ts).
+  // Dashboard keeps its existing full-block render; this is list-only.
+  // `mv.epochs` is optional in the schema (declared on SpectraMetavault as
+  // `epochs?:`); coerce to empty array so the early-return inside
+  // `computePerformanceMetrics` covers the missing-data case.
+  const perfMetrics = computePerformanceMetrics(mv.epochs ?? [], undefined, mv.underlying?.decimals);
+  if (perfMetrics) {
+    lines.push(`  ${formatPerformanceMetricsOneLine(perfMetrics)}`);
+  }
+
   // Price & exchange rate
   if (mv.price) {
     lines.push(`  Share Price: ${formatUsd(mv.price.usd || 0)} (${(mv.price.underlying || 0).toFixed(6)} underlying)`);
@@ -3541,32 +3636,156 @@ export function formatMetavaultSummary(
       lines.push(`    ${pos.symbol} -- ${formatDate(pos.maturity)} (${matLabel}) -- ${sizeStr}${ptApyStr}${lpApyStr}`);
       lines.push(`      PT: ${pos.address}${pool ? ` | Pool: ${pool.address}` : ""}`);
 
-      // PR4/PR12b/PR17 — per-position discard-layer surface.
+      // PR4/PR5/PR6/PR8/PR12b/PR17 — per-position discard-layer surface.
       // Shape-cast: SpectraMetavaultPosition lacks tags/multipliers/baseIbt/ibt
       // declarations; the schema (PositionSchema) carries them and the live
       // payload populates them. Treat as a forward-compat read at the access
-      // site rather than mutating the interface (out of Phase 1 scope).
+      // site rather than mutating the interface (out of Phase 2 scope).
+      // The cast widens through Phase 2 to read `ibt.protocol` (PR5),
+      // `ibt.apr.details.rewardTokens` (PR8), and `maturityValue` (PR6).
       const posExt = pos as {
         tags?: string[];
         multipliers?: unknown;
         baseIbt?: { symbol?: string };
-        ibt?: { symbol?: string; apr?: { details?: { rewards?: Record<string, number> } } };
+        maturityValue?: { usd?: number };
+        ibt?: {
+          symbol?: string;
+          protocol?: string;
+          apr?: {
+            details?: {
+              rewards?: Record<string, number>;
+              rewardTokens?: Record<string, { address?: string }>;
+            };
+          };
+        };
       };
 
-      // PR4 — per-position tags (asset-class labels). Indented under the
-      // position block alongside Wraps/Multipliers. Silent when empty/missing.
+      // Render-order matches discard-layer-spec §6 list_metavaults layout:
+      //   Tags / Upstream / Maturity-value / Reward-tokens / Multipliers / Wraps
+      // Each block is silent when its source field is empty/missing. Lines
+      // share the 6-space indent of per-position metadata.
+
+      // PR4 — per-position tags (asset-class labels). Silent when empty/missing.
       if (Array.isArray(posExt.tags) && posExt.tags.length > 0) {
         lines.push(`      Tags: [${posExt.tags.join(", ")}]`);
       }
 
-      // PR17 — sw-* wrapper unwrap. Render `Wraps: <baseIbt.symbol>` when
-      // baseIbt is present AND its symbol differs from the IBT's. Non-wrapper
-      // IBTs (no baseIbt) and identical-symbol cases stay silent. Phase 0
-      // baseline measured 7/15 fixture positions populated.
-      const baseIbtSym = posExt.baseIbt?.symbol;
-      const ibtSym = posExt.ibt?.symbol;
-      if (baseIbtSym && ibtSym && baseIbtSym !== ibtSym) {
-        lines.push(`      Wraps: ${baseIbtSym}`);
+      // PR5 — Upstream protocol with registry linkage (discard-layer-spec §1).
+      // Always render `Upstream: <protoRaw>` when `position.ibt.protocol` is
+      // populated. When the normalized name doesn't resolve to a registry
+      // entry (`getMeta` returns `_unknown`), append the registry-pending
+      // annotation. NO `⚠` glyph per §7.1 — the prose carries the signal.
+      //
+      // Why render `protoRaw` (CamelCase API value) instead of the normalized
+      // key: the audience is the downstream sub-agent / Richard's reader. The
+      // public name is what they'll match against external docs / DeFiLlama /
+      // protocol-team conversations. The `(registry: pending)` suffix is the
+      // MCP-author-facing signal.
+      //
+      // Phase 0 verified: avant + pendle + parallel + ipor_fusion + ether_fi
+      // resolve via the alias map. Yearn / Aegis / Lucidly / Firelight live in
+      // PROTOCOL_NAME_ALIASES but `_unknown` will return for them because the
+      // metadata.ts registry is bounded to the two protocols with full
+      // metadata authoring (avant + pendle). Aliases catch the trim-issue +
+      // normalize the lookup, but the `_unknown` fallback still fires for
+      // every protocol without a metadata.ts entry — that's the firing
+      // mechanism PR5 was designed for.
+      const protoRaw = posExt.ibt?.protocol;
+      if (protoRaw) {
+        const normalized = normalizeProtocolName(protoRaw);
+        const meta = getMeta(normalized);
+        const isUnmapped = meta.name === "_unknown";
+        const annotation = isUnmapped
+          ? " (registry: pending — author entry per protocols-metadata-spec)"
+          : "";
+        lines.push(`      Upstream: ${protoRaw}${annotation}`);
+      }
+
+      // PR6 — Maturity value: absolute (position-level) + delta-vs-TVL when
+      // both are populated and the deviation exceeds 1% of TVL.
+      //
+      // SPEC INTERPRETATION (resolved by architect during Phase 2 audit
+      // synthesis): the API's `maturityValue.usd` is per-1-share/per-1-token
+      // (e.g. 1.0000 for a USDC-pegged PT at par); `tvl.usd` is position-total.
+      // Spec §1 PR6 example `$128K (+$2K vs TVL)` implies position-level. The
+      // bridge: multiply per-share × position balance ÷ 10^decimals to get
+      // position-level expected USD at maturity, THEN compare against tvl.usd.
+      //
+      // Builder originally implemented spec literally (per-share vs total)
+      // and flagged DEVIATION 1: every fixture position fired nonsense (e.g.
+      // Clearstar pos[0]: `$1.00 (-$449,157.00 vs TVL)`). Architect-inline-
+      // fix: position-level math via balance multiplication. Bug-visibility
+      // discipline preserved through the deviation flag in commit body.
+      //
+      // Dissolution: when API surfaces `maturityValue.usd` directly as
+      // position-total (no per-share semantics) — this multiplication becomes
+      // a double-scale, and we revert to direct comparison. Re-verify against
+      // a future fixture capture if the API shape evolves.
+      const matUsdPerShare = posExt.maturityValue?.usd;
+      const tvlUsd = pos.tvl?.usd;
+      // Hand-written `SpectraMetavaultPosition` interface in `types.ts`
+      // predates the schema and lacks some optional fields. Cast at read
+      // site mirrors the existing pattern (createdAt, url, defaultIbt).
+      const balanceStr = (pos as { balance?: string }).balance;
+      const decimalsExt = (pos as { decimals?: number }).decimals;
+      // ARCHITECT-INLINE-FIX (Phase 2 audit synthesis, Diverger lens):
+      // require `decimals` to be a number, not fallback to 18. Per
+      // PositionSchema.decimals: z.number().optional() (spectra.ts:202),
+      // a future API state could ship `decimals: undefined` for a USDC
+      // (6-decimal) position, where the `?? 18` default would mis-scale
+      // by 10^12 and render `Maturity value: $0.00 (-$100,000.00 vs TVL)`
+      // as visible-but-wrong output. Silent-on-missing-decimals is the
+      // safer guard (anatomy with operational wire — Phase 2 Diverger
+      // protected finding). All 15 current fixture positions populate
+      // `decimals`; this guard is forward-compat insurance.
+      if (
+        typeof matUsdPerShare === "number" &&
+        typeof tvlUsd === "number" &&
+        balanceStr &&
+        typeof decimalsExt === "number"
+      ) {
+        const decimals = decimalsExt;
+        // Bigint-safe token-count: integer-part + fractional-part to preserve
+        // precision for high-decimal tokens. Pattern matches the existing
+        // LP-balance computation a few hundred lines above (~line 3494).
+        let balanceTokens = 0;
+        try {
+          const raw = BigInt(balanceStr);
+          const divisor = 10n ** BigInt(decimals);
+          balanceTokens =
+            Number(raw / divisor) +
+            Number(raw % divisor) / Number(divisor);
+        } catch {
+          // Defensive: malformed balance string falls through to silent.
+          balanceTokens = 0;
+        }
+        if (balanceTokens > 0) {
+          const expectedUsdAtMaturity = matUsdPerShare * balanceTokens;
+          const delta = expectedUsdAtMaturity - tvlUsd;
+          const denom = Math.max(1, tvlUsd);
+          if (Math.abs(delta) / denom > 0.01) {
+            const sign = delta >= 0 ? "+" : "-";
+            lines.push(
+              `      Maturity value: ${formatUsd(expectedUsdAtMaturity)} (${sign}${formatUsd(Math.abs(delta))} vs TVL)`,
+            );
+          }
+        }
+      }
+
+      // PR8 — Reward tokens (default-render addresses per v3-final).
+      // `position.ibt.apr.details.rewardTokens` is `Record<symbol, TokenSchema>`.
+      // Render `<symbol> (<shortenAddress(token.address)>)` when address
+      // populates, else just `<symbol>`. Silent when the record is empty or
+      // missing. NB: across base/katana/flare/mainnet fixtures (April 27),
+      // every `rewardTokens` is empty — this branch is structurally correct
+      // but won't fire on current data. When the API populates the field
+      // (or a new chain surfaces one), the render is ready.
+      const rewardTokens = posExt.ibt?.apr?.details?.rewardTokens;
+      if (rewardTokens && Object.keys(rewardTokens).length > 0) {
+        const parts = Object.entries(rewardTokens).map(([symbol, token]) =>
+          token?.address ? `${symbol} (${shortenAddress(token.address)})` : symbol,
+        );
+        lines.push(`      Reward tokens: ${parts.join(", ")}`);
       }
 
       // PR12b — per-position multipliers (Array form OR object {lp,yt} form).
@@ -3577,7 +3796,7 @@ export function formatMetavaultSummary(
       // Verified-firing baseline: 8 positions across 4 vaults
       // (gamisUSDC pos[1,3,4,5], gamisXRP pos[0,1], CSMVUSDC pos[2],
       //  CSfusionMVWETH pos[0]). NB: only firing-fixtures with allocated
-      // pool LPT render here today — see DEVIATIONS in the architect message.
+      // pool LPT render here today — see DEVIATION 1 above.
       const multLine = formatMultipliers(posExt.multipliers);
       if (multLine) {
         const rewards = posExt.ibt?.apr?.details?.rewards;
@@ -3588,6 +3807,16 @@ export function formatMetavaultSummary(
           ? " (no on-chain rewards populated — points program declared, settlement evidence absent)"
           : "";
         lines.push(`      Multipliers: ${multLine}${suffix}`);
+      }
+
+      // PR17 — sw-* wrapper unwrap. Render `Wraps: <baseIbt.symbol>` when
+      // baseIbt is present AND its symbol differs from the IBT's. Non-wrapper
+      // IBTs (no baseIbt) and identical-symbol cases stay silent. Phase 0
+      // baseline measured 7/15 fixture positions populated.
+      const baseIbtSym = posExt.baseIbt?.symbol;
+      const ibtSym = posExt.ibt?.symbol;
+      if (baseIbtSym && ibtSym && baseIbtSym !== ibtSym) {
+        lines.push(`      Wraps: ${baseIbtSym}`);
       }
 
       // LP APY breakdown per position — surface composition
@@ -3826,14 +4055,58 @@ export function formatMetavaultSummary(
     lines.push(`    Yield accrued: ~${formatUsd(Math.abs(totalYield * underlyingPrice))} (rate ${firstRate.toFixed(6)} → ${lastRate.toFixed(6)})`);
   }
 
-  // Bridge transactions
+  // PR9 — Bridge aggregate state with completion-collapse
+  // (discard-layer-spec §1, CATEGORY — bridge fidelity).
+  //
+  // Three render branches:
+  //   1. COMPLETED-HISTORY COLLAPSE: `totalPendingUsd === 0 && txns.length > 0`
+  //      → one-line summary `Bridge: $X total, N txns completed`. The detail
+  //      is recoverable from `spectra_get_curator_dashboard`; the list view
+  //      surfaces the existence + scale signal without burning lines on
+  //      historical noise.
+  //   2. PENDING-WITH-NO-HISTORY: `totalPendingUsd > 0 && txns.length === 0`
+  //      → renders the pending line so a curator who initiated a CCTP
+  //      transfer that hasn't settled yet still sees the in-flight value.
+  //   3. ACTIVE BRIDGE: txns populate AND (pending > 0 OR pending undefined)
+  //      → existing per-tx detail (unchanged from prior render). Preserves
+  //      the deep-dive surface for cross-chain operational triage.
+  //
+  // Edge cases (per spec):
+  //   - `totalPendingUsd === undefined`: typeof check guards the collapse
+  //     condition. With txns present, falls through to per-tx render (case 3).
+  //     With no txns, the whole block stays silent.
+  //   - `totalPendingUsd === NaN`: JS `NaN === 0` is `false`, `NaN > 0` is
+  //     `false`, so NaN falls through to per-tx render when txns present, or
+  //     silent block when not. NaN is not actively flagged — defensive only.
+  //   - empty txns array AND zero/undefined pending: silent block (no signal).
   const bridgeTxs = mv.bridge?.transactions;
-  if (bridgeTxs && bridgeTxs.length > 0) {
+  const totalPendingUsd = mv.bridge?.totalPendingUsd;
+  const hasTxns = Boolean(bridgeTxs && bridgeTxs.length > 0);
+  const isCompletedCollapse =
+    typeof totalPendingUsd === "number" && totalPendingUsd === 0 && hasTxns;
+  const isPendingNoHistory =
+    typeof totalPendingUsd === "number" && totalPendingUsd > 0 && !hasTxns;
+
+  if (isCompletedCollapse) {
+    // Branch 1: completed-history collapse. One-line summary, no per-tx list.
+    let totalCompleted = 0;
+    for (const tx of bridgeTxs!) {
+      totalCompleted += tx.amountUsd || 0;
+    }
     lines.push(``);
-    lines.push(`  Bridge Transactions (${bridgeTxs.length}):`);
+    lines.push(`  Bridge: ${formatUsd(totalCompleted)} total, ${bridgeTxs!.length} txns completed`);
+  } else if (isPendingNoHistory) {
+    // Branch 2: pending, no historical txns yet. Surface the in-flight value
+    // so the curator (or sub-agent) doesn't miss the active CCTP transfer.
+    lines.push(``);
+    lines.push(`  Bridge: ${formatUsd(totalPendingUsd!)} pending (no historical txns yet)`);
+  } else if (hasTxns) {
+    // Branch 3: active bridge with detail. Existing per-tx render preserved.
+    lines.push(``);
+    lines.push(`  Bridge Transactions (${bridgeTxs!.length}):`);
 
     // Sort by timestamp descending (most recent first)
-    const sorted = [...bridgeTxs].sort((a, b) => b.timestamp - a.timestamp);
+    const sorted = [...bridgeTxs!].sort((a, b) => b.timestamp - a.timestamp);
     for (const tx of sorted) {
       const date = formatDate(tx.timestamp);
       const src = chainIdToName(tx.srcChainId);
@@ -3844,7 +4117,7 @@ export function formatMetavaultSummary(
 
     // Summarize by direction
     const dirMap = new Map<string, { count: number; totalUsd: number }>();
-    for (const tx of bridgeTxs) {
+    for (const tx of bridgeTxs!) {
       const key = `${chainIdToName(tx.srcChainId)} → ${chainIdToName(tx.dstChainId)}`;
       const entry = dirMap.get(key) || { count: 0, totalUsd: 0 };
       entry.count++;
@@ -3856,11 +4129,12 @@ export function formatMetavaultSummary(
       lines.push(`    ${dir}: ${count} txn(s), ${formatUsd(totalUsd)} total`);
     }
 
-    const pending = mv.bridge?.totalPendingUsd || 0;
+    const pending = totalPendingUsd || 0;
     if (pending > 0) {
       lines.push(`    Pending: ${formatUsd(pending)}`);
     }
   }
+  // else: silent block (no txns + no/zero pending → no bridge signal to surface).
 
   // Unclaimed Merkl rewards at the vault address
   if (vaultMerklRewards && vaultMerklRewards.length > 0) {
