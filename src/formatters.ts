@@ -13,6 +13,7 @@ import {
   chainIdToName,
   shortenAddress,
   truncateDescription,
+  formatRoleRecord,
 } from "./primitives.js";
 import {
   renderExternalPosition,
@@ -3270,6 +3271,46 @@ const HALT_CHECK_CODES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * KNOWN_KEYS for `metavault.transactionQueue.{chainId}[]` entry shape (PR11
+ * fixture-first gate per discard-layer-spec §7).
+ *
+ * Authored from gamisUSDC base fixture (the only currently-populated queue
+ * across all 4 chain fixtures): a single QUEUED `registerMarketAsMetavault`
+ * action on Avalanche chainId 43114, queueNonce 4. The entry shape carries
+ * both wrapper-level fields (timestamp, cooldownEndTimestamp, status,
+ * delayModule, etc.) and a nested `actions[]` array with per-action selector
+ * + functionName + calldata.
+ *
+ * The PR11 renderer asserts every observed key is in this set. When the API
+ * ships a new field, the snapshot test surfaces `[unsupported-shape: <keys>]`
+ * loud rather than silently dropping it.
+ *
+ * Dissolution: when MV-V2 schema ships transactionQueue with structured
+ * types, this constant + the corresponding render-side gate become
+ * redundant. Re-evaluate per spec §7 invariants.
+ */
+export const TRANSACTION_QUEUE_KNOWN_KEYS: ReadonlySet<string> = new Set([
+  "__typename",
+  "operator",
+  "queueNonce",
+  "timelockedTransactionHash",
+  "timestamp",
+  "blockNumber",
+  "to",
+  "value",
+  "data",
+  "operation",
+  "transactionHash",
+  "delayModule",
+  "chainId",
+  "status",
+  "executionMaxTimestamp",
+  "cooldownEndTimestamp",
+  "metavault",
+  "actions",
+]);
+
+/**
  * Compose the 1-line source-vault halt-check summary for the rollover output.
  *
  * Three shapes:
@@ -4229,6 +4270,269 @@ export function formatMetavaultSummary(
     }
   }
   // else: silent block (no txns + no/zero pending → no bridge signal to surface).
+
+  // PR10a — Home-chain governance (discard-layer-spec §1, AMMUNITION).
+  //
+  // Reads `metavault.modifier.roles` (Record<role-name, address>) and
+  // `metavault.modifier.delay` (Record<role-name, ?>). Renders one-liner:
+  //
+  //   Governance: <roles> | <delays>
+  //
+  // when modifier is populated. Phase 0 fixture audit confirmed `modifier` is
+  // 6/6 populated, so this fires for every MV today. Silent only if a future
+  // fixture ships modifier=undefined.
+  //
+  // **DEVIATION from spec §1 PR10a (FLAGGED v3-final-Phase-4)**: Spec text
+  // assumed `modifier.delay` carries seconds-as-string and prescribed
+  // `formatDelayRecord` (which routes through `formatSecondsAsDuration`).
+  // Phase-4 fixture verification (all 4 chains, 6 vaults) showed `delay`
+  // values are 42-char hex addresses, not seconds — they point at the
+  // delay-MODULE contract that holds the real cooldown. Confirmed by the
+  // transactionQueue entry's `delayModule` field carrying the same address
+  // shape, while the seconds value lives in `cooldownEndTimestamp` per
+  // queued action. Routing addresses through `formatSecondsAsDuration` would
+  // silently render every delay as "0s" (because `parseInt("0x...", 10) === 0`,
+  // skipping the NaN guard), which is worse than the address shape itself.
+  // We therefore render `delay` via `formatRoleRecord` (role=address shape),
+  // matching what the data actually carries. The Phase 0 helper
+  // `formatSecondsAsDuration` is preserved unchanged for the future API
+  // shape that may ship seconds.
+  //
+  // **DESIGN CHOICE — "NON-DEFAULT roles only render"** (spec §1 PR10a
+  // ambiguity): spec text says NON-DEFAULT roles only render, but does not
+  // define "default". Phase 4 fixture survey shows all 6 vaults populate
+  // `roles: {default, pool, swap}` and `delay: {default}` — no "all roles
+  // share the same delay" consolidation opportunity exists in current data.
+  // Cross-referencing §6 list_metavaults layout ("PR10a + PR10b (always)")
+  // and dashboard layout ("Home (when non-default)"), the non-default rule
+  // applies to dashboard surface, not list. **For Phase 4 (list-only), all
+  // populated roles + delays render every time.** Dashboard divergence-only
+  // logic deferred to a separate Phase 4.5 / dashboard-extension PR per
+  // §8.1.
+  //
+  // Layout per spec §6: between Bridge block (PR9) and Pending Actions (PR11).
+  // No `⚠` glyph (§7.1 consolidation rule).
+  //
+  // Schema: `metavault.modifier: ModifierSchema.optional()` (spectra.ts:404),
+  // where ModifierSchema (spectra.ts:271-276) types both roles and delay as
+  // `Record<string, string>` with `.passthrough()`.
+  //
+  // Type cast: SpectraMetavault interface in types.ts predates this surface;
+  // schema covers it. Cast at the read site rather than mutating the
+  // interface — same pattern as PR1 createdAt, PR2a defaultIbt, PR12a
+  // multipliers.
+  //
+  // Dissolution: when SpectraMetavault.modifier is added to the typed
+  // interface in types.ts, this cast can be dropped. When the API ships a
+  // structured delay shape carrying seconds (or a new field appears that
+  // exposes the cooldown duration), revisit the deviation note above and
+  // re-route through `formatDelayRecord` if appropriate.
+  const homeModifier = (mv as { modifier?: { roles?: Record<string, string>; delay?: Record<string, string> } }).modifier;
+  if (homeModifier) {
+    const rolesRendered = formatRoleRecord(homeModifier.roles);
+    // DEVIATION 1: render delays via formatRoleRecord (address shape), not
+    // formatDelayRecord (seconds shape) — fixture verification proved values
+    // are delay-module addresses.
+    const delaysRendered = formatRoleRecord(homeModifier.delay);
+    if (rolesRendered || delaysRendered) {
+      lines.push(``);
+      const rolesPart = rolesRendered ?? "(no roles)";
+      const delaysPart = delaysRendered ?? "(no delays)";
+      lines.push(`  Governance: ${rolesPart} | ${delaysPart}`);
+    }
+  }
+
+  // PR10b — Remote-chain governance (discard-layer-spec §1, AMMUNITION).
+  //
+  // Iterates `metavault.remote: Record<chainId, RemoteEntry>` and renders
+  // per-chain:
+  //
+  //   Governance (<chainId>): <roles> | <delays>
+  //
+  // Phase 4 scope: LIST surface always. Dashboard divergence-detection
+  // deferred to Phase 4.5 per §8.1.
+  //
+  // Phase 0 fixture audit: 2/6 vaults populate remote — gamisUSDC + UltraWETH,
+  // both pointing at chainId 43114 (Avalanche). Other 4 vaults have remote
+  // undefined or empty → block silent for them.
+  //
+  // Same DEVIATION 1 as PR10a applies: remote.{chainId}.modifier.delay
+  // values are also delay-module addresses (verified per-chain in fixtures).
+  //
+  // Schema: `metavault.remote: z.record(z.string(), RemoteEntrySchema).optional()`
+  // (spectra.ts:406); RemoteEntrySchema includes `modifier: ModifierSchema.optional()`
+  // (spectra.ts:333-338). Same Record-of-Record-of-string semantics as home.
+  //
+  // Layout per spec §6: directly after PR10a's home Governance line, sharing
+  // the same blank-line spacer prefix. Each remote chain emits its own line —
+  // when a vault deploys on multiple foreign chains (none today, but the
+  // schema permits it), each line surfaces independently.
+  //
+  // Dissolution: when remote-MV deployments stop using the same delay-module
+  // architecture as home (e.g., a future chain ships native cooldown seconds),
+  // the DEVIATION 1 reasoning needs re-evaluation per chain.
+  const remote = (mv as { remote?: Record<string, { modifier?: { roles?: Record<string, string>; delay?: Record<string, string> } }> }).remote;
+  if (remote) {
+    for (const [chainIdStr, entry] of Object.entries(remote)) {
+      const remoteModifier = entry?.modifier;
+      if (!remoteModifier) continue;
+      const rolesRendered = formatRoleRecord(remoteModifier.roles);
+      const delaysRendered = formatRoleRecord(remoteModifier.delay);
+      if (rolesRendered || delaysRendered) {
+        const rolesPart = rolesRendered ?? "(no roles)";
+        const delaysPart = delaysRendered ?? "(no delays)";
+        lines.push(`  Governance (${chainIdStr}): ${rolesPart} | ${delaysPart}`);
+      }
+    }
+  }
+
+  // PR11 — Pending actions (transactionQueue) (discard-layer-spec §1 +
+  // §7 fixture-first gate, MIXED — alpha when populated).
+  //
+  // Reads `metavault.transactionQueue: Record<chainId, Array<TimelockedTransactionAdded>>`.
+  // Phase 4 fixture verification (all 4 chains, 6 vaults): only gamisUSDC has
+  // a populated queue (1 entry on Avalanche chainId 43114 — a queued
+  // `registerMarketAsMetavault` action with cooldownEndTimestamp 1777276430).
+  // Other 5 vaults ship `transactionQueue: {}` (empty record) → silent.
+  //
+  // Render shape per spec (scope-narrowed v3-final round 3):
+  //
+  //   Pending (<chainId>): <selector-short> <functionName> → executable <ISO> (queued <ISO>)
+  //
+  // Per-action rendering when `actions[]` populates (most queued txns carry
+  // exactly one action; multi-action calldata is rare). Defer `actions[].args`
+  // to a verbose flag (NOT default render — protocol-owner round-3 audit
+  // finding: future selectors with token-amount args lower MEV-scraping cost).
+  //
+  // FIXTURE-FIRST GATE per §7:
+  //   - KNOWN_KEYS authored from gamisUSDC fixture inspection (see
+  //     TRANSACTION_QUEUE_KNOWN_KEYS at the top of this section). Snapshot
+  //     test asserts `Object.keys(entry).every(k => KNOWN_KEYS.has(k))`,
+  //     fails LOUD with `[unsupported-shape: <unknown-keys>]` annotation
+  //     when the API ships a new field shape.
+  //   - When unknown keys are detected, the renderer still emits the
+  //     known-keys subset (no silent drop) AND appends the
+  //     `[unsupported-shape: ...]` marker so the operator sees both the
+  //     usable data and the drift signal.
+  //
+  // Selector display: shortened via `shortenAddress` (the 0x...XXXX shape
+  // matches addresses in pattern; the `selector` field is a 10-char
+  // function-selector hex which is shorter than 11, so `shortenAddress`
+  // returns it unchanged — display intent honored).
+  //
+  // Timestamp rendering: `cooldownEndTimestamp` is a unix-seconds string;
+  // we parse to int and route through formatDate for ISO YYYY-MM-DD shape.
+  // The `timestamp` field on the wrapper (queue-add timestamp) is rendered
+  // alongside as `queued <ISO>` so an operator can see both ends of the
+  // cooldown window.
+  //
+  // Layout per spec §6: directly after Governance lines (PR10a/10b), before
+  // chain-truth footer / vault flows.
+  //
+  // Schema: `metavault.transactionQueue: z.record(z.string(), z.unknown()).optional()`
+  // (spectra.ts:410) — permissive shape because the inner array of
+  // TimelockedTransactionAdded entries was uninvestigated until Phase 4.
+  // Type cast at the read site narrows to the observed shape; the
+  // `.passthrough()` schema lets future fields ride through untouched.
+  //
+  // Dissolution:
+  //   - When the snapshot test fires `[unsupported-shape:...]` in CI, the
+  //     KNOWN_KEYS set is stale; re-inspect fixtures + extend the constant
+  //     OR upgrade to a typed schema.
+  //   - When a verbose flag lands on the tool wiring, lift the deferred
+  //     `actions[].args` rendering behind it.
+  //   - When MV-V2 schema ships `transactionQueue` with structured types,
+  //     drop the cast and the KNOWN_KEYS gate.
+  type QueueEntry = {
+    __typename?: string;
+    operator?: string;
+    queueNonce?: string;
+    timelockedTransactionHash?: string;
+    timestamp?: string;
+    blockNumber?: string;
+    to?: string;
+    value?: string;
+    data?: string;
+    operation?: number;
+    transactionHash?: string;
+    delayModule?: string;
+    chainId?: number;
+    status?: string;
+    executionMaxTimestamp?: string;
+    cooldownEndTimestamp?: string;
+    metavault?: string;
+    actions?: Array<{
+      functionName?: string;
+      signature?: string;
+      selector?: string;
+      args?: unknown[];
+      argsNamed?: Record<string, unknown>;
+      description?: string;
+      functionDetails?: unknown;
+      source?: string;
+      to?: string;
+      value?: string;
+      data?: string;
+    }>;
+  };
+  const transactionQueue = (mv as { transactionQueue?: Record<string, unknown> }).transactionQueue;
+  if (transactionQueue && typeof transactionQueue === "object") {
+    for (const [chainIdStr, rawEntries] of Object.entries(transactionQueue)) {
+      if (!Array.isArray(rawEntries) || rawEntries.length === 0) continue;
+      for (const rawEntry of rawEntries) {
+        if (!rawEntry || typeof rawEntry !== "object") continue;
+        const entry = rawEntry as QueueEntry;
+
+        // ARCHITECT-INLINE-FIX (Phase 4 audit synthesis, Sonnet+soul depth lens):
+        // skip non-QUEUED status entries. Transaction-queue API field carries
+        // historical entries with status `EXECUTED` / `CANCELLED` / similar past
+        // states — labeling those as "Pending" is semantically wrong. Only
+        // status === "QUEUED" entries are actually pending and warrant the
+        // Pending: render. Current fixture (gamisUSDC) has 1 QUEUED entry that
+        // becomes EXECUTED post-cooldown (cooldown closes ~2026-04-27); the
+        // unfixed renderer would have produced wrong output the day after the
+        // queued action executed. Same Sonnet+soul pattern as Phase 0
+        // whitespace-trim BLOCKER + Phase 2 PR2a denominator semantic.
+        //
+        // Defensive: if `status` field is absent (schema-permitted), treat as
+        // QUEUED (render) — assumes the spec's pending-actions-only render is
+        // the safer default vs silently dropping. Future API shape can refine.
+        if (entry.status && entry.status !== "QUEUED") continue;
+
+        // KNOWN_KEYS gate — detect drift loud, do not silently drop.
+        const observedKeys = Object.keys(entry);
+        const unknownKeys = observedKeys.filter((k) => !TRANSACTION_QUEUE_KNOWN_KEYS.has(k));
+        const unknownSuffix = unknownKeys.length > 0
+          ? ` [unsupported-shape: ${unknownKeys.join(",")}]`
+          : "";
+
+        // Compose action snippet: prefer first action's selector + functionName.
+        // When `actions` is missing/empty, fall back to the wrapper's
+        // `timelockedTransactionHash` short-form — still surfaces the
+        // existence of a pending operation.
+        const firstAction = entry.actions?.[0];
+        const selector = firstAction?.selector ?? "";
+        const functionName = firstAction?.functionName ?? "(unnamed)";
+        const selectorPart = selector ? `${selector} ${functionName}` : `${functionName}`;
+
+        // Cooldown ISO: parseInt unix-seconds string then formatDate.
+        const coolEndStr = entry.cooldownEndTimestamp;
+        const coolEndN = coolEndStr ? parseInt(coolEndStr, 10) : NaN;
+        const coolEndIso = Number.isFinite(coolEndN) && coolEndN > 0
+          ? formatDate(coolEndN)
+          : "(unknown)";
+
+        const queuedStr = entry.timestamp;
+        const queuedN = queuedStr ? parseInt(queuedStr, 10) : NaN;
+        const queuedIso = Number.isFinite(queuedN) && queuedN > 0
+          ? formatDate(queuedN)
+          : "(unknown)";
+
+        lines.push(``);
+        lines.push(`  Pending (${chainIdStr}): ${selectorPart} → executable ${coolEndIso} (queued ${queuedIso})${unknownSuffix}`);
+      }
+    }
+  }
 
   // Unclaimed Merkl rewards at the vault address
   if (vaultMerklRewards && vaultMerklRewards.length > 0) {

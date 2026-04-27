@@ -4973,3 +4973,529 @@ describe("formatMetavaultSummary — Phase 3 cross-PR fixture integration (gamis
     );
   });
 });
+
+// =============================================================================
+// Discard-layer Phase 4 — PR10a (home governance), PR10b (remote governance),
+// PR11 (pending actions / transactionQueue).
+// =============================================================================
+//
+// Spec: docs/discard-layer-spec.md §1 PR10a + PR10b + PR11, §6 layout, §7
+// fixture-first gate, §7.1 consolidation rule.
+//
+// FIXTURE STATE (Phase 4 capture, all 4 chains, 6 vaults):
+//   - metavault.modifier: 6/6 populated; roles=Record<3, address>, delay=Record<1, address>
+//   - metavault.remote: 2/6 populated (gamisUSDC + UltraWETH on chainId 43114)
+//   - metavault.transactionQueue: 1/6 populated (gamisUSDC base, single QUEUED action on 43114)
+//   - metavault.swap: 6/6 populated as { cow: [] } — empty array → silent (PR11 swap-rendering deferred)
+//
+// DEVIATION 1 (PR10a/b): modifier.delay values are delay-module addresses
+// (42-char hex), not seconds-as-string. Renderer routes through formatRoleRecord
+// (address shape), not formatDelayRecord. Tests verify the address-shape render.
+
+import {
+  TRANSACTION_QUEUE_KNOWN_KEYS,
+} from "./formatters.js";
+
+describe("formatMetavaultSummary — PR10a (home-chain governance)", () => {
+  const NOW = Math.floor(Date.now() / 1000);
+  function mkMv(modifier: any): any {
+    return {
+      address: "0xa0",
+      vault: "0xb0",
+      chainId: 8453,
+      decimals: 6,
+      name: "TestVault",
+      symbol: "TV",
+      curator: { name: "Curator", addresses: ["0xabc"] },
+      underlying: { address: "0x1", symbol: "USDC", decimals: 6, price: { usd: 1 } },
+      tvl: { usd: 1000, underlying: 1000 },
+      liveApy: { total: 0.05 },
+      positions: [],
+      epochs: [],
+      modifier,
+      createdAt: NOW - 100 * 86400,
+    };
+  }
+
+  it("renders Governance line with roles + delays when modifier populated", () => {
+    const mv = mkMv({
+      roles: {
+        default: "0x0ff57d8ffd6cf7084a55da7620ab96bc895ce4ba",
+        pool: "0x549b402952142f5b5a9153cec5cf2100de027f51",
+      },
+      delay: {
+        default: "0x4bfc00addb8d4ba5d1c35e7bee6d8e10bbb5fde5",
+      },
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(
+      out,
+      /^  Governance: default=0x0ff5\.\.\.e4ba, pool=0x549b\.\.\.7f51 \| default=0x4bfc\.\.\.fde5$/m,
+    );
+  });
+
+  it("silent when modifier undefined", () => {
+    const mv = mkMv(undefined);
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^  Governance:/m.test(out), false);
+  });
+
+  it("silent when modifier present but roles + delay both empty", () => {
+    const mv = mkMv({ roles: {}, delay: {} });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^  Governance:/m.test(out), false);
+  });
+
+  it("DEVIATION 1: delay values render as addresses (formatRoleRecord shape), not [unparsed:0x...] or '0s'", () => {
+    // The Phase 0 formatSecondsAsDuration would mis-render '0x...' as '0s'
+    // because parseInt('0x...', 10) === 0. This test guards against the
+    // wrong-helper regression: must NOT contain '[unparsed:' AND must NOT
+    // contain ' 0s' (with leading space, to avoid catching the scary 's' in
+    // 'positions').
+    const mv = mkMv({
+      roles: { default: "0x0ff57d8ffd6cf7084a55da7620ab96bc895ce4ba" },
+      delay: { default: "0x4bfc00addb8d4ba5d1c35e7bee6d8e10bbb5fde5" },
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(out.includes("[unparsed:"), false, "delays must not render as [unparsed:...]");
+    assert.equal(/Governance:.*\b0s\b/.test(out), false, "delays must not render as '0s'");
+    // Positive: delay address must appear in shortened form on the Governance line.
+    assert.match(out, /Governance:.*0x4bfc\.\.\.fde5/);
+  });
+
+  it("renders without ⚠ glyph (§7.1 consolidation rule)", () => {
+    const mv = mkMv({
+      roles: { default: "0x0ff57d8ffd6cf7084a55da7620ab96bc895ce4ba" },
+      delay: { default: "0x4bfc00addb8d4ba5d1c35e7bee6d8e10bbb5fde5" },
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    const govLine = out.split("\n").find((l) => /^  Governance:/.test(l));
+    assert.ok(govLine, "Governance line must render");
+    assert.equal(govLine!.includes("⚠"), false, "PR10a must NOT use ⚠ glyph");
+  });
+
+  it("renders with only roles populated (delay undefined)", () => {
+    const mv = mkMv({
+      roles: { default: "0x0ff57d8ffd6cf7084a55da7620ab96bc895ce4ba" },
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^  Governance: default=0x0ff5\.\.\.e4ba \| \(no delays\)$/m);
+  });
+
+  it("renders with only delay populated (roles undefined)", () => {
+    const mv = mkMv({
+      delay: { default: "0x4bfc00addb8d4ba5d1c35e7bee6d8e10bbb5fde5" },
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^  Governance: \(no roles\) \| default=0x4bfc\.\.\.fde5$/m);
+  });
+});
+
+describe("formatMetavaultSummary — PR10b (remote-chain governance, list-always)", () => {
+  const NOW = Math.floor(Date.now() / 1000);
+  function mkMv(remote: any, modifier: any = undefined): any {
+    return {
+      address: "0xa0",
+      vault: "0xb0",
+      chainId: 8453,
+      decimals: 6,
+      name: "TestVault",
+      symbol: "TV",
+      curator: { name: "Curator", addresses: ["0xabc"] },
+      underlying: { address: "0x1", symbol: "USDC", decimals: 6, price: { usd: 1 } },
+      tvl: { usd: 1000, underlying: 1000 },
+      liveApy: { total: 0.05 },
+      positions: [],
+      epochs: [],
+      remote,
+      modifier,
+      createdAt: NOW - 100 * 86400,
+    };
+  }
+
+  it("renders per-chain Governance line when remote populated", () => {
+    const mv = mkMv({
+      "43114": {
+        address: "0xremote",
+        modifier: {
+          roles: { default: "0x1040d6728da55813713fd1b74737911e6568a059" },
+          delay: { default: "0xa9239af676f6ebd62bd5125d2c97fb9ae49c93f1" },
+        },
+      },
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(
+      out,
+      /^  Governance \(43114\): default=0x1040\.\.\.a059 \| default=0xa923\.\.\.93f1$/m,
+    );
+  });
+
+  it("silent when remote undefined", () => {
+    const mv = mkMv(undefined);
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^  Governance \(\d+\):/m.test(out), false);
+  });
+
+  it("silent when remote present but modifier missing for entry", () => {
+    const mv = mkMv({
+      "43114": { address: "0xremote" }, // no modifier
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^  Governance \(43114\):/m.test(out), false);
+  });
+
+  it("renders multi-chain remote independently per chain", () => {
+    const mv = mkMv({
+      "43114": {
+        modifier: {
+          roles: { default: "0x1040d6728da55813713fd1b74737911e6568a059" },
+        },
+      },
+      "10": {
+        modifier: {
+          delay: { default: "0xa9239af676f6ebd62bd5125d2c97fb9ae49c93f1" },
+        },
+      },
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^  Governance \(43114\): default=0x1040\.\.\.a059 \| \(no delays\)$/m);
+    assert.match(out, /^  Governance \(10\): \(no roles\) \| default=0xa923\.\.\.93f1$/m);
+  });
+
+  it("PR10a + PR10b render together, home line first, remote line(s) after", () => {
+    const mv = mkMv(
+      {
+        "43114": {
+          modifier: {
+            roles: { default: "0x1040d6728da55813713fd1b74737911e6568a059" },
+            delay: { default: "0xa9239af676f6ebd62bd5125d2c97fb9ae49c93f1" },
+          },
+        },
+      },
+      {
+        roles: { default: "0x0ff57d8ffd6cf7084a55da7620ab96bc895ce4ba" },
+        delay: { default: "0x4bfc00addb8d4ba5d1c35e7bee6d8e10bbb5fde5" },
+      },
+    );
+    const out = formatMetavaultSummary(mv, "base");
+    const lines = out.split("\n");
+    const homeIdx = lines.findIndex((l) => /^  Governance: /.test(l));
+    const remoteIdx = lines.findIndex((l) => /^  Governance \(43114\): /.test(l));
+    assert.ok(homeIdx >= 0, "home Governance line must render");
+    assert.ok(remoteIdx > homeIdx, "remote Governance line must follow home line");
+  });
+});
+
+describe("TRANSACTION_QUEUE_KNOWN_KEYS — PR11 fixture-first gate (§7)", () => {
+  it("contains the canonical 18 keys observed in gamisUSDC base fixture", () => {
+    const expectedKeys = [
+      "__typename", "operator", "queueNonce", "timelockedTransactionHash",
+      "timestamp", "blockNumber", "to", "value", "data", "operation",
+      "transactionHash", "delayModule", "chainId", "status",
+      "executionMaxTimestamp", "cooldownEndTimestamp", "metavault", "actions",
+    ];
+    for (const k of expectedKeys) {
+      assert.ok(TRANSACTION_QUEUE_KNOWN_KEYS.has(k), `KNOWN_KEYS must contain '${k}'`);
+    }
+    assert.equal(TRANSACTION_QUEUE_KNOWN_KEYS.size, expectedKeys.length);
+  });
+
+  it("snapshot — fixture entry's keys are all in KNOWN_KEYS (gamisUSDC base, chainId 43114)", () => {
+    // Load live fixture and assert every key in the entry survives the
+    // KNOWN_KEYS gate. When the API ships a new field, this fails LOUD with
+    // the unknown-key list — exactly the §7 fixture-first contract.
+    const __dirname_pr11 = dirname(fileURLToPath(import.meta.url));
+    const fixturesDir = resolve(__dirname_pr11, "../test/fixtures");
+    const data = JSON.parse(
+      readFileSync(resolve(fixturesDir, "metavaults-base.json"), "utf8"),
+    );
+    const gami = data.find((m: any) => m.symbol === "gamisUSDC");
+    assert.ok(gami, "gamisUSDC fixture missing");
+    const queue = gami.transactionQueue?.["43114"];
+    assert.ok(Array.isArray(queue) && queue.length > 0, "queue entry missing");
+
+    for (const entry of queue) {
+      const observedKeys = Object.keys(entry);
+      const unknownKeys = observedKeys.filter((k) => !TRANSACTION_QUEUE_KNOWN_KEYS.has(k));
+      assert.equal(
+        unknownKeys.length,
+        0,
+        `[unsupported-shape: ${unknownKeys.join(",")}] — KNOWN_KEYS stale; re-inspect fixture + extend constant`,
+      );
+    }
+  });
+});
+
+describe("formatMetavaultSummary — PR11 (transactionQueue rendering, fixture-first)", () => {
+  const NOW = Math.floor(Date.now() / 1000);
+  function mkMv(transactionQueue: any): any {
+    return {
+      address: "0xa0",
+      vault: "0xb0",
+      chainId: 8453,
+      decimals: 6,
+      name: "TestVault",
+      symbol: "TV",
+      curator: { name: "Curator", addresses: ["0xabc"] },
+      underlying: { address: "0x1", symbol: "USDC", decimals: 6, price: { usd: 1 } },
+      tvl: { usd: 1000, underlying: 1000 },
+      liveApy: { total: 0.05 },
+      positions: [],
+      epochs: [],
+      transactionQueue,
+      createdAt: NOW - 100 * 86400,
+    };
+  }
+
+  it("silent when transactionQueue undefined", () => {
+    const mv = mkMv(undefined);
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^  Pending \(/m.test(out), false);
+  });
+
+  it("silent when transactionQueue is empty record {}", () => {
+    const mv = mkMv({});
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^  Pending \(/m.test(out), false);
+  });
+
+  it("silent when transactionQueue.{chainId} is empty array", () => {
+    const mv = mkMv({ "43114": [] });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^  Pending \(/m.test(out), false);
+  });
+
+  it("renders Pending line when queue populated with one action", () => {
+    const mv = mkMv({
+      "43114": [
+        {
+          __typename: "TimelockedTransactionAdded",
+          operator: "0x9878aef8a193dbfcefa8a6ece3eb15f93ca31c9e",
+          queueNonce: "4",
+          timelockedTransactionHash: "0xacb6379c0f94ab5034d92f19d1441fe79f4d29fd956718c7efd86e9e579bb087",
+          timestamp: "1776671630", // 2026-04-21
+          blockNumber: "83410525",
+          to: "0x9641d764fc13c8b624c04430c7356c1c7c8102e2",
+          value: "0",
+          data: "0x...",
+          operation: 1,
+          transactionHash: "0xa4b5b3862f54e6b1f52361bddd08fa2b68e3f6495816ac98db42626a86ac07da",
+          delayModule: "0xa9239af676f6ebd62bd5125d2c97fb9ae49c93f1",
+          chainId: 43114,
+          status: "QUEUED",
+          executionMaxTimestamp: "1777881230",
+          cooldownEndTimestamp: "1777276430", // 2026-04-28
+          metavault: "0x5e93e1193a5e297cba0856e9b3f22b6e05429b9a",
+          actions: [
+            {
+              functionName: "registerMarketAsMetavault",
+              selector: "0x275fd665",
+              signature: "registerMarketAsMetavault(address)",
+            },
+          ],
+        },
+      ],
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    // Match the structural shape: chainId, selector, functionName, executable + queued ISO dates.
+    assert.match(
+      out,
+      /^  Pending \(43114\): 0x275fd665 registerMarketAsMetavault → executable \d{4}-\d{2}-\d{2} \(queued \d{4}-\d{2}-\d{2}\)$/m,
+    );
+  });
+
+  it("renders Pending line with [unsupported-shape] suffix when unknown keys present", () => {
+    const mv = mkMv({
+      "43114": [
+        {
+          __typename: "TimelockedTransactionAdded",
+          timestamp: "1776671630",
+          cooldownEndTimestamp: "1777276430",
+          chainId: 43114,
+          actions: [
+            { selector: "0x275fd665", functionName: "registerMarketAsMetavault" },
+          ],
+          // Unknown future fields that the API might ship:
+          newFutureField: "drift",
+          anotherDriftKey: 42,
+        },
+      ],
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    // Must contain unsupported-shape annotation listing both unknown keys.
+    assert.match(out, /\[unsupported-shape: newFutureField,anotherDriftKey\]/);
+    // Must STILL render the known-keys subset (no silent drop).
+    assert.match(out, /Pending \(43114\): 0x275fd665 registerMarketAsMetavault/);
+  });
+
+  it("falls back to (unnamed) when actions[] is missing/empty", () => {
+    const mv = mkMv({
+      "43114": [
+        {
+          __typename: "TimelockedTransactionAdded",
+          timestamp: "1776671630",
+          cooldownEndTimestamp: "1777276430",
+          chainId: 43114,
+          // actions field intentionally absent
+        },
+      ],
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(
+      out,
+      /^  Pending \(43114\): \(unnamed\) → executable \d{4}-\d{2}-\d{2} \(queued \d{4}-\d{2}-\d{2}\)$/m,
+    );
+  });
+
+  it("skips non-QUEUED status entries (architect-inline-fix Phase 4 audit, Sonnet+soul + Diverger convergent)", () => {
+    // Sonnet+soul depth lens caught: PR11 was rendering ALL transactionQueue
+    // entries as "Pending" regardless of status. Diverger lens caught: gamisUSDC
+    // fixture's QUEUED action becomes EXECUTED post-cooldown (this week);
+    // unfiltered renderer would label executed actions as "Pending" — wrong on
+    // realistic future input. Architect-inline-fix added filter:
+    //   if (entry.status && entry.status !== "QUEUED") continue;
+    // Defensive: missing status defaults to render (same render path).
+    const mv = mkMv({
+      "43114": [
+        {
+          __typename: "TimelockedTransactionAdded",
+          timestamp: "1776671630",
+          cooldownEndTimestamp: "1777276430",
+          chainId: 43114,
+          status: "EXECUTED", // post-execution state — must NOT render as Pending
+          actions: [{ selector: "0x275fd665", functionName: "registerMarketAsMetavault" }],
+        },
+        {
+          __typename: "TimelockedTransactionAdded",
+          timestamp: "1776671630",
+          cooldownEndTimestamp: "1777276430",
+          chainId: 43114,
+          status: "CANCELLED", // also not pending
+          actions: [{ selector: "0xabc12345", functionName: "cancelledAction" }],
+        },
+        {
+          __typename: "TimelockedTransactionAdded",
+          timestamp: "1776671630",
+          cooldownEndTimestamp: "1777276430",
+          chainId: 43114,
+          status: "QUEUED", // only this one renders
+          actions: [{ selector: "0xdef00000", functionName: "actuallyPending" }],
+        },
+      ],
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    // Only the QUEUED entry renders as Pending.
+    assert.match(out, /Pending \(43114\): 0xdef00000 actuallyPending/);
+    // Executed and cancelled entries must NOT render as Pending.
+    assert.equal(out.includes("0x275fd665 registerMarketAsMetavault"), false);
+    assert.equal(out.includes("0xabc12345 cancelledAction"), false);
+    // No "Pending" line for non-QUEUED selectors.
+    assert.equal((out.match(/^  Pending \(/gm) ?? []).length, 1);
+  });
+
+  it("renders entry when status field is absent (defensive: assumes QUEUED)", () => {
+    // Schema permits status: undefined. Defensive render preserves the spec's
+    // "pending-actions only" promise without silently dropping entries.
+    const mv = mkMv({
+      "43114": [
+        {
+          __typename: "TimelockedTransactionAdded",
+          timestamp: "1776671630",
+          cooldownEndTimestamp: "1777276430",
+          chainId: 43114,
+          // NO status field
+          actions: [{ selector: "0x275fd665", functionName: "registerMarketAsMetavault" }],
+        },
+      ],
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /Pending \(43114\): 0x275fd665 registerMarketAsMetavault/);
+  });
+
+  it("does NOT render actions[].args by default (verbose-flag deferred per round-3 audit)", () => {
+    const mv = mkMv({
+      "43114": [
+        {
+          __typename: "TimelockedTransactionAdded",
+          timestamp: "1776671630",
+          cooldownEndTimestamp: "1777276430",
+          actions: [
+            {
+              selector: "0x275fd665",
+              functionName: "registerMarketAsMetavault",
+              args: ["0xaad365D97418452b4F9D046f4F2468349d680587"],
+              argsNamed: { market: "0xaad365D97418452b4F9D046f4F2468349d680587" },
+            },
+          ],
+        },
+      ],
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    // The default render must NOT include the 0xaad... args address.
+    assert.equal(out.includes("0xaad365D97418452b4F9D046f4F2468349d680587"), false);
+    // The args-included form would have included it — that's the verbose-flag work.
+  });
+
+  it("handles cooldownEndTimestamp missing / NaN gracefully (renders '(unknown)')", () => {
+    const mv = mkMv({
+      "43114": [
+        {
+          __typename: "TimelockedTransactionAdded",
+          timestamp: "1776671630",
+          // no cooldownEndTimestamp
+          actions: [{ selector: "0x275fd665", functionName: "registerMarketAsMetavault" }],
+        },
+      ],
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /executable \(unknown\)/);
+  });
+});
+
+describe("formatMetavaultSummary — Phase 4 cross-PR fixture integration (gamisUSDC base)", () => {
+  // gamisUSDC base is the only fixture that exercises ALL THREE Phase 4 PRs:
+  //   - PR10a: home modifier populated (roles + delay)
+  //   - PR10b: remote populated (chainId 43114 with modifier)
+  //   - PR11: transactionQueue populated (one QUEUED action)
+  //
+  // This test guards the cross-PR layout invariant: home Governance →
+  // remote Governance → Pending, in that order, within the formatter output.
+  const __dirname_ph4 = dirname(fileURLToPath(import.meta.url));
+  const fixturesDir = resolve(__dirname_ph4, "../test/fixtures");
+  function loadMvFixture(chain: string): any[] {
+    return JSON.parse(readFileSync(resolve(fixturesDir, `metavaults-${chain}.json`), "utf8"));
+  }
+
+  it("Gami USDC: PR10a + PR10b + PR11 all render together, in spec §6 layout order", () => {
+    const mv = loadMvFixture("base").find((m: any) => m.name === "Gami USDC");
+    assert.ok(mv, "Gami USDC fixture missing from base chain");
+    const out = formatMetavaultSummary(mv, "base");
+    const lines = out.split("\n");
+
+    const homeGovIdx = lines.findIndex((l) => /^  Governance: /.test(l));
+    const remoteGovIdx = lines.findIndex((l) => /^  Governance \(43114\): /.test(l));
+    const pendingIdx = lines.findIndex((l) => /^  Pending \(43114\): /.test(l));
+
+    assert.ok(homeGovIdx >= 0, "PR10a home Governance line must render for gamisUSDC");
+    assert.ok(remoteGovIdx > homeGovIdx, "PR10b remote Governance must follow home");
+    assert.ok(pendingIdx > remoteGovIdx, "PR11 Pending must follow Governance per §6");
+  });
+
+  it("UltraWETH base: PR10a renders, PR10b renders (43114), PR11 silent (empty queue)", () => {
+    const mv = loadMvFixture("base").find((m: any) => m.symbol === "UltraWETH");
+    assert.ok(mv, "UltraWETH fixture missing from base chain");
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^  Governance: /m);
+    assert.match(out, /^  Governance \(43114\): /m);
+    assert.equal(/^  Pending \(/m.test(out), false);
+  });
+
+  it("gamisXRP flare: PR10a renders, PR10b silent (no remote), PR11 silent", () => {
+    const mv = loadMvFixture("flare").find((m: any) => m.symbol === "gamisXRP");
+    assert.ok(mv, "gamisXRP fixture missing from flare chain");
+    const out = formatMetavaultSummary(mv, "flare");
+    assert.match(out, /^  Governance: /m);
+    assert.equal(/^  Governance \(\d+\): /m.test(out), false);
+    assert.equal(/^  Pending \(/m.test(out), false);
+  });
+});
