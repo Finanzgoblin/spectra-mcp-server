@@ -4699,3 +4699,277 @@ describe("formatMetavaultSummary — PR7b (one-line performance integration)", (
     assert.equal(/^  Performance:/m.test(out), false);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 3 — discard-layer-spec PR3 + PR12a + PR14
+// PR3:  Description (priority INVERTED v3-final — description primary path,
+//       shortDescription is curator-controlled override checked first only
+//       when present)
+// PR12a: Vault-level multipliers (Record<string, number> per schema)
+// PR14:  Per-position Position Opened (createdAt → YYYY-MM-DD (Xd ago))
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("formatMetavaultSummary — PR3 (description-primary inversion v3-final)", () => {
+  const NOW = Math.floor(Date.now() / 1000);
+  function mkMv(metadata: any): any {
+    return {
+      address: "0xa0",
+      vault: "0xb0",
+      chainId: 8453,
+      decimals: 6,
+      name: "TestVault",
+      symbol: "TV",
+      curator: { name: "Curator", addresses: ["0xabc"] },
+      underlying: { address: "0x1", symbol: "USDC", decimals: 6, price: { usd: 1 } },
+      tvl: { usd: 1000, underlying: 1000 },
+      liveApy: { total: 0.05 },
+      positions: [],
+      epochs: [],
+      bridge: { transactions: [] },
+      createdAt: NOW - 100 * 86400,
+      metadata,
+    };
+  }
+
+  it("description populated → renders truncated as primary path (PRIMARY)", () => {
+    const mv = mkMv({
+      description: "Gami's Spectra USDC vault deploys curator capital across PT-class positions.",
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(
+      out,
+      /^  Description: "Gami's Spectra USDC vault deploys curator capital across PT-class positions\."$/m,
+    );
+  });
+
+  it("shortDescription populated → renders raw as override (curator-controlled)", () => {
+    const mv = mkMv({
+      shortDescription: "Curator-tuned brevity",
+      description: "A much longer description that should NOT render when shortDescription is present.",
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^  Description: "Curator-tuned brevity"$/m);
+    // Description must NOT render — shortDescription wins as override.
+    assert.equal(out.includes("much longer description"), false);
+  });
+
+  it("both empty/undefined → silent (no Description line at all)", () => {
+    const mv = mkMv(undefined);
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^  Description:/m.test(out), false);
+  });
+
+  it("metadata object exists but both fields empty/undefined → silent", () => {
+    const mv = mkMv({ title: "Just a title" });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^  Description:/m.test(out), false);
+  });
+
+  it("long description (>140 chars) truncates with single-char ellipsis …", () => {
+    const long =
+      "This is a very long description that exceeds the 140 character cap and must be truncated to fit a single readable line on the cold-reader path output rendering.";
+    const mv = mkMv({ description: long });
+    const out = formatMetavaultSummary(mv, "base");
+    const match = out.match(/^  Description: "(.+)"$/m);
+    assert.ok(match, "Description line must render");
+    const rendered = match![1];
+    // truncateDescription cap is 140 chars including the ellipsis.
+    assert.ok(rendered.length <= 140, `rendered length ${rendered.length} should be ≤ 140`);
+    assert.ok(rendered.endsWith("…"), "truncated description must end with U+2026 ellipsis");
+  });
+
+  it("description exactly 140 chars → renders without ellipsis", () => {
+    const exact = "x".repeat(140);
+    const mv = mkMv({ description: exact });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, new RegExp(`^  Description: "${"x".repeat(140)}"$`, "m"));
+    // Must NOT have an ellipsis appended.
+    const match = out.match(/^  Description: "(.+)"$/m);
+    assert.ok(match);
+    assert.equal(match![1].endsWith("…"), false);
+  });
+
+  it("multi-paragraph description renders only first paragraph (per truncateDescription)", () => {
+    const mv = mkMv({
+      description: "First paragraph.\n\nSecond paragraph that should not render.",
+    });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^  Description: "First paragraph\."$/m);
+    assert.equal(out.includes("Second paragraph"), false);
+  });
+});
+
+describe("formatMetavaultSummary — PR12a (vault-level multipliers)", () => {
+  const NOW = Math.floor(Date.now() / 1000);
+  function mkMv(multipliers: any): any {
+    return {
+      address: "0xa0",
+      vault: "0xb0",
+      chainId: 8453,
+      decimals: 6,
+      name: "TestVault",
+      symbol: "TV",
+      curator: { name: "Curator", addresses: ["0xabc"] },
+      underlying: { address: "0x1", symbol: "USDC", decimals: 6, price: { usd: 1 } },
+      tvl: { usd: 1000, underlying: 1000 },
+      liveApy: { total: 0.05 },
+      positions: [],
+      epochs: [],
+      bridge: { transactions: [] },
+      createdAt: NOW - 100 * 86400,
+      multipliers,
+    };
+  }
+
+  it("renders 'Multipliers: <name> <amount>x' for single entry", () => {
+    const mv = mkMv({ "Avant points": 40 });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^  Multipliers: Avant points 40x$/m);
+  });
+
+  it("renders multiple entries joined by ', '", () => {
+    const mv = mkMv({ "PointsX": 2.0, "Avant": 3 });
+    const out = formatMetavaultSummary(mv, "base");
+    assert.match(out, /^  Multipliers: PointsX 2x, Avant 3x$/m);
+  });
+
+  it("silent when multipliers undefined", () => {
+    const mv = mkMv(undefined);
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^  Multipliers:/m.test(out), false);
+  });
+
+  it("silent when multipliers is empty object", () => {
+    const mv = mkMv({});
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^  Multipliers:/m.test(out), false);
+  });
+
+  it("renders BETWEEN TVL line and Live APY line per spec §6 layout", () => {
+    const mv = mkMv({ "Avant points": 40 });
+    const out = formatMetavaultSummary(mv, "base");
+    const lines = out.split("\n");
+    const tvlIdx = lines.findIndex((l) => l.startsWith("  TVL:"));
+    const multIdx = lines.findIndex((l) => l.startsWith("  Multipliers:"));
+    const apyIdx = lines.findIndex((l) => l.startsWith("  Live APY:"));
+    assert.ok(tvlIdx >= 0 && multIdx >= 0 && apyIdx >= 0, "all three lines must render");
+    assert.ok(tvlIdx < multIdx, "Multipliers must follow TVL");
+    assert.ok(multIdx < apyIdx, "Multipliers must precede Live APY");
+  });
+});
+
+describe("formatMetavaultSummary — PR14 (per-position Position Opened)", () => {
+  const NOW = Math.floor(Date.now() / 1000);
+  function mkMvWithPosition(posOverrides: any): any {
+    return {
+      address: "0xa0",
+      vault: "0xb0",
+      chainId: 8453,
+      decimals: 6,
+      name: "TestVault",
+      symbol: "TV",
+      curator: { name: "Curator", addresses: ["0xabc"] },
+      underlying: { address: "0x1", symbol: "USDC", decimals: 6, price: { usd: 1 } },
+      tvl: { usd: 1_000_000, underlying: 1_000_000 },
+      liveApy: { total: 0.05 },
+      positions: [
+        {
+          symbol: "PT-test",
+          address: "0xpt1",
+          maturity: NOW + 86400 * 30,
+          decimals: 18,
+          tvl: { usd: 100_000 },
+          pools: [
+            {
+              address: "0xpool",
+              lpt: { balance: (10n ** 18n).toString(), decimals: 18, price: { usd: 100 } },
+              ptApy: 0.05,
+              lpApy: { total: 0.04 },
+            },
+          ],
+          ibt: { protocol: "Avant", symbol: "iUSDC", address: "0xibt" },
+          ...posOverrides,
+        },
+      ],
+      epochs: [],
+      bridge: { transactions: [] },
+      createdAt: NOW - 100 * 86400,
+    };
+  }
+
+  it("renders 'Position Opened: YYYY-MM-DD (Xd ago)' when createdAt populated", () => {
+    const opened = NOW - 30 * 86400; // 30 days ago
+    const mv = mkMvWithPosition({ createdAt: opened });
+    const out = formatMetavaultSummary(mv, "base");
+    // Match a 6-space-indented line, ISO date, and a positive day-count.
+    // Allow for off-by-one on day boundary edge (28-31 captures real fixture
+    // time-of-day rounding).
+    assert.match(
+      out,
+      /^      Position Opened: \d{4}-\d{2}-\d{2} \(\d+d ago\)$/m,
+    );
+  });
+
+  it("uses 'Position Opened:' label NOT 'Inception:' per spec PR14 rename", () => {
+    const opened = NOW - 5 * 86400;
+    const mv = mkMvWithPosition({ createdAt: opened });
+    const out = formatMetavaultSummary(mv, "base");
+    // Vault-level Inception line exists (PR1); position-level must use the
+    // distinct label. Search per-position render block specifically.
+    const lines = out.split("\n");
+    const positionLines = lines.filter((l) => l.startsWith("      "));
+    const inceptionInPosition = positionLines.find((l) => l.includes("Inception:"));
+    assert.equal(inceptionInPosition, undefined, "no 'Inception:' label inside per-position render");
+    const openedLine = positionLines.find((l) => l.includes("Position Opened:"));
+    assert.ok(openedLine, "'Position Opened:' must appear in per-position render");
+  });
+
+  it("silent when position.createdAt is undefined (defensive)", () => {
+    const mv = mkMvWithPosition({}); // no createdAt
+    const out = formatMetavaultSummary(mv, "base");
+    assert.equal(/^      Position Opened:/m.test(out), false);
+  });
+
+  it("renders correct day-count for known fixed timestamp", () => {
+    const sevenDaysAgo = NOW - 7 * 86400;
+    const mv = mkMvWithPosition({ createdAt: sevenDaysAgo });
+    const out = formatMetavaultSummary(mv, "base");
+    // Allow 6-7 days due to UTC midnight rounding.
+    assert.match(out, /^      Position Opened: \d{4}-\d{2}-\d{2} \([67]d ago\)$/m);
+  });
+});
+
+describe("formatMetavaultSummary — Phase 3 cross-PR fixture integration (gamisUSDC base)", () => {
+  // Live gamisUSDC base fixture is the only MV with vault-level multipliers
+  // populated (`{"Avant points": 40}`) — confirms PR3 + PR12a + PR14 all
+  // render together on a single representative vault.
+  const __dirname_ph3 = dirname(fileURLToPath(import.meta.url));
+  const fixturesDir = resolve(__dirname_ph3, "../test/fixtures");
+  function loadMvFixture(chain: string): any[] {
+    return JSON.parse(readFileSync(resolve(fixturesDir, `metavaults-${chain}.json`), "utf8"));
+  }
+
+  it("Gami USDC: PR3 description renders (truncated <=140), PR12a vault-multipliers renders, PR14 per-position Position Opened renders", () => {
+    const mv = loadMvFixture("base").find((m: any) => m.name === "Gami USDC");
+    assert.ok(mv, "Gami USDC fixture missing from base chain");
+    const out = formatMetavaultSummary(mv, "base");
+
+    // PR3 — description renders (Phase 0 confirmed shortDescription empty 0/6).
+    // Match opening of Gami's actual fixture text — not the full 140-char window.
+    const descMatch = out.match(/^  Description: "(.+)"$/m);
+    assert.ok(descMatch, "Description line must render from base description");
+    assert.ok(descMatch![1].length > 0, "Description must have content");
+    assert.ok(descMatch![1].length <= 140, "Description must be ≤140 chars after truncation");
+
+    // PR12a — vault-level multipliers renders Avant points 40x.
+    assert.match(out, /^  Multipliers: Avant points 40x$/m);
+
+    // PR14 — at least one allocated position renders Position Opened.
+    // Per Phase 1 DEVIATION 1, only allocated positions render; gamisUSDC
+    // has 4 active positions so at least one must surface this line.
+    assert.match(
+      out,
+      /^      Position Opened: \d{4}-\d{2}-\d{2} \(\d+d ago\)$/m,
+    );
+  });
+});

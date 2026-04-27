@@ -12,6 +12,7 @@ import {
   estimatePriceImpact,
   chainIdToName,
   shortenAddress,
+  truncateDescription,
 } from "./primitives.js";
 import {
   renderExternalPosition,
@@ -3461,8 +3462,42 @@ export function formatMetavaultSummary(
     lines.push(`  Tags: [${vaultTags.join(", ")}]`);
   }
 
-  if (mv.metadata?.shortDescription) {
-    lines.push(`  Description: ${mv.metadata.shortDescription}`);
+  // PR3 — Description (priority INVERTED v3-final per spec §0 changelog).
+  //
+  // Description is the PRIMARY render path; shortDescription is a curator-
+  // controlled override checked first only when populated. Phase 0 fixture
+  // audit confirmed (`docs/phase-0-baseline.md` §2): shortDescription is
+  // empty in 6/6 fixtures while description is populated 6/6 — the v3 order
+  // (shortDescription primary) silently dropped curator product framing for
+  // every MetaVault on the surface today.
+  //
+  // Render layout per spec §6: indented 2 spaces under MV header, quoted text,
+  // appearing AFTER vault Tags (PR4, Phase 1) and BEFORE Underlying.
+  // truncateDescription returns null on empty/undefined; falls back gracefully
+  // for the 0/6 fixture case where both fields are empty (fully silent line).
+  //
+  // Override semantics: when shortDescription is non-empty, render it raw
+  // (no truncation — curator chose the wording precisely; trust it). When
+  // absent, render description truncated to 140 chars via the Phase 0 helper.
+  // The split mirrors the spec's "shortDescription is curator-controlled
+  // override" framing — shortDescription as deliberate brevity, description
+  // as auto-truncated longform.
+  //
+  // Dissolution: when API ships `metadata.title` as a third option or schema
+  // adopts a structured product-framing field, re-evaluate this priority chain.
+  // Schema (spectra.ts:370-377) covers `metadata.description` + `metadata.shortDescription`;
+  // the hand-written types.ts:586-589 interface only declares shortDescription.
+  // Cast at the read site mirrors the existing PR1 createdAt + PR2a defaultIbt
+  // pattern — narrowed read instead of mutating the interface.
+  const meta = mv.metadata as { shortDescription?: string; description?: string } | undefined;
+  const shortDesc = meta?.shortDescription;
+  if (shortDesc) {
+    lines.push(`  Description: "${shortDesc}"`);
+  } else {
+    const truncated = truncateDescription(meta?.description, 140);
+    if (truncated) {
+      lines.push(`  Description: "${truncated}"`);
+    }
   }
 
   // Underlying
@@ -3496,6 +3531,35 @@ export function formatMetavaultSummary(
     ? ` — ${headlineIdlePct.toFixed(0)}% unallocated (${formatUsd(headlineIdleUsd)})`
     : "";
   lines.push(`  TVL: ${formatUsd(vaultTvlUsd)} (${(mv.tvl?.underlying || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })} ${mv.underlying?.symbol || "tokens"})${idleSuffix}`);
+
+  // PR12a — Vault-level multipliers (discard-layer-spec §1, AMMUNITION).
+  //
+  // Reads `metavault.multipliers: Record<string, number>` (schema spectra.ts:380).
+  // Renders between TVL and Live APY per spec §6 layout — vault-level only
+  // (NOT inside the per-position loop; PR12b handles per-position multipliers
+  // at the position render block).
+  //
+  // Phase 0 fixture audit (`docs/phase-0-baseline.md` §2): only gamisUSDC
+  // has vault.multipliers populated (`{"Avant points": 40}`). Renders as
+  // `Multipliers: Avant points 40x` for that vault; silent for the other 5.
+  //
+  // Format per spec: `${name} ${amount}x` per entry, joined with `, `.
+  // Type cast follows the existing pattern (createdAt, url, defaultIbt) —
+  // SpectraMetavault interface in types.ts predates this surface; schema
+  // covers it. Cast at the read site rather than mutating the interface.
+  //
+  // Dissolution: when SpectraMetavault.multipliers is added to the typed
+  // interface in types.ts, this cast can be dropped. When the API ships a
+  // structured multipliers shape (e.g. with sources/expiries), the spec
+  // should be revised before this render evolves.
+  const vaultMultipliers = (mv as { multipliers?: Record<string, number> }).multipliers;
+  if (vaultMultipliers && Object.keys(vaultMultipliers).length > 0) {
+    const parts = Object.entries(vaultMultipliers).map(
+      ([name, amount]) => `${name} ${amount}x`,
+    );
+    lines.push(`  Multipliers: ${parts.join(", ")}`);
+  }
+
   // Live APY with 30d avg suffix when available — lets a curator spot
   // incentive ramp-down (live < 30d-avg) or ramp-up (live > 30d-avg).
   const avg30dTotal = mv.avgApy30d?.total;
@@ -3648,6 +3712,7 @@ export function formatMetavaultSummary(
         multipliers?: unknown;
         baseIbt?: { symbol?: string };
         maturityValue?: { usd?: number };
+        createdAt?: number;
         ibt?: {
           symbol?: string;
           protocol?: string;
@@ -3817,6 +3882,35 @@ export function formatMetavaultSummary(
       const ibtSym = posExt.ibt?.symbol;
       if (baseIbtSym && ibtSym && baseIbtSym !== ibtSym) {
         lines.push(`      Wraps: ${baseIbtSym}`);
+      }
+
+      // PR14 — Position Opened (discard-layer-spec §1 Phase 6, AMMUNITION).
+      //
+      // Reads `position.createdAt` (Unix timestamp; PositionSchema spectra.ts:203).
+      // Phase 0 fixture audit confirmed 15/15 populated; defensive `typeof`
+      // guard kept for forward-compat. Render shape per spec §1 PR14:
+      // `Position Opened: YYYY-MM-DD (Xd ago)`.
+      //
+      // CRITICAL — rename from PR1's "Inception:" label per spec § PR14:
+      // "DO NOT use 'Inception:' label — that's PR1 vault-level. Use
+      // 'Position Opened:' per v3-final §1 PR14 (renamed from v2's
+      // collision)." Vault-level inception (PR1) and position-level open
+      // age (PR14) are distinct semantics: a 102-day-old vault can have a
+      // 5-day-old position opened today, and Clearstar's operational-neglect
+      // ammunition relies on telling them apart.
+      //
+      // DEVIATION 1 (inherited): only renders for allocated positions per
+      // the gating filter at allocatedPositions above. Clearstar's expired
+      // pos[1] sw-sYUSD won't render — exactly the "operational neglect"
+      // position. Filter behavior preserved per Phase 1 architect decision;
+      // future Phase 1.5 may un-suppress via separate unallocated iteration.
+      //
+      // Dissolution: when Phase 6 PR13 (`position.rate`) ships, render
+      // ordering may need re-evaluation. When SpectraMetavaultPosition
+      // adopts `createdAt` natively in types.ts, drop the cast.
+      if (typeof posExt.createdAt === "number") {
+        const posDaysAgo = Math.floor((Date.now() / 1000 - posExt.createdAt) / 86400);
+        lines.push(`      Position Opened: ${formatDate(posExt.createdAt)} (${posDaysAgo}d ago)`);
       }
 
       // LP APY breakdown per position — surface composition
