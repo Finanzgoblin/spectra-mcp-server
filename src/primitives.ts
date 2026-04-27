@@ -52,3 +52,76 @@ export function chainIdToName(id: number): string {
   }
   return `Chain ${id}`;
 }
+
+/**
+ * Shorten an EVM address for display: `0xabcd12...3456`.
+ *
+ * Pattern matches existing inline duplications at formatters.ts:1039, 2586, 5315
+ * (three-dot ASCII `...`, not the U+2026 ellipsis character). Strings shorter than
+ * 11 chars are returned unchanged — no point shortening. Empty/undefined inputs
+ * are coerced to `""` defensively even though the type signature is `string`.
+ */
+export function shortenAddress(addr: string): string {
+  const a = addr ?? "";
+  if (a.length < 11) return a;
+  return `${a.slice(0, 6)}...${a.slice(-4)}`;
+}
+
+/**
+ * Render an integer-second string as a coarse duration (s / m / h / d).
+ *
+ * Input is a STRING because modifier.delay values are zod-typed
+ * `z.record(z.string(), z.string())`. NaN renders as `[unparsed:<input>]` with
+ * the literal square-bracket prefix (so consumers can see the raw value that
+ * failed to parse). `parseInt` truncation means "1.5h" → "1s" — this is an
+ * accepted spec gap for now (discard-layer-spec §5).
+ */
+export function formatSecondsAsDuration(secondsString: string): string {
+  const n = parseInt(secondsString, 10);
+  if (Number.isNaN(n)) return `[unparsed:${secondsString}]`;
+  if (n < 60) return `${n}s`;
+  if (n < 3600) return `${Math.round(n / 60)}m`;
+  if (n < 86400) return `${Math.round(n / 3600)}h`;
+  return `${Math.round(n / 86400)}d`;
+}
+
+/**
+ * Truncate a description to its first paragraph, capped at `max` characters.
+ *
+ * Returns `null` for falsy input (undefined / null / empty string) so callers
+ * can `if (truncated)` and skip rendering. The `max - 1` slice leaves room for
+ * the appended single-character ellipsis `…` (U+2026).
+ */
+export function truncateDescription(s: string | undefined, max: number = 140): string | null {
+  if (!s) return null;
+  const firstPara = s.split(/\n\n+/)[0];
+  if (firstPara.length <= max) return firstPara;
+  return firstPara.slice(0, max - 1).trimEnd() + "…";
+}
+
+/**
+ * Format `Record<role, address>` as `proposer=0xabcd...1234, executor=0x1111...2222`.
+ *
+ * Returns `null` when the record is undefined or empty so callers can skip
+ * rendering the line entirely.
+ */
+export function formatRoleRecord(roles: Record<string, string> | undefined): string | null {
+  if (!roles || Object.keys(roles).length === 0) return null;
+  return Object.entries(roles)
+    .map(([role, addr]) => `${role}=${shortenAddress(addr)}`)
+    .join(", ");
+}
+
+/**
+ * Format `Record<role, secondsString>` as `proposer 24h, executor 48h`.
+ *
+ * Returns `null` when the record is undefined or empty. Each value is rendered
+ * via `formatSecondsAsDuration`, so unparseable seconds bubble up as
+ * `[unparsed:<value>]` rather than being silently dropped.
+ */
+export function formatDelayRecord(delays: Record<string, string> | undefined): string | null {
+  if (!delays || Object.keys(delays).length === 0) return null;
+  return Object.entries(delays)
+    .map(([role, secondsString]) => `${role} ${formatSecondsAsDuration(secondsString)}`)
+    .join(", ");
+}

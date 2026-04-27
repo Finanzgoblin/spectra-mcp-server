@@ -8,7 +8,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { getMeta } from "./registry.js";
+import { getMeta, normalizeProtocolName, PROTOCOL_NAME_ALIASES } from "./registry.js";
 import { protocolMetaSchema, type ProtocolMeta } from "./types.js";
 import { PROTOCOL_METADATA } from "./metadata.js";
 import { renderExternalPosition, type TypedExternalPosition } from "./engine.js";
@@ -152,6 +152,80 @@ describe("PR1 zero-code protocol addition — registry round-trip", () => {
       assert.ok(!line.includes("UNMAPPED"), `must NOT fall through to _unknown: ${line}`);
     } finally {
       delete reg[tempName];
+    }
+  });
+});
+
+describe("normalizeProtocolName — display-name → registry-key shape", () => {
+  it("maps a single-word alias entry to the registry key", () => {
+    assert.equal(normalizeProtocolName("Avant"), "avant");
+  });
+
+  it("maps a multi-word alias entry with a space", () => {
+    assert.equal(normalizeProtocolName("Parallel Protocol"), "parallel");
+  });
+
+  it("falls back to lowercase + spaces-to-underscores when no alias matches", () => {
+    assert.equal(normalizeProtocolName("Some Unknown Protocol"), "some_unknown_protocol");
+  });
+
+  it("returns empty string for empty input (caller's getMeta falls through to _unknown)", () => {
+    assert.equal(normalizeProtocolName(""), "");
+  });
+
+  // Whitespace-trim cases — caught by Sonnet+soul depth-pass during Phase 0
+  // audit (April 27, 2026). API is not under our control; a stray space in
+  // `position.ibt.protocol` would otherwise bypass alias-map lookup and
+  // produce a false `_unknown` from getMeta — i.e., PR5 would fire
+  // "(registry: pending)" on a fully-mapped protocol.
+
+  it("trims trailing whitespace before alias lookup", () => {
+    assert.equal(normalizeProtocolName("Avant "), "avant");
+  });
+
+  it("trims leading whitespace before alias lookup", () => {
+    assert.equal(normalizeProtocolName(" Avant"), "avant");
+  });
+
+  it("trims both-side whitespace before alias lookup", () => {
+    assert.equal(normalizeProtocolName("  Parallel Protocol  "), "parallel");
+  });
+
+  it("treats whitespace-only input as empty (returns empty string)", () => {
+    assert.equal(normalizeProtocolName("   "), "");
+  });
+
+  it("trims tab and newline whitespace before alias lookup", () => {
+    assert.equal(normalizeProtocolName("\tAvant\n"), "avant");
+  });
+});
+
+describe("PROTOCOL_NAME_ALIASES — shape", () => {
+  it("contains at least the 9 expected display-name keys", () => {
+    const expected = [
+      "Avant",
+      "Pendle",
+      "Parallel Protocol",
+      "IPOR Fusion",
+      "Ether.fi",
+      "Firelight",
+      "Yearn",
+      "Aegis",
+      "Lucidly",
+    ];
+    for (const key of expected) {
+      assert.ok(
+        Object.prototype.hasOwnProperty.call(PROTOCOL_NAME_ALIASES, key),
+        `expected alias key "${key}" missing from PROTOCOL_NAME_ALIASES`,
+      );
+    }
+  });
+
+  it("every value is a non-empty lowercase string", () => {
+    for (const [k, v] of Object.entries(PROTOCOL_NAME_ALIASES)) {
+      assert.equal(typeof v, "string", `value for ${k} must be string`);
+      assert.ok(v.length > 0, `value for ${k} must be non-empty`);
+      assert.equal(v, v.toLowerCase(), `value for ${k} must be lowercase`);
     }
   });
 });

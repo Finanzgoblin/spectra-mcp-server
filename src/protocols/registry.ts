@@ -63,3 +63,55 @@ validateAndWarn();
 export function getMeta(name: string): ProtocolMeta {
   return PROTOCOL_METADATA[name] ?? PROTOCOL_METADATA._unknown;
 }
+
+/**
+ * CamelCase API display-name → lowercase registry key.
+ *
+ * Verified across base/katana/flare/mainnet fixtures, April 27 2026.
+ * Add new entries when fixtures surface new `position.ibt.protocol` values.
+ */
+export const PROTOCOL_NAME_ALIASES: Record<string, string> = {
+  "Avant": "avant",
+  "Pendle": "pendle",
+  "Parallel Protocol": "parallel",
+  "IPOR Fusion": "ipor_fusion",
+  "Ether.fi": "ether_fi",
+  "Firelight": "firelight",
+  "Yearn": "yearn",
+  "Aegis": "aegis",
+  "Lucidly": "lucidly",
+};
+
+/**
+ * Normalize a display-name protocol identifier to a registry-key shape.
+ *
+ * Trim semantics: input is `.trim()`-ed FIRST before alias lookup. The Spectra
+ * API is not under our control; a stray space in `position.ibt.protocol` (e.g.
+ * `"Avant "`) would otherwise bypass `PROTOCOL_NAME_ALIASES["Avant"]`, fall
+ * through to `"avant_"`, and produce a false `_unknown` from `getMeta` — i.e.,
+ * PR5 would fire "(registry: pending)" on a fully-mapped protocol. Caught by
+ * Sonnet+soul depth-pass during Phase 0 audit (April 27, 2026).
+ *
+ * Lookup order:
+ *   1. Trim whitespace.
+ *   2. Empty (or whitespace-only) → return `""`. Caller's `getMeta` falls through
+ *      to `_unknown`.
+ *   3. Exact match in PROTOCOL_NAME_ALIASES (handles multi-word + special chars).
+ *   4. Lowercase + spaces-to-underscores fallback.
+ *
+ * Dissolution: when a fixture surfaces a value not in the alias map AND the
+ * lowercased version doesn't match a registry entry, add an explicit alias
+ * here. metadata.ts:188-189 documents the 7-day prose dissolution intent;
+ * runtime telemetry for alias-map drift is not yet wired (deferred to PR5).
+ *
+ * Known fragility (deferred to PR5 ship-time): the lowercase-fallback uses
+ * `replace(/\s+/g, "_")` only — it does NOT replace dots. An API casing shift
+ * like `"Ether.Fi"` (capital F) would lowercase-fold to `"ether.fi"` (literal
+ * dot) and miss the registered key `"ether_fi"`. Caught by Diverger (April 27).
+ */
+export function normalizeProtocolName(displayName: string): string {
+  const trimmed = displayName?.trim() ?? "";
+  if (!trimmed) return "";
+  if (PROTOCOL_NAME_ALIASES[trimmed]) return PROTOCOL_NAME_ALIASES[trimmed];
+  return trimmed.toLowerCase().replace(/\s+/g, "_");
+}
