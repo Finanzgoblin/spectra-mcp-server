@@ -36,6 +36,8 @@ import { PROTOCOL_CONSTANTS } from "./config.js";
 // PR-A of hardcode-vs-generalize-spec.md: asset registry replaces local DIRECT_ASSETS
 // and ONE_HOP_ASSETS Sets. New assets land via one row in `assets/metadata.ts`.
 import { isStartingPoint, isOneHop } from "./assets/metadata.js";
+// PR-B4: maturity-tier dispatch (Merkl campaign-end + dashboard urgency flags).
+import { getMaturityCategory } from "./action-items/types.js";
 import { computePerformanceMetrics, formatPerformanceMetricsOneLine } from "./performance.js";
 
 // Primitives now live in primitives.ts. Re-exported here for backward compat
@@ -547,8 +549,11 @@ export function formatMerklCampaignLines(
     if (c.earliestEnd || c.latestEnd) {
       const endTs = c.latestEnd || c.earliestEnd!;
       const daysLeft = Math.max(0, Math.floor((endTs * 1000 - Date.now()) / 86400000));
-      if (daysLeft <= 7) endNote = ` ⚠ expires in ${daysLeft}d`;
-      else if (daysLeft <= 30) endNote = ` (${daysLeft}d left)`;
+      // PR-B4: dispatch via getMaturityCategory — campaign-end horizon shares
+      // the same urgent/soon/upcoming boundaries as position-maturity.
+      const cat = getMaturityCategory(daysLeft);
+      if (cat === "expired" || cat === "urgent") endNote = ` ⚠ expires in ${daysLeft}d`;
+      else if (cat === "soon" || cat === "upcoming") endNote = ` (${daysLeft}d left)`;
       else endNote = ` (ends ${new Date(endTs * 1000).toISOString().slice(0, 10)})`;
     }
     lines.push(`${indent}+-- ${tokens} (${action})${eligNote}: ${formatPct(c.apr)} APR${endNote}`);
@@ -5530,7 +5535,15 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
     for (const pos of allocated) {
       knownAllocationTotal += pos.vaultAllocationUsd!;
       const matLabel = pos.expired ? "EXPIRED" : `${pos.daysToMaturity}d`;
-      const urgencyFlag = !pos.expired && pos.daysToMaturity <= 14 ? " !!!" : !pos.expired && pos.daysToMaturity <= 30 ? " !!" : "";
+      // PR-B4: dispatch via getMaturityCategory — !!! for urgent ∪ soon (≤14d),
+      // !! for upcoming (14-30d), silent beyond. Same boundaries as action-items.
+      const urgencyFlag = (() => {
+        if (pos.expired) return "";
+        const cat = getMaturityCategory(pos.daysToMaturity);
+        if (cat === "urgent" || cat === "soon") return " !!!";
+        if (cat === "upcoming") return " !!";
+        return "";
+      })();
       const vaultPct = opts.tvlUsd > 0 ? (pos.vaultAllocationUsd! / opts.tvlUsd * 100).toFixed(1) : "?";
       const allocationStr = `${vaultPct}% | ${formatUsd(pos.vaultAllocationUsd!)}`;
       const protocolTag = `[${pos.protocol}]`;

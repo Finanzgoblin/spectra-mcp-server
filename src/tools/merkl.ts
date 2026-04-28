@@ -21,6 +21,10 @@ import { CHAIN_ENUM, SUPPORTED_CHAINS, resolveNetwork } from "../config.js";
 import { fetchMerklCampaigns } from "../api.js";
 import type { MerklCampaign } from "../types.js";
 import { formatPct, formatUsd, parsePtMaturityFromName } from "../formatters.js";
+// PR-B4: dispatch campaign-end + target-pool-maturity classifications via the
+// centralized helper. Campaign-end clocks share the same horizon semantics
+// as position-maturity clocks — same boundaries, same dispatcher.
+import { getMaturityCategory } from "../action-items/types.js";
 
 export function register(server: McpServer): void {
   server.tool(
@@ -151,9 +155,12 @@ is invisible to protocol-native tools unless explicitly integrated.`,
             const endDate = new Date(endTs * 1000);
             const daysLeft = Math.max(0, Math.floor((endTs * 1000 - Date.now()) / 86400000));
             const dateStr = endDate.toISOString().slice(0, 10);
-            if (daysLeft <= 7) {
+            // PR-B4: dispatch via getMaturityCategory. Campaign-end is structurally
+            // identical to position-maturity (clock counting down) — same boundaries.
+            const cat = getMaturityCategory(daysLeft);
+            if (cat === "expired" || cat === "urgent") {
               parts.push(`   ⚠ Ends: ${dateStr} (${daysLeft}d left — EXPIRING SOON)`);
-            } else if (daysLeft <= 30) {
+            } else if (cat === "soon" || cat === "upcoming") {
               parts.push(`   ⏰ Ends: ${dateStr} (${daysLeft}d left)`);
             } else {
               parts.push(`   Ends: ${dateStr} (${daysLeft}d left)`);
@@ -169,8 +176,13 @@ is invisible to protocol-native tools unless explicitly integrated.`,
             const deltaDays = Math.floor((Date.now() - maturity.getTime()) / 86400000);
             if (deltaDays > 0) {
               parts.push(`   Target pool maturity: ${maturity.toISOString().slice(0, 10)} (${deltaDays}d ago)`);
-            } else if (-deltaDays <= 30) {
-              parts.push(`   Target pool maturity: ${maturity.toISOString().slice(0, 10)} (${-deltaDays}d remaining)`);
+            } else {
+              // PR-B4: target-pool-maturity surface only if within action-items horizon
+              // (urgent/soon/upcoming = 1-30d). Beyond that, suppressed (was inline `<= 30`).
+              const cat = getMaturityCategory(-deltaDays);
+              if (cat === "urgent" || cat === "soon" || cat === "upcoming") {
+                parts.push(`   Target pool maturity: ${maturity.toISOString().slice(0, 10)} (${-deltaDays}d remaining)`);
+              }
             }
           }
 
