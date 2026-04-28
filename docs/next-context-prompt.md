@@ -4,14 +4,24 @@
 
 This file replaces the prior discard-layer handoff. The hardcode-vs-generalize spec workflow completed April 28, 2026: Phase 0 audit through Phase 8 v3-final, **17 reviewer agents** across 3 architectural rounds + 1 stakeholder-utility round. Spec is engineering-ready.
 
-**Ship status (2026-04-28 night) — Ship-Phase 1 COMPLETE**:
-- ✅ **PR-J shipped** (commit `b57657f`) — forcing function (pre-commit hook + 5th-lens reviewer brief + audit-discipline-spec.md + substrate-diverse-engineering-prompt.md)
-- ✅ **PR-D shipped** (commit `11dfd2f`) — protocol metadata extension (`ytFeeRate`, `shortTag`, `rolloverPolicy` 6-way, `useCctp`) + ALL consumer migration. Dissolves `CCTP_PROTOCOLS` Set + the "0% YT fee lie" surface.
-- ✅ **PR-E shipped** (commit `0f1fd50`) — parse-time normalize at `ExternalPositionSchema.protocol` + extended `normalizeProtocolName` regex for dot-containing names (Ether.Fi).
-- ✅ **PR-L shipped** (commit `b100b79`) — **THE originating-scar closure**. PointsMultiplier metadata + `formatPointsMultipliers` orchestrator with `[REFERENCE-ONLY]` expired/cooldown handling + 9 shape-based tests against spec §5.5 render gallery.
-- ⏳ **Next phases**: Ship-Phase 2 (PR-A asset registry, PR-C action-items types, PR-K threshold consolidation), Ship-Phase 3 (PR-B sub-PRs consumer migration), Ship-Phase 4 (PR-F transactionQueue + PR-G verifier cross-validation). Less demo-visible — internal architecture investment per spec self-review §1.
+**Ship status (2026-04-28 night) — Ship-Phase 1 + Ship-Phase 2 COMPLETE**:
 
-**Test count: 902 (+14 since Ship-Phase 1 began)**. Build clean. Integration 159/159.
+**Ship-Phase 1 (client-visible)** — all 4 PRs shipped:
+- ✅ **PR-J** (`b57657f`) — forcing function (pre-commit hook + 5th-lens reviewer brief + audit-discipline-spec + substrate-diverse-engineering-prompt template)
+- ✅ **PR-D** (`11dfd2f`) — protocol metadata extension (`ytFeeRate`, `shortTag`, `rolloverPolicy` 6-way, `useCctp`) + ALL consumer migration. Dissolves `CCTP_PROTOCOLS` Set + "0% YT fee lie" surface.
+- ✅ **PR-E** (`0f1fd50`) — parse-time normalize at `ExternalPositionSchema.protocol` + extended `normalizeProtocolName` regex for dot-containing names (Ether.Fi).
+- ✅ **PR-L** (`b100b79`) — originating-scar closure. PointsMultiplier metadata + `formatPointsMultipliers` orchestrator + 9 shape-based tests against §5.5 render gallery.
+
+**Ship-Phase 2 (foundations)** — all 3 PRs shipped:
+- ✅ **PR-K** (`b83b694`) — `CURATOR_DASHBOARD_THRESHOLDS` → `CROSS_TOOL_THRESHOLDS` + 4 absolute constants (LOW_LIQUIDITY_USD / REAL_VALUE_USD / IDLE_LIQUIDITY_WARN_PCT / INCENTIVE_SHARE_WARN_FRAC) + 3 size/trend-relative companion helpers (`isHighSlippage` / `isLiquidityTrendBad` / `vaultSizeAdjustedIdleThreshold`). 7 inline-literal sites migrated.
+- ✅ **PR-A** (`6d71216`) — `src/assets/metadata.ts` 41-entry registry. Dissolves 3 inline Sets (`DIRECT_ASSETS`, `ONE_HOP_ASSETS`, `STABLES`). Helpers: `getAssetClass`, `isStable`, `isStartingPoint`, `isOneHop`, `normalizeAssetSymbol`.
+- ✅ **PR-C** (`accbd9d`) — `src/action-items/types.ts` module: 10-way `ActionItemCategory` enum + `ACTION_ITEM_PREFIXES` registry + `formatActionItemPrefix` + `getMaturityCategory` (3-tier R2-BL-3) + `formatMaturityActionItem` (rolloverPolicy-aware, P7-BL-5 Curator hard-stop fix for `redeem_to_underlying` queue-stress prose). Initial 5 consumer migrations.
+
+**Next**: Ship-Phase 3 (PR-B sub-PRs consumer migration) + Ship-Phase 4 (PR-F transactionQueue dissolve + PR-G verifier cross-validation).
+
+**PR-B1 specifically scheduled** (per spec §9, includes engine.ts:387-390 3-tier vocabulary fix + `engine.test.ts:286-288` `[PENDLE-EXT UPCOMING]` → `[PENDLE-EXT SOON]` for 10-day case test update per R2-BL-3) — consumers metavault.ts:1071-1077 + engine.ts.
+
+**Test count: 902 (+14 since session began)**. Build clean. Integration 159/159.
 
 ---
 
