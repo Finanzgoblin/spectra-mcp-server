@@ -6,8 +6,9 @@ This file replaces the prior discard-layer handoff. The hardcode-vs-generalize s
 
 **Ship status (2026-04-28 evening)**:
 - ✅ **PR-J shipped** (commit `b57657f`) — forcing function (pre-commit hook + 5th-lens reviewer brief + audit-discipline-spec.md + substrate-diverse-engineering-prompt.md)
-- ✅ **PR-D shipped** (commit `11dfd2f`) — protocol metadata extension (`ytFeeRate`, `shortTag`, `rolloverPolicy` 6-way, `useCctp`) + ALL consumer migration. Dissolves `CCTP_PROTOCOLS` Set + the "0% YT fee lie" surface. PR-D 4-lens audit caught two real bugs (Lens 3: `formatPlatformLabel("")` empty bracket; Lens 2 Diverger: smuggled-Spectra-rate fallback) — both fixed inline.
-- ⏳ **Next**: PR-E (parse-time normalization, lighter, ~few files) OR PR-L (originating-scar surface, points-multipliers metadata + formatPointsMultipliers orchestrator). Both still in Ship-Phase 1.
+- ✅ **PR-D shipped** (commit `11dfd2f`) — protocol metadata extension (`ytFeeRate`, `shortTag`, `rolloverPolicy` 6-way, `useCctp`) + ALL consumer migration. Dissolves `CCTP_PROTOCOLS` Set + the "0% YT fee lie" surface.
+- ✅ **PR-E shipped** (commit `0f1fd50`) — parse-time normalize at `ExternalPositionSchema.protocol` + extended `normalizeProtocolName` regex (`/[\s.]+/g`) for dot-containing names (Ether.Fi). Audit caught display-vs-key namespace conflict at `ibt.protocol`; reverted that transform inline. 4 new dot-handling tests added.
+- ⏳ **Next**: **PR-L** (originating-scar surface — points-multipliers metadata + `formatPointsMultipliers` orchestrator + render gallery test discipline). Most semantically demanding of Ship-Phase 1.
 
 ---
 
