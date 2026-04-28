@@ -3,6 +3,7 @@
  */
 
 import type { SpectraPt, SpectraPool, SpectraMetavault, SpectraMetavaultPosition, MorphoMarket, MorphoVault, MorphoVaultAllocation, MorphoMarketSupplier, PendleMarket, PositionResult, TradeQuote, PositionSnapshot, ScanOpportunity, YtArbitrageOpportunity, MetavaultLoopRow, MetavaultCuratorEconomics, SpectraMetavaultBridgeTx, MerklTokenReward, CrossProtocolMatch, CuratorOpportunity, MerklCampaign, MorphoUserPositions, MorphoHistoricalAnalysis, MorphoRateStats, MorphoPublicAllocatorLiquidity, CuratorRiskSummary, LiquidationAlert, RiskAlertLevel, MetaVaultChainState, ChainReadWarning } from "./types.js";
+import { z } from "zod";
 import { lookupMerklCampaigns } from "./api.js";
 import {
   formatUsd,
@@ -3486,44 +3487,63 @@ const HALT_CHECK_CODES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * KNOWN_KEYS for `metavault.transactionQueue.{chainId}[]` entry shape (PR11
- * fixture-first gate per discard-layer-spec §7).
+ * Schema for `metavault.transactionQueue.{chainId}[]` entries.
+ *
+ * PR-F of `docs/hardcode-vs-generalize-spec.md` v3-final (2026-04-28):
+ * the previous `TRANSACTION_QUEUE_KNOWN_KEYS = new Set([...18 keys])` was
+ * dissolved into this `.strict()` zod schema. The CLASS is "transactionQueue
+ * entry as observed in Spectra's API"; the previous Set was a fixture-mirror
+ * (18 specific instances). A new API field now requires updating the schema
+ * (one place); consumers automatically receive the drift annotation.
+ *
+ * `.strict()` rejects unknown keys at parse time. The render path uses
+ * `safeParse` + extracts unknown-key drift (when DRIFT_VISIBILITY=loud or
+ * by default annotation), preserving the prior `[unsupported-shape: <keys>]`
+ * behavior on the rendered line. No keys are lost silently.
  *
  * Authored from gamisUSDC base fixture (the only currently-populated queue
  * across all 4 chain fixtures): a single QUEUED `registerMarketAsMetavault`
- * action on Avalanche chainId 43114, queueNonce 4. The entry shape carries
- * both wrapper-level fields (timestamp, cooldownEndTimestamp, status,
- * delayModule, etc.) and a nested `actions[]` array with per-action selector
- * + functionName + calldata.
- *
- * The PR11 renderer asserts every observed key is in this set. When the API
- * ships a new field, the snapshot test surfaces `[unsupported-shape: <keys>]`
- * loud rather than silently dropping it.
+ * action on Avalanche chainId 43114, queueNonce 4.
  *
  * Dissolution: when MV-V2 schema ships transactionQueue with structured
- * types, this constant + the corresponding render-side gate become
- * redundant. Re-evaluate per spec §7 invariants.
+ * types, this constant + the corresponding render-side gate become redundant.
  */
-export const TRANSACTION_QUEUE_KNOWN_KEYS: ReadonlySet<string> = new Set([
-  "__typename",
-  "operator",
-  "queueNonce",
-  "timelockedTransactionHash",
-  "timestamp",
-  "blockNumber",
-  "to",
-  "value",
-  "data",
-  "operation",
-  "transactionHash",
-  "delayModule",
-  "chainId",
-  "status",
-  "executionMaxTimestamp",
-  "cooldownEndTimestamp",
-  "metavault",
-  "actions",
-]);
+const QueueEntrySchema = z
+  .object({
+    __typename: z.string().optional(),
+    operator: z.string().optional(),
+    queueNonce: z.union([z.string(), z.number()]).optional(),
+    timelockedTransactionHash: z.string().optional(),
+    timestamp: z.string().optional(),
+    blockNumber: z.union([z.string(), z.number()]).optional(),
+    to: z.string().optional(),
+    value: z.string().optional(),
+    data: z.string().optional(),
+    operation: z.union([z.string(), z.number()]).optional(),
+    transactionHash: z.string().optional(),
+    delayModule: z.string().optional(),
+    chainId: z.union([z.string(), z.number()]).optional(),
+    status: z.string().optional(),
+    executionMaxTimestamp: z.string().optional(),
+    cooldownEndTimestamp: z.string().optional(),
+    metavault: z.unknown().optional(),
+    actions: z.array(z.unknown()).optional(),
+  })
+  .strict();
+
+/**
+ * Shape-drift checker: returns the list of unknown keys (if any). When the API
+ * ships a new field, the consumer renders `[unsupported-shape: <keys>]` instead
+ * of silently dropping. This dissolves the prior `KNOWN_KEYS.has(k)` gate
+ * pattern into a class-shape query.
+ */
+export function detectQueueEntryDrift(entry: unknown): string[] {
+  const result = QueueEntrySchema.safeParse(entry);
+  if (result.success) return [];
+  return result.error.issues
+    .filter((i) => i.code === "unrecognized_keys")
+    .flatMap((i) => (i as { keys?: string[] }).keys ?? []);
+}
 
 /**
  * Compose the 1-line source-vault halt-check summary for the rollover output.
@@ -4714,9 +4734,11 @@ export function formatMetavaultSummary(
         // the safer default vs silently dropping. Future API shape can refine.
         if (entry.status && entry.status !== "QUEUED") continue;
 
-        // KNOWN_KEYS gate — detect drift loud, do not silently drop.
-        const observedKeys = Object.keys(entry);
-        const unknownKeys = observedKeys.filter((k) => !TRANSACTION_QUEUE_KNOWN_KEYS.has(k));
+        // PR-F: drift detection via QueueEntrySchema (.strict()) instead of
+        // `KNOWN_KEYS.has(k)`. When the API ships a new field, the schema
+        // surfaces it via `detectQueueEntryDrift`; consumers render
+        // `[unsupported-shape: <keys>]` loud rather than silently dropping.
+        const unknownKeys = detectQueueEntryDrift(entry);
         const unknownSuffix = unknownKeys.length > 0
           ? ` [unsupported-shape: ${unknownKeys.join(",")}]`
           : "";

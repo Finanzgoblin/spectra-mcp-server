@@ -4995,7 +4995,7 @@ describe("formatMetavaultSummary — Phase 3 cross-PR fixture integration (gamis
 // (address shape), not formatDelayRecord. Tests verify the address-shape render.
 
 import {
-  TRANSACTION_QUEUE_KNOWN_KEYS,
+  detectQueueEntryDrift,
 } from "./formatters.js";
 
 describe("formatMetavaultSummary — PR10a (home-chain governance)", () => {
@@ -5188,24 +5188,17 @@ describe("formatMetavaultSummary — PR10b (remote-chain governance, list-always
   });
 });
 
-describe("TRANSACTION_QUEUE_KNOWN_KEYS — PR11 fixture-first gate (§7)", () => {
-  it("contains the canonical 18 keys observed in gamisUSDC base fixture", () => {
-    const expectedKeys = [
-      "__typename", "operator", "queueNonce", "timelockedTransactionHash",
-      "timestamp", "blockNumber", "to", "value", "data", "operation",
-      "transactionHash", "delayModule", "chainId", "status",
-      "executionMaxTimestamp", "cooldownEndTimestamp", "metavault", "actions",
-    ];
-    for (const k of expectedKeys) {
-      assert.ok(TRANSACTION_QUEUE_KNOWN_KEYS.has(k), `KNOWN_KEYS must contain '${k}'`);
-    }
-    assert.equal(TRANSACTION_QUEUE_KNOWN_KEYS.size, expectedKeys.length);
-  });
+describe("detectQueueEntryDrift — PR-F shape-drift contract (replaces TRANSACTION_QUEUE_KNOWN_KEYS test)", () => {
+  // Spec contract per PR-F (hardcode-vs-generalize-spec.md):
+  //   - The previous frozen Set + .has() gate was a fixture-mirror at the
+  //     TEST level too (test asserted the Set contains specific 18 keys).
+  //     That test forced an edit-here-AND-edit-the-Set workflow whenever the
+  //     API shipped a new field.
+  //   - PR-F's class-shape contract: schema accepts known keys, returns the
+  //     drift list for unknowns. Tests assert the MECHANISM (drift detection
+  //     works) — not the specific list of canonical keys.
 
-  it("snapshot — fixture entry's keys are all in KNOWN_KEYS (gamisUSDC base, chainId 43114)", () => {
-    // Load live fixture and assert every key in the entry survives the
-    // KNOWN_KEYS gate. When the API ships a new field, this fails LOUD with
-    // the unknown-key list — exactly the §7 fixture-first contract.
+  it("returns empty drift array for the canonical fixture entry (gamisUSDC base, chainId 43114)", () => {
     const __dirname_pr11 = dirname(fileURLToPath(import.meta.url));
     const fixturesDir = resolve(__dirname_pr11, "../test/fixtures");
     const data = JSON.parse(
@@ -5217,15 +5210,51 @@ describe("TRANSACTION_QUEUE_KNOWN_KEYS — PR11 fixture-first gate (§7)", () =>
     assert.ok(Array.isArray(queue) && queue.length > 0, "queue entry missing");
 
     for (const entry of queue) {
-      const observedKeys = Object.keys(entry);
-      const unknownKeys = observedKeys.filter((k) => !TRANSACTION_QUEUE_KNOWN_KEYS.has(k));
+      const drift = detectQueueEntryDrift(entry);
       assert.equal(
-        unknownKeys.length,
-        0,
-        `[unsupported-shape: ${unknownKeys.join(",")}] — KNOWN_KEYS stale; re-inspect fixture + extend constant`,
+        drift.length, 0,
+        `drift detected on canonical fixture: ${drift.join(",")} — schema stale, re-inspect + extend QueueEntrySchema`,
       );
     }
   });
+
+  it("returns the unknown keys for an entry with synthetic extra fields", () => {
+    const queue = gamiBaseFixture("43114");
+    assert.ok(queue && queue[0], "fixture sanity: gamisUSDC queue not empty");
+    const baseEntry = queue[0];
+    const synthetic = {
+      ...baseEntry,
+      newApiField: "future",
+      anotherDrift: 42,
+    };
+    const drift = detectQueueEntryDrift(synthetic);
+    assert.deepEqual(
+      drift.sort(),
+      ["anotherDrift", "newApiField"],
+      "synthetic extras must surface as drift list",
+    );
+  });
+
+  it("returns empty drift for an entry with all known fields populated", () => {
+    // A minimal entry — the schema must accept any subset of known keys.
+    const minimal = { __typename: "TimelockedTransaction", status: "QUEUED" };
+    assert.deepEqual(detectQueueEntryDrift(minimal), []);
+  });
+
+  it("returns empty drift for an empty object (all fields optional per schema)", () => {
+    assert.deepEqual(detectQueueEntryDrift({}), []);
+  });
+
+  // Helper: read gamisUSDC base fixture's queue once for shape-test reuse.
+  function gamiBaseFixture(chainId: string): any[] | undefined {
+    const __dirname_pr11 = dirname(fileURLToPath(import.meta.url));
+    const fixturesDir = resolve(__dirname_pr11, "../test/fixtures");
+    const data = JSON.parse(
+      readFileSync(resolve(fixturesDir, "metavaults-base.json"), "utf8"),
+    );
+    const gami = data.find((m: any) => m.symbol === "gamisUSDC");
+    return gami?.transactionQueue?.[chainId];
+  }
 });
 
 describe("formatMetavaultSummary — PR11 (transactionQueue rendering, fixture-first)", () => {
