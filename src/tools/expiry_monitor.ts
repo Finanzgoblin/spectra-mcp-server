@@ -15,6 +15,13 @@ import { CHAIN_ENUM, SUPPORTED_CHAINS } from "../config.js";
 import { scanAllChainPools, fetchSpectra, fetchMerklCampaigns, lookupMerklCampaigns } from "../api.js";
 import type { MerklCampaign } from "../types.js";
 import { formatDate, daysToMaturity, formatPct, formatUsd } from "../formatters.js";
+// PR-B2 of hardcode-vs-generalize-spec.md (2026-04-28): route urgency
+// classification through the centralized `getMaturityCategory`. The user-facing
+// vocabulary (CRITICAL/WARNING/ALERT) stays distinct from action-items
+// (URGENT/SOON/UPCOMING) — different surface, different audience — but the
+// boundary semantics are now shared. When the central thresholds shift
+// (urgent=7 → urgent=10, say), expiry_monitor follows automatically.
+import { getMaturityCategory } from "../action-items/types.js";
 import type { RawPoolOpportunity } from "../types.js";
 
 /** Result from the governance API — distinguishes "no gauges" from "API unavailable" */
@@ -85,14 +92,20 @@ interface ReadinessSignal {
 }
 
 function urgencyLabel(days: number): string {
-  if (days <= 7) return "CRITICAL";
-  if (days <= 14) return "WARNING";
+  // PR-B2: route via central getMaturityCategory for boundary consistency.
+  // CRITICAL/WARNING/ALERT vocabulary preserved (distinct from action-items
+  // URGENT/SOON/UPCOMING — this is the operator-facing tool, not the curator
+  // dashboard).
+  const cat = getMaturityCategory(days);
+  if (cat === "urgent" || cat === "expired") return "CRITICAL";
+  if (cat === "soon") return "WARNING";
   return "ALERT";
 }
 
 function urgencyIcon(days: number): string {
-  if (days <= 7) return "!!!";
-  if (days <= 14) return "!!";
+  const cat = getMaturityCategory(days);
+  if (cat === "urgent" || cat === "expired") return "!!!";
+  if (cat === "soon") return "!!";
   return "!";
 }
 
@@ -334,12 +347,21 @@ Use spectra_list_pools to check if a successor pool has already been created.`,
           return { content: [{ type: "text" as const, text: lines.join("\n") }] };
         }
 
-        // Urgency counts
-        const critical = expiring.filter((p) => p.daysLeft <= 7);
+        // Urgency counts — PR-B2: dispatch via getMaturityCategory so the
+        // 7/14 boundaries don't drift from action-items semantics.
+        const critical = expiring.filter((p) => {
+          const c = getMaturityCategory(p.daysLeft);
+          return c === "urgent" || c === "expired";
+        });
         const warning = expiring.filter(
-          (p) => p.daysLeft > 7 && p.daysLeft <= 14
+          (p) => getMaturityCategory(p.daysLeft) === "soon",
         );
-        const alert = expiring.filter((p) => p.daysLeft > 14);
+        // ALERT bucket = anything past the SOON tier but within threshold_days
+        // (which is the user-configurable filter applied earlier at line ~250).
+        const alert = expiring.filter((p) => {
+          const c = getMaturityCategory(p.daysLeft);
+          return c === "upcoming" || c === "status";
+        });
 
         // Fetch Merkl campaigns for readiness assessment (best-effort, parallel)
         const expiringChains = [...new Set(expiring.map(p => p.chain))];
