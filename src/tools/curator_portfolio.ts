@@ -30,6 +30,13 @@ import type {
   CuratorPortfolioSummary,
 } from "../types.js";
 import { formatPct, formatUsd, daysToMaturity } from "../formatters.js";
+// PR-C: dispatch action-item prefix via the central registry instead of
+// inlining `[EXPIRED]` / `[URGENT]` etc. literals at each emit-site.
+// Spectra-platform positions don't carry rolloverPolicy metadata (Spectra is
+// the wrapper, auto-rolling), so this site uses prefix-only dispatch.
+// Full rolloverPolicy-aware `formatMaturityActionItem` lands at externalPosition
+// emit-sites in PR-B1.
+import { getMaturityCategory, formatActionItemPrefix } from "../action-items/types.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -69,18 +76,16 @@ function summarizeVault(mv: SpectraMetavault, chain: string): CuratorVaultSummar
     actionItems.push(`[UNALLOC] ${idlePct.toFixed(0)}% unallocated (${formatUsd(idleLiquidityUsd)})${suffix}`);
   }
 
-  // Expiring / expired positions
+  // Expiring / expired positions (PR-C: dispatch via centralized prefix registry).
+  // Behavior preservation: prose ("has matured", "expires in Nd") unchanged;
+  // only the literal prefix string is now sourced from a single registry.
   for (const pos of positions) {
     const matDays = daysToMaturity(pos.maturity);
-    const expired = pos.maturity * 1000 <= Date.now();
-    if (expired) {
-      actionItems.push(`[EXPIRED] ${pos.symbol} has matured`);
-    } else if (matDays <= 7) {
-      actionItems.push(`[URGENT] ${pos.symbol} expires in ${matDays}d`);
-    } else if (matDays <= 14) {
-      actionItems.push(`[SOON] ${pos.symbol} expires in ${matDays}d`);
-    } else if (matDays <= 30) {
-      actionItems.push(`[UPCOMING] ${pos.symbol} expires in ${matDays}d`);
+    const cat = getMaturityCategory(matDays);
+    if (cat === "expired") {
+      actionItems.push(`${formatActionItemPrefix("expired")} ${pos.symbol} has matured`);
+    } else if (cat !== "status") {
+      actionItems.push(`${formatActionItemPrefix(cat)} ${pos.symbol} expires in ${matDays}d`);
     }
   }
 

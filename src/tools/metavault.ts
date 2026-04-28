@@ -55,6 +55,11 @@ import {
   formatChainTruthFooter,
   CROSS_TOOL_THRESHOLDS,
 } from "../formatters.js";
+// PR-C: action-item prefix dispatch — replaces inline `[STATUS]` / `[OUTFLOWS]` /
+// `[BRIDGE]` / `[INCENTIVE]` literals with central registry calls. The maturity
+// emit-sites in this file (lines ~1071-1077) are NOT migrated here; PR-B1
+// handles those with full rolloverPolicy-aware `formatMaturityActionItem`.
+import { formatActionItemPrefix } from "../action-items/types.js";
 import type { CuratorDashboardOpts, ChainTruthSummaryResult } from "../formatters.js";
 import { generateActionItems } from "../protocols/engine.js";
 import type { TypedExternalPosition, ExternalChainTruthMap } from "../protocols/engine.js";
@@ -1024,7 +1029,7 @@ Pendle externals are NOT yet probed in this slice.`,
         // Status label — HIDDEN means not listed in the Spectra UI. Curators
         // should confirm intent; prospects reading the dashboard see it too.
         if (mv.status && mv.status !== "VISIBLE") {
-          actionItems.push(`[STATUS] Vault status is "${mv.status}" — not listed in Spectra frontend. Confirm intent.`);
+          actionItems.push(`${formatActionItemPrefix("status")} Vault status is "${mv.status}" — not listed in Spectra frontend. Confirm intent.`);
         }
 
         // Queued timelock transactions — surface curator's pending governance
@@ -1090,13 +1095,13 @@ Pendle externals are NOT yet probed in this slice.`,
           const recent = epochFlows.slice(-3);
           const allOutflows = recent.every(f => f.netDepositsUsd < 0);
           if (allOutflows) {
-            actionItems.push(`[OUTFLOWS] 3 consecutive epochs of net outflows. Review depositor retention.`);
+            actionItems.push(`${formatActionItemPrefix("outflows")} 3 consecutive epochs of net outflows. Review depositor retention.`);
           }
         }
 
         // Bridge pending
         if ((mv.bridge?.totalPendingUsd || 0) > 0) {
-          actionItems.push(`[BRIDGE] ${formatUsd(mv.bridge!.totalPendingUsd)} pending in cross-chain bridge transfers.`);
+          actionItems.push(`${formatActionItemPrefix("bridge")} ${formatUsd(mv.bridge!.totalPendingUsd)} pending in cross-chain bridge transfers.`);
         }
 
         // High incentive dependency
@@ -1104,7 +1109,7 @@ Pendle externals are NOT yet probed in this slice.`,
         if (liveApyTotal > 0 && apyBase > 0) {
           const incentiveShare = (liveApyTotal - apyBase) / liveApyTotal;
           if (incentiveShare > CROSS_TOOL_THRESHOLDS.INCENTIVE_SHARE_WARN_FRAC) {
-            actionItems.push(`[INCENTIVE] ${(incentiveShare * 100).toFixed(0)}% of APY comes from incentive programs. Base yield is only ${formatPct(apyBase)}.`);
+            actionItems.push(`${formatActionItemPrefix("incentive")} ${(incentiveShare * 100).toFixed(0)}% of APY comes from incentive programs. Base yield is only ${formatPct(apyBase)}.`);
           }
         }
 
