@@ -25,6 +25,9 @@ import { z } from "zod";
 import { EVM_ADDRESS, CHAIN_ENUM, API_NETWORKS, SUPPORTED_CHAINS, resolveNetwork, MORPHO_CHAIN_IDS } from "../config.js";
 import { fetchSpectraPortfolioValidated, fetchMorphoUserPositions, scanAllPendleUserPositions, fetchVeTotalSupply, fetchVeBalance, fetchVePendleTotalSupply, fetchVePendleBalance } from "../api.js";
 import { formatUsd, formatPct, daysToMaturity, formatBalance } from "../formatters.js";
+// PR-B3: route maturity-tier tests via centralized helper (boundaries shared
+// with action-items module — 7d urgent, 14d soon, 30d upcoming).
+import { getMaturityCategory } from "../action-items/types.js";
 import type { SpectraPt, SpectraPool } from "../types.js";
 
 export function register(server: McpServer): void {
@@ -136,7 +139,12 @@ before "what should I do?"`,
 
               const maturity = pos.maturity ? daysToMaturity(pos.maturity) : null;
               const isExpired = maturity !== null && maturity <= 0;
-              const isExpiring = maturity !== null && maturity > 0 && maturity <= 14;
+              // PR-B3: dispatch via getMaturityCategory (urgent ∪ soon = 1-14d window).
+              const isExpiring = maturity !== null && maturity > 0 &&
+                (() => {
+                  const c = getMaturityCategory(maturity);
+                  return c === "urgent" || c === "soon";
+                })();
 
               const parts = [];
               if (ptBal > 0) parts.push(`PT: ${ptBal.toFixed(2)}`);
@@ -183,7 +191,12 @@ before "what should I do?"`,
             // pos.expiry is ISO string — convert to Unix seconds for daysToMaturity
             const expiryTs = pos.expiry ? Math.floor(new Date(pos.expiry).getTime() / 1000) : 0;
             const maturity = expiryTs > 0 ? daysToMaturity(expiryTs) : null;
-            const isExpiring = maturity !== null && maturity > 0 && maturity <= 14;
+            // PR-B3: dispatch via getMaturityCategory (urgent ∪ soon = 1-14d window).
+            const isExpiring = maturity !== null && maturity > 0 &&
+              (() => {
+                const c = getMaturityCategory(maturity);
+                return c === "urgent" || c === "soon";
+              })();
             const isExpired = pos.isExpired || (maturity !== null && maturity <= 0);
             let statusTag = "";
             if (isExpired) statusTag = " [MATURED]";

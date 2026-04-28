@@ -33,6 +33,9 @@ import {
   fetchMerklCampaigns,
 } from "../api.js";
 import { formatPct, formatUsd, daysToMaturity } from "../formatters.js";
+// PR-B3: maturity-tier dispatch (7d "active convergence" + 30d "near maturity"
+// boundaries shared with action-items module).
+import { getMaturityCategory } from "../action-items/types.js";
 import type { CalibrationMetric, CalibrationProfile, MorphoHistoricalDataPoint } from "../types.js";
 
 // ── Calibration math ──
@@ -518,15 +521,22 @@ or export knowledge about what normal looks like.`,
         lines.push(`  Data: ${metrics.reduce((s, m) => Math.max(s, m.dataPoints), 0)} observations`);
         lines.push(``);
 
-        // Maturity awareness — near-expiry pools have fundamentally different behavior
-        if (targetMaturityDays !== null && targetMaturityDays <= 30) {
+        // Maturity awareness — near-expiry pools have fundamentally different behavior.
+        // PR-B3: route via getMaturityCategory so the 7d "active convergence" and
+        // 30d "near maturity" boundaries align with action-items module.
+        const targetCat = targetMaturityDays !== null ? getMaturityCategory(targetMaturityDays) : "status";
+        const isNearMaturity = targetMaturityDays !== null && targetMaturityDays > 0
+          && (targetCat === "urgent" || targetCat === "soon" || targetCat === "upcoming");
+        if (isNearMaturity) {
           lines.push(`⚠ NEAR MATURITY: ${targetMaturityDays} days to expiry.`);
           lines.push(`  Near-maturity calibration caveats:`);
           lines.push(`  - Implied APY becomes unreliable as PT price converges to 1.0`);
           lines.push(`  - Historical percentiles include data from when the pool was young (different regime)`);
           lines.push(`  - Volume patterns shift from trading to redemption-driven`);
           lines.push(`  - Anomaly thresholds calibrated over ${per} may not reflect convergence compression`);
-          if (targetMaturityDays <= 7) {
+          // Inside isNearMaturity → targetCat is "urgent" | "soon" | "upcoming";
+          // "urgent" alone (≤7d) is the active-convergence regime.
+          if (targetCat === "urgent") {
             lines.push(`  - At ${targetMaturityDays}d, this pool is in active convergence. Statistical baselines are less meaningful.`);
           }
           lines.push(``);

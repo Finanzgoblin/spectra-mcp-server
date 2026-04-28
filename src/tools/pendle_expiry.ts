@@ -12,6 +12,9 @@ import { PENDLE_CHAIN_IDS, PENDLE_CHAIN_NAMES } from "../config.js";
 import { scanAllPendleMarkets, fetchPendleMarkets } from "../api.js";
 import type { PendleMarket } from "../types.js";
 import { formatPct, formatUsd, pendleDaysToMaturity } from "../formatters.js";
+// PR-B3: dispatch CRITICAL/WARNING/ALERT bucketing via centralized helper
+// (boundaries shared with action-items module).
+import { getMaturityCategory } from "../action-items/types.js";
 
 const PENDLE_CHAIN_KEYS = Object.keys(PENDLE_CHAIN_IDS) as [string, ...string[]];
 const PENDLE_CHAIN_ENUM = z.enum(PENDLE_CHAIN_KEYS);
@@ -112,10 +115,20 @@ Use pendle_get_yield_curve to find replacement maturities.`,
         // Sort by days left ascending (most urgent first)
         expiring.sort((a, b) => a.daysLeft - b.daysLeft);
 
-        // Group by urgency
-        const critical = expiring.filter((e) => e.daysLeft <= 7);
-        const warning = expiring.filter((e) => e.daysLeft > 7 && e.daysLeft <= 14);
-        const alert = expiring.filter((e) => e.daysLeft > 14);
+        // Group by urgency — PR-B3: dispatch via getMaturityCategory.
+        // CRITICAL/WARNING/ALERT vocabulary preserved (same as expiry_monitor.ts);
+        // boundaries shared with action-items module (urgent=7, soon=14).
+        const critical = expiring.filter((e) => {
+          const c = getMaturityCategory(e.daysLeft);
+          return c === "urgent" || c === "expired";
+        });
+        const warning = expiring.filter(
+          (e) => getMaturityCategory(e.daysLeft) === "soon",
+        );
+        const alert = expiring.filter((e) => {
+          const c = getMaturityCategory(e.daysLeft);
+          return c === "upcoming" || c === "status";
+        });
 
         const scope = chain ? PENDLE_CHAIN_NAMES[chain] || chain : "All Pendle Chains";
         const lines: string[] = [];
