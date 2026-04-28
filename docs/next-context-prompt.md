@@ -4,11 +4,14 @@
 
 This file replaces the prior discard-layer handoff. The hardcode-vs-generalize spec workflow completed April 28, 2026: Phase 0 audit through Phase 8 v3-final, **17 reviewer agents** across 3 architectural rounds + 1 stakeholder-utility round. Spec is engineering-ready.
 
-**Ship status (2026-04-28 evening)**:
+**Ship status (2026-04-28 night) — Ship-Phase 1 COMPLETE**:
 - ✅ **PR-J shipped** (commit `b57657f`) — forcing function (pre-commit hook + 5th-lens reviewer brief + audit-discipline-spec.md + substrate-diverse-engineering-prompt.md)
 - ✅ **PR-D shipped** (commit `11dfd2f`) — protocol metadata extension (`ytFeeRate`, `shortTag`, `rolloverPolicy` 6-way, `useCctp`) + ALL consumer migration. Dissolves `CCTP_PROTOCOLS` Set + the "0% YT fee lie" surface.
-- ✅ **PR-E shipped** (commit `0f1fd50`) — parse-time normalize at `ExternalPositionSchema.protocol` + extended `normalizeProtocolName` regex (`/[\s.]+/g`) for dot-containing names (Ether.Fi). Audit caught display-vs-key namespace conflict at `ibt.protocol`; reverted that transform inline. 4 new dot-handling tests added.
-- ⏳ **Next**: **PR-L** (originating-scar surface — points-multipliers metadata + `formatPointsMultipliers` orchestrator + render gallery test discipline). Most semantically demanding of Ship-Phase 1.
+- ✅ **PR-E shipped** (commit `0f1fd50`) — parse-time normalize at `ExternalPositionSchema.protocol` + extended `normalizeProtocolName` regex for dot-containing names (Ether.Fi).
+- ✅ **PR-L shipped** (commit `b100b79`) — **THE originating-scar closure**. PointsMultiplier metadata + `formatPointsMultipliers` orchestrator with `[REFERENCE-ONLY]` expired/cooldown handling + 9 shape-based tests against spec §5.5 render gallery.
+- ⏳ **Next phases**: Ship-Phase 2 (PR-A asset registry, PR-C action-items types, PR-K threshold consolidation), Ship-Phase 3 (PR-B sub-PRs consumer migration), Ship-Phase 4 (PR-F transactionQueue + PR-G verifier cross-validation). Less demo-visible — internal architecture investment per spec self-review §1.
+
+**Test count: 902 (+14 since Ship-Phase 1 began)**. Build clean. Integration 159/159.
 
 ---
 
