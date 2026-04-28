@@ -1,8 +1,13 @@
-# Engineering-context handoff — hardcode-vs-generalize spec v3-final SHIPPED
+# Engineering-context handoff — PR-J + PR-D SHIPPED, Ship-Phase 1 in progress
 
 **For the next Claude Code session that opens this directory.**
 
-This file replaces the prior discard-layer handoff. The hardcode-vs-generalize spec workflow completed today (April 28, 2026): Phase 0 audit through Phase 8 v3-final, with PR-J restored to scope per Richard's decision. **17 reviewer agents** total across 3 architectural rounds + 1 stakeholder-utility round. Spec is engineering-ready.
+This file replaces the prior discard-layer handoff. The hardcode-vs-generalize spec workflow completed April 28, 2026: Phase 0 audit through Phase 8 v3-final, **17 reviewer agents** across 3 architectural rounds + 1 stakeholder-utility round. Spec is engineering-ready.
+
+**Ship status (2026-04-28 evening)**:
+- ✅ **PR-J shipped** (commit `b57657f`) — forcing function (pre-commit hook + 5th-lens reviewer brief + audit-discipline-spec.md + substrate-diverse-engineering-prompt.md)
+- ✅ **PR-D shipped** (commit `11dfd2f`) — protocol metadata extension (`ytFeeRate`, `shortTag`, `rolloverPolicy` 6-way, `useCctp`) + ALL consumer migration. Dissolves `CCTP_PROTOCOLS` Set + the "0% YT fee lie" surface. PR-D 4-lens audit caught two real bugs (Lens 3: `formatPlatformLabel("")` empty bracket; Lens 2 Diverger: smuggled-Spectra-rate fallback) — both fixed inline.
+- ⏳ **Next**: PR-E (parse-time normalization, lighter, ~few files) OR PR-L (originating-scar surface, points-multipliers metadata + formatPointsMultipliers orchestrator). Both still in Ship-Phase 1.
 
 ---
 
@@ -31,9 +36,9 @@ Reference (don't re-read in full unless context requires):
 **10 PRs across 4 ship-phases** (each shippable independently with own substrate-diverse 4-lens audit + Diverger):
 
 ### Ship-Phase 1 — Client-visible (atomic)
-- **PR-D** — protocol metadata expansion: `ytFeeRate`, `useCctp`, `shortTag`, `rolloverPolicy` (6-way) + ALL consumer migration in one merge
-- **PR-E** — parse-time normalization at `schemas/spectra.ts`; extended `normalizeProtocolName` regex for `Ether.Fi`
-- **PR-L** — points-multipliers metadata + `formatPointsMultipliers` orchestrator (closes the originating scar surface)
+- ✅ **PR-D shipped** (commit `11dfd2f`) — protocol metadata expansion (`ytFeeRate`, `useCctp`, `shortTag`, `rolloverPolicy` 6-way) + ALL consumer migration in one merge. Diverger-deferred follow-ups: PLATFORM_REGISTRY refactor (Spectra-as-platform vs externalPosition-as-protocol axis), avant.ytFeeRate as InterpretedValue, unit tests for 6 new format helpers.
+- ⏳ **PR-E next** — parse-time normalization at `schemas/spectra.ts`; extended `normalizeProtocolName` regex for `Ether.Fi`
+- ⏳ **PR-L** — points-multipliers metadata + `formatPointsMultipliers` orchestrator (closes the originating scar surface)
 
 ### Ship-Phase 2 — Foundations
 - **PR-A** — asset registry `src/assets/metadata.ts` (registry+migration in one PR)
