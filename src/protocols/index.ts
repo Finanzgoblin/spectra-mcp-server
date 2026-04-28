@@ -18,6 +18,7 @@ export type {
   PointsMultiplier,
   PointsMultiplierScope,
   RolloverPolicy,
+  VerifierConfig,
 } from "./types.js";
 
 export {

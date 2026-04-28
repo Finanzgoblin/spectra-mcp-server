@@ -172,11 +172,42 @@ export interface ProtocolMeta {
    */
   pointsMultipliers?: PointsMultiplier[];
 
+  /**
+   * Per-protocol verifier configuration (PR-G of hardcode-vs-generalize-spec.md).
+   *
+   * Centralizes the inputs that verifier implementations currently hardcode in
+   * their own files (timeout, drift tolerance, on-chain contract addresses by
+   * chainId). Cross-validation lives in `verifier-registry.ts` (R2-BL-4): every
+   * registered verifier must have `meta.verifier.contracts` populated, otherwise
+   * registry-load throws.
+   *
+   * Adding a multi-chain Avant deployment = one row addition to `contracts`,
+   * not a verifier-code edit.
+   */
+  verifier?: VerifierConfig;
+
   observationBoundaries: {
     unobservable: string[];
     mitigations?: string[];
     dissolution?: string[];
   };
+}
+
+/**
+ * Verifier configuration shape (PR-G).
+ *
+ * - `timeoutMs`: per-call timeout for the on-chain verification (default 15s).
+ * - `amountDriftTolerancePpm`: PPM-bounded tolerance for amount-comparison drift.
+ *   bigint to preserve precision against on-chain decimals (token-amount math
+ *   loses precision in JS number).
+ * - `contracts`: per-chain dict of role-name → contract address. Roles like
+ *   `requestManager`, `marketState`, etc. are protocol-specific and
+ *   self-documented at the verifier site.
+ */
+export interface VerifierConfig {
+  timeoutMs: number;
+  amountDriftTolerancePpm: bigint;
+  contracts: Record<string, Record<string, string>>;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -355,6 +386,17 @@ export function protocolMetaSchema(
               message: "PointsMultiplier invariant: source.value must equal amount (R2-BL-6)",
             }),
         )
+        .optional(),
+      // PR-G: verifier config. Consumers that register a ProtocolVerifier must
+      // populate this; cross-validation in `verifier-registry.ts` enforces the
+      // contract at module-load.
+      verifier: z
+        .object({
+          timeoutMs: z.number().int().positive(),
+          amountDriftTolerancePpm: z.bigint(),
+          contracts: z.record(z.string(), z.record(z.string(), z.string())),
+        })
+        .strict()
         .optional(),
       observationBoundaries: z
         .object({

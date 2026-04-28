@@ -129,6 +129,21 @@ export const PROTOCOL_METADATA: Record<string, ProtocolMeta> = {
         },
       },
     ],
+    // Verifier configuration (PR-G): centralizes the inputs `avant-verifier.ts`
+    // currently hardcodes (`AVANT_VERIFY_TIMEOUT_MS`, `AVANT_AMOUNT_DRIFT_TOLERANCE_PPM`,
+    // `AVANT_REQUESTS_MANAGER_AVAX`). Cross-validation in `verifier-registry.ts`
+    // verifies this is populated for every registered verifier. Adding a
+    // multi-chain Avant deployment = one row addition to `contracts`, not a
+    // verifier-code edit. Source: avant-verifier.ts:96, 115, 513.
+    verifier: {
+      timeoutMs: 15_000,
+      amountDriftTolerancePpm: 100n,
+      contracts: {
+        "43114": {
+          requestManager: "0x4c129d3aa27272211d151ca39a0a01e4c16fc887",
+        },
+      },
+    },
     // No actionItems — `updatedAt` on externalPositions[] is indexer-write time,
     // not submission time, so maturity thresholds cannot be computed honestly.
     observationBoundaries: {
@@ -197,6 +212,21 @@ export const PROTOCOL_METADATA: Record<string, ProtocolMeta> = {
     } satisfies SourcedValue<number>,
     shortTag: "[P]",
     rolloverPolicy: "manual_to_successor",
+    // Verifier configuration (PR-G): centralizes inputs `pendle-verifier.ts`
+    // hardcodes. Pendle's verifier reads market state per-chain; the
+    // `marketState` role is the per-chain market contract address. The verifier
+    // resolves market addresses from position data (per-pool), so `contracts`
+    // is intentionally minimal — empty per-chain dicts indicate
+    // "verifier-driven address resolution per-call." Source: pendle-verifier.ts:115.
+    verifier: {
+      timeoutMs: 15_000,
+      amountDriftTolerancePpm: 100n,
+      contracts: {
+        "1": {},
+        "8453": {},
+        "42161": {},
+      },
+    },
     observationBoundaries: {
       unobservable: [
         "Current Pendle pool depth at exit time (snapshot liquidity used)",
