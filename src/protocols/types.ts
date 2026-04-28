@@ -61,6 +61,27 @@ export interface SettlementWindow {
   ceiling?: { value: "unknown"; reason: string };
 }
 
+/**
+ * 6-way rolloverPolicy enum (P7-BL-4 of hardcode-vs-generalize-spec.md):
+ *
+ * - `auto`: protocol auto-rolls (e.g., Spectra MetaVault auto-rollover)
+ * - `manual_to_successor`: holder must manually roll to a successor (e.g., Pendle next-maturity PT)
+ * - `redeem_to_underlying`: burn → cooldown → claim same underlying (e.g., Avant)
+ * - `expire_to_lp_share`: position expires into an LP share with no burn/cooldown (hypothetical Cork-style)
+ * - `redeem_no_cooldown`: instant burn-to-stable (hypothetical)
+ * - `unknown`: catch-all for `_unknown` and protocols whose policy isn't yet observed
+ *
+ * The 6-way enum captures architecturally-distinct settlement semantics. Adding a 7th category triggers
+ * dissolution per spec §10.
+ */
+export type RolloverPolicy =
+  | "auto"
+  | "manual_to_successor"
+  | "redeem_to_underlying"
+  | "expire_to_lp_share"
+  | "redeem_no_cooldown"
+  | "unknown";
+
 export interface RenderContext {
   viewMode: "curator" | "consumer";
   seenProtocols?: Set<string>;
@@ -82,6 +103,13 @@ export interface ProtocolMeta {
     settlementWindow: SettlementWindow;
     costModel: CostModelName;
     stressExclude?: boolean;
+    /**
+     * P7-BL-4 of hardcode-vs-generalize-spec.md: dissolves the
+     * `engine.ts:317 CCTP_PROTOCOLS` ReadonlySet hardcode. When `true`, a
+     * cross-chain `lp_exit_samechain` cost-model resolves to
+     * `lp_exit_crosschain_cctp` per `classifyForStress`.
+     */
+    useCctp?: boolean;
   };
 
   actionItems?: {
@@ -92,6 +120,23 @@ export interface ProtocolMeta {
       upcomingMax?: number;
     };
   };
+
+  /**
+   * Protocol's YT fee rate (decimal, e.g. 0.05 = 5%) charged on YT yield.
+   * REQUIRED for non-`_unknown` protocols (zod-enforced at registry load).
+   * Undefined for `_unknown` → `formatYTFeeLabel` renders `"?% on YT yield"`.
+   * NEVER `0` for non-`_unknown` (would silently lie about ammunition value).
+   */
+  ytFeeRate?: SourcedValue<number>;
+
+  /**
+   * Short tag used in compact renders (e.g. `"[A]"` for Avant, `"[P]"` for Pendle).
+   * Optional; consumers fall back to first-letter-uppercase of `meta.label` when absent.
+   */
+  shortTag?: string;
+
+  /** 6-way enum capturing settlement semantics. See `RolloverPolicy` doc. */
+  rolloverPolicy?: RolloverPolicy;
 
   observationBoundaries: {
     unobservable: string[];
@@ -224,6 +269,7 @@ export function protocolMetaSchema(
           settlementWindow: settlementWindowSchema(opts),
           costModel: CostModelNameSchema,
           stressExclude: z.boolean().optional(),
+          useCctp: z.boolean().optional(),
         })
         .strict(),
       actionItems: z
@@ -239,6 +285,23 @@ export function protocolMetaSchema(
             .optional(),
         })
         .strict()
+        .optional(),
+      // ytFeeRate: REQUIRED for non-`_unknown` (BL-1 of hardcode-vs-generalize-spec.md).
+      // For `_unknown`, the relaxed schema (allowEmptySource: true) makes it optional,
+      // so `_unknown.ytFeeRate` is undefined → `formatYTFeeLabel` renders "?% on YT yield".
+      ytFeeRate: opts.allowEmptySource
+        ? sourcedValueSchema(z.number(), opts).optional()
+        : sourcedValueSchema(z.number()),
+      shortTag: z.string().min(1).optional(),
+      rolloverPolicy: z
+        .enum([
+          "auto",
+          "manual_to_successor",
+          "redeem_to_underlying",
+          "expire_to_lp_share",
+          "redeem_no_cooldown",
+          "unknown",
+        ])
         .optional(),
       observationBoundaries: z
         .object({

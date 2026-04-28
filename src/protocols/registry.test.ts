@@ -125,6 +125,14 @@ describe("PR1 zero-code protocol addition — registry round-trip", () => {
         costModel: "lp_exit_samechain",
         stressExclude: false,
       },
+      // PR-D of hardcode-vs-generalize-spec.md: non-`_unknown` test fixtures MUST
+      // populate ytFeeRate (R2-NTH-4). Synthetic uses a placeholder URL since this
+      // is a test-only entry, not a real protocol.
+      ytFeeRate: {
+        value: 0.025,
+        sourceUrl: "https://docs.morpho.org/fixed/fees",
+        sourceVerifiedOn: "2026-04-28",
+      },
       observationBoundaries: {
         unobservable: ["Morpho oracle freshness at exit time"],
       },

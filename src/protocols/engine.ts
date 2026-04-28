@@ -314,7 +314,10 @@ export function renderExternalPosition(
 // classifyForStress — tier + cost-model resolution
 // ────────────────────────────────────────────────────────────────────────────
 
-const CCTP_PROTOCOLS: ReadonlySet<string> = new Set(["avant", "pendle"]);
+// NOTE: `CCTP_PROTOCOLS = new Set(["avant", "pendle"])` was dissolved here per PR-D
+// of `docs/hardcode-vs-generalize-spec.md`. The CCTP-eligibility flag now lives on
+// `meta.stressSettlement.useCctp`, so adding a new protocol with cross-chain CCTP
+// rails is one row in `protocols/metadata.ts` (not a code edit at this site).
 
 export function classifyForStress(
   ext: TypedExternalPosition,
@@ -329,7 +332,7 @@ export function classifyForStress(
   if (
     costModelName === "lp_exit_samechain" &&
     isCrossChain &&
-    CCTP_PROTOCOLS.has(meta.name)
+    meta.stressSettlement.useCctp === true
   ) {
     costModelName = "lp_exit_crosschain_cctp";
   }

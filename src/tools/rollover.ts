@@ -41,6 +41,7 @@ import {
   formatMorphoLltv,
   getEffectiveLiquidityUsd,
   formatHaltCheckLine,
+  formatPlatformLabel,
 } from "../formatters.js";
 import type { RolloverHaltCheckResult } from "../formatters.js";
 import { readMetaVaultChainStateCached, projectChainReadInput } from "../chain-reads.js";
@@ -50,7 +51,8 @@ import type { ChainKey } from "../config.js";
 
 function formatRolloverCandidate(c: RolloverCandidate, rank: number): string {
   const lines: string[] = [];
-  const tag = c.protocol === "spectra" ? "[Spectra]" : "[Pendle]";
+  // PR-D: dispatch via formatPlatformLabel instead of `c.protocol === "spectra" ? "[Spectra]" : "[Pendle]"`.
+  const tag = `[${formatPlatformLabel(c.protocol)}]`;
   lines.push(`  #${rank} ${tag} ${c.name} (${c.chain})`);
   lines.push(`    Maturity: ${formatDate(c.maturityTimestamp)} (${c.daysToMaturity}d)`);
   lines.push(`    Implied APY: ${formatPct(c.impliedApy)}  |  LP APY: ${formatPct(c.lpApy)}`);

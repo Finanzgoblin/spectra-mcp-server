@@ -33,6 +33,12 @@ import type { ProtocolMeta, SourcedValue, InterpretedValue } from "./types.js";
 const AVANT_COOLDOWN_DOCS = "https://docs.avantprotocol.com/overview/core-tokens#avusdx";
 const PENDLE_AMM_DOCS = "https://docs.pendle.finance/ProtocolMechanics/Mechanisms/AMM";
 
+// YT fee documentation URLs (PR-D of hardcode-vs-generalize-spec.md):
+// Avant positions inside a Spectra MetaVault are wrapped by Spectra → Spectra's 3% YT fee applies.
+// Pendle markets charge their own 5% protocol YT fee.
+const SPECTRA_YT_FEE_DOCS = "https://docs.spectra.finance/tokenomics/fees";
+const PENDLE_YT_FEE_DOCS = "https://docs.pendle.finance/ProtocolMechanics/Mechanisms/Fees";
+
 export const PROTOCOL_METADATA: Record<string, ProtocolMeta> = {
   avant: {
     name: "avant",
@@ -77,7 +83,20 @@ export const PROTOCOL_METADATA: Record<string, ProtocolMeta> = {
         },
       },
       costModel: "zero",
+      // useCctp: avant positions can be cross-chain via Avant's redemption rail (the historical
+      // CCTP_PROTOCOLS Set assumed this). Dissolves engine.ts:317 hardcoded Set.
+      useCctp: true,
     },
+    // YT fee on Avant-backed PT positions: Avant is held VIA a Spectra MetaVault wrapper, so the
+    // 3% Spectra protocol YT fee applies (not Avant's own — Avant has no native YT fee since YT
+    // is a Spectra construct on top of avUSDx as the IBT). PR-D of hardcode-vs-generalize-spec.md.
+    ytFeeRate: {
+      value: 0.03,
+      sourceUrl: SPECTRA_YT_FEE_DOCS,
+      sourceVerifiedOn: "2026-04-28",
+    } satisfies SourcedValue<number>,
+    shortTag: "[A]",
+    rolloverPolicy: "redeem_to_underlying",
     // No actionItems — `updatedAt` on externalPositions[] is indexer-write time,
     // not submission time, so maturity thresholds cannot be computed honestly.
     observationBoundaries: {
@@ -129,11 +148,23 @@ export const PROTOCOL_METADATA: Record<string, ProtocolMeta> = {
       },
       costModel: "lp_exit_samechain",
       stressExclude: true,
+      // useCctp: pendle positions can be cross-chain via CCTP rails. Dissolves engine.ts:317.
+      useCctp: true,
     },
     actionItems: {
       maturityFieldPath: "market.maturity",
       maturityThresholdsDays: { urgent: 7, upcoming: 14, upcomingMax: 30 },
     },
+    // Pendle's own protocol YT fee — applies to YT yield on Pendle markets directly
+    // (not to Pendle PT held inside a Spectra MetaVault wrapper, where Spectra's 3% applies).
+    // PR-D of hardcode-vs-generalize-spec.md.
+    ytFeeRate: {
+      value: 0.05,
+      sourceUrl: PENDLE_YT_FEE_DOCS,
+      sourceVerifiedOn: "2026-04-28",
+    } satisfies SourcedValue<number>,
+    shortTag: "[P]",
+    rolloverPolicy: "manual_to_successor",
     observationBoundaries: {
       unobservable: [
         "Current Pendle pool depth at exit time (snapshot liquidity used)",
@@ -180,6 +211,9 @@ export const PROTOCOL_METADATA: Record<string, ProtocolMeta> = {
       costModel: "zero",
       stressExclude: true,
     },
+    // ytFeeRate intentionally undefined — `formatYTFeeLabel` renders `?% on YT yield`
+    // for unknown protocols. NEVER `0` (would silently lie). Per BL-1 + spec §5.
+    rolloverPolicy: "unknown",
     observationBoundaries: {
       unobservable: ["Everything protocol-specific — no metadata registered"],
       mitigations: [

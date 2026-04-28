@@ -20,6 +20,7 @@ import {
   DriftCollector,
   type TypedExternalPosition,
   type ExternalChainTruthMap,
+  type ProtocolMeta,
 } from "./protocols/index.js";
 // Phase 2 (discard-layer-spec):
 //   - PR5 calls `getMeta(normalizeProtocolName(...))` to detect _unknown
@@ -28,6 +29,9 @@ import {
 //   - PR7b reads `computePerformanceMetrics` + `formatPerformanceMetricsOneLine`
 //     from the new `src/performance.ts` (PR7a refactor).
 import { getMeta, normalizeProtocolName } from "./protocols/registry.js";
+// PR-D of hardcode-vs-generalize-spec.md: Spectra's wrapper YT fee comes from config
+// (since spectra is the wrapper, not an externalPosition module in PROTOCOL_METADATA).
+import { PROTOCOL_CONSTANTS } from "./config.js";
 import { computePerformanceMetrics, formatPerformanceMetricsOneLine } from "./performance.js";
 
 // Primitives now live in primitives.ts. Re-exported here for backward compat
@@ -78,6 +82,111 @@ export function parsePtMaturityFromName(name: string): Date | null {
     }
   }
   return null;
+}
+
+// =============================================================================
+// Protocol / Platform Label Helpers (PR-D of hardcode-vs-generalize-spec.md)
+// =============================================================================
+//
+// These helpers dissolve the hardcoded `opp.protocol === "pendle" ? "5%" : "3%"`
+// dispatches at formatters.ts:5945 + tools/curator_scan.ts:530 (and similar
+// short-tag / label dispatches) into metadata-driven lookups.
+//
+// Two surfaces:
+//   - `formatYTFeeLabel(meta)` — when caller already has a `ProtocolMeta`
+//     (e.g., Pendle market formatter, externalPosition renderers). Spec §5
+//     canonical helper.
+//   - `formatPlatform*(platform: string)` — when caller has only an
+//     `opp.protocol` field whose value is `"spectra"` or `"pendle"` etc.
+//     Dispatches between Spectra's config constant (since Spectra isn't an
+//     externalPosition module) and metadata for everything else.
+//
+// Open emergence: adding a new externalPosition protocol = one row in
+// `protocols/metadata.ts` and these helpers route it automatically. Adding a
+// new YT-fee-bearing PLATFORM (rare) = extend `getPlatformYTFeeRate` here.
+//
+// NEVER returns `0` for an unmapped protocol's fee — returns `undefined` so
+// the caller can render `?%`. Per BL-1 of the spec.
+
+const SPECTRA_PLATFORM_NAME = "spectra"; // Spectra wrapper key; not in PROTOCOL_METADATA.
+
+/**
+ * Format a YT fee label given a protocol metadata entry.
+ * - `_unknown` or missing `ytFeeRate` → "?% on YT yield"
+ * - Stale (`sourceVerifiedOn > 60 days ago`) → adds `*` + verified date suffix
+ * - Otherwise → e.g. "5% on YT yield"
+ *
+ * Per `docs/hardcode-vs-generalize-spec.md` §5 + §5.5 render gallery.
+ */
+export function formatYTFeeLabel(meta: ProtocolMeta, nowMs: number = Date.now()): string {
+  if (meta.name === "_unknown" || !meta.ytFeeRate) return "?% on YT yield";
+  const pct = `${(meta.ytFeeRate.value * 100).toFixed(0)}% on YT yield`;
+  // Staleness annotation (P7-BL-3): when the source-verified date is > 60 days
+  // old, append `*` + verified date. Caller surfaces freshness without needing
+  // to know the threshold.
+  const verifiedMs = Date.parse(meta.ytFeeRate.sourceVerifiedOn + "T00:00:00Z");
+  if (!Number.isFinite(verifiedMs)) return pct;
+  const ageDays = (nowMs - verifiedMs) / 86_400_000;
+  if (ageDays > 60) {
+    return `${pct}* (verified ${meta.ytFeeRate.sourceVerifiedOn})`;
+  }
+  return pct;
+}
+
+/**
+ * Just the percentage component of a YT fee, e.g. "5%" or "?%".
+ * For inline use in pre-existing wording like "X% on all yield + points".
+ */
+export function formatYTFeePct(meta: ProtocolMeta): string {
+  if (!meta.ytFeeRate) return "?%";
+  return `${(meta.ytFeeRate.value * 100).toFixed(0)}%`;
+}
+
+/**
+ * YT fee rate (decimal) for a curator-opportunity platform.
+ * - "spectra" → `PROTOCOL_CONSTANTS.fees.ytToTreasury` (3% Spectra wrapper fee)
+ * - everything else → `getMeta(platform).ytFeeRate?.value`
+ *
+ * Returns `undefined` for unmapped/unfee'd protocols. NEVER 0 unless the
+ * protocol genuinely has zero YT fee.
+ */
+export function getPlatformYTFeeRate(platform: string): number | undefined {
+  if (platform === SPECTRA_PLATFORM_NAME) return PROTOCOL_CONSTANTS.fees.ytToTreasury;
+  return getMeta(platform).ytFeeRate?.value;
+}
+
+/** Just the percentage for a curator-opportunity platform, e.g. "5%" / "3%" / "?%". */
+export function formatPlatformYTFeePct(platform: string): string {
+  const rate = getPlatformYTFeeRate(platform);
+  if (rate === undefined) return "?%";
+  return `${(rate * 100).toFixed(0)}%`;
+}
+
+/**
+ * Short tag like "[S]" / "[P]" for a curator-opportunity platform.
+ * Falls back to first-letter-uppercase of `meta.label` when `shortTag` is absent.
+ */
+export function formatPlatformShortTag(platform: string): string {
+  if (platform === SPECTRA_PLATFORM_NAME) return "[S]";
+  const meta = getMeta(platform);
+  if (meta.shortTag) return meta.shortTag;
+  if (meta.name === "_unknown") return "[?]";
+  return `[${meta.label.charAt(0).toUpperCase()}]`;
+}
+
+/**
+ * Display label like "Spectra" / "Pendle" for a curator-opportunity platform.
+ * Capitalizes `meta.label` for display purposes.
+ *
+ * Empty / unmapped guard: returns `"?"` (matching `formatPlatformShortTag`'s
+ * `[?]` behavior) to avoid empty brackets `[]` in renders. Caught by Lens 3
+ * (Sonnet + soul, depth) audit on 2026-04-28.
+ */
+export function formatPlatformLabel(platform: string): string {
+  if (platform === SPECTRA_PLATFORM_NAME) return "Spectra";
+  const meta = getMeta(platform);
+  if (meta.name === "_unknown") return platform || "?";
+  return meta.label.charAt(0).toUpperCase() + meta.label.slice(1);
 }
 
 // =============================================================================
@@ -689,7 +798,10 @@ export function formatPoolSummary(pt: SpectraPt, pool: SpectraPool, chain: strin
     lines.push(`  Tags: ${pt.tags.join(", ")}`);
   }
 
-  lines.push(`  Protocol YT Fee: 3% on all yield + points (docs.spectra.finance/tokenomics/fees)`);
+  // Spectra wrapper YT fee — sourced from PROTOCOL_CONSTANTS (config.ts) per PR-D.
+  // Spectra isn't an externalPosition entry in PROTOCOL_METADATA (it IS the wrapper),
+  // so the fee comes from the same governance-constants block that ytToTreasury lives in.
+  lines.push(`  Protocol YT Fee: ${(PROTOCOL_CONSTANTS.fees.ytToTreasury * 100).toFixed(0)}% on all yield + points (docs.spectra.finance/tokenomics/fees)`);
 
   return lines.join("\n");
 }
@@ -5590,7 +5702,12 @@ export function formatPendleMarketSummary(m: PendleMarket, chain: string, merklC
   }
 
   lines.push(``);
-  lines.push(`  Protocol YT Fee: 5% on all yield + points (docs.pendle.finance/ProtocolMechanics/Mechanisms/Fees)`);
+  // Pendle's own protocol YT fee — pulled from PROTOCOL_METADATA via PR-D. The
+  // surrounding wording ("on all yield + points") is preserved because the metadata's
+  // `formatYTFeeLabel` returns the more compact "X% on YT yield" form which would
+  // shorten the prose; we keep the detailed wording intentionally for this surface.
+  const pendleMeta = getMeta("pendle");
+  lines.push(`  Protocol YT Fee: ${formatYTFeePct(pendleMeta)} on all yield + points (docs.pendle.finance/ProtocolMechanics/Mechanisms/Fees)`);
 
   return lines.join("\n");
 }
@@ -5870,7 +5987,7 @@ export function matchByAssetAndMaturity(
 
 /** One-liner for compact curator scan output — shows all strategy building blocks. */
 export function formatCuratorOpportunityCompact(opp: CuratorOpportunity, rank: number): string {
-  const proto = opp.protocol === "spectra" ? "[S]" : "[P]";
+  const proto = formatPlatformShortTag(opp.protocol);
   const parts: string[] = [];
   parts.push(`PT ${formatPct(opp.effectiveApy)}`);
   parts.push(`LP ${formatPct(opp.lpApy)}`);
@@ -5894,7 +6011,7 @@ export function formatCuratorOpportunityCompact(opp: CuratorOpportunity, rank: n
     parts.push(`${opp.funding.perpSymbol} ${sign}${formatPct(Math.abs(opp.funding.annualizedPct))}/yr`);
   }
   const matchTag = opp.matchedWith
-    ? ` ↔ ${opp.matchedWith.protocol === "spectra" ? "[S]" : "[P]"} ${formatPct(opp.matchedWith.impliedApy)} (${opp.matchedWith.matchQuality})`
+    ? ` ↔ ${formatPlatformShortTag(opp.matchedWith.protocol)} ${formatPct(opp.matchedWith.impliedApy)} (${opp.matchedWith.matchQuality})`
     : "";
   const warnTag = opp.warnings.length > 0 ? ` ⚠${opp.warnings.length}` : "";
   return `  #${rank} ${proto} ${opp.name} | ${opp.chain} | ${parts.join(" | ")} | TVL ${formatUsd(opp.tvlUsd)} | ${opp.daysToMaturity}d${matchTag}${warnTag}`;
@@ -5902,7 +6019,7 @@ export function formatCuratorOpportunityCompact(opp: CuratorOpportunity, rank: n
 
 /** Full detail for a single curator opportunity — shows Strategy Space building blocks. */
 export function formatCuratorOpportunity(opp: CuratorOpportunity, rank: number): string {
-  const proto = opp.protocol === "spectra" ? "Spectra" : "Pendle";
+  const proto = formatPlatformLabel(opp.protocol);
   const lines: string[] = [];
 
   lines.push(`  #${rank} [${proto}] ${opp.name} — ${opp.chain}`);
@@ -5942,7 +6059,9 @@ export function formatCuratorOpportunity(opp: CuratorOpportunity, rank: number):
   }
 
   if (opp.mvGrossEstimatePct != null) {
-    const ytFeeLabel = opp.protocol === "pendle" ? "5%" : "3%";
+    // PR-D: dispatch via metadata-driven helper instead of hardcoded `opp.protocol === "pendle" ? "5%" : "3%"`.
+    // Pendle gets `pendle.ytFeeRate.value`; Spectra gets `PROTOCOL_CONSTANTS.fees.ytToTreasury`.
+    const ytFeeLabel = formatPlatformYTFeePct(opp.protocol);
     lines.push(`      MV est:   ~${formatPct(opp.mvGrossEstimatePct)} gross (LP + 30% variable APR, net of ${ytFeeLabel} YT fee)`);
   }
 
@@ -5999,7 +6118,7 @@ export function formatCuratorOpportunity(opp: CuratorOpportunity, rank: number):
 
   // Cross-protocol match
   if (opp.matchedWith) {
-    const mProto = opp.matchedWith.protocol === "spectra" ? "Spectra" : "Pendle";
+    const mProto = formatPlatformLabel(opp.matchedWith.protocol);
     lines.push(`    ↔ Matched with [${mProto}] ${opp.matchedWith.name}: Impl ${formatPct(opp.matchedWith.impliedApy)} | LP ${formatPct(opp.matchedWith.lpApy)} | ${opp.matchedWith.matchQuality} match (${opp.matchedWith.maturityGapDays}d gap)`);
   }
 
@@ -6046,12 +6165,20 @@ export function formatCuratorScanResults(
   lines.push(`  Scope: Spectra + Pendle (cross-protocol)`);
   if (assetFilter) lines.push(`  Asset: ${assetFilter}`);
 
-  const spectraCount = opps.filter(o => o.protocol === "spectra").length;
-  const pendleCount = opps.filter(o => o.protocol === "pendle").length;
+  // PR-D: groupBy(opp.protocol) instead of two hardcoded filter().length calls.
+  // When a 3rd platform appears, it appears in the counts automatically — no code edit.
+  const protocolCounts = new Map<string, number>();
+  for (const o of opps) {
+    protocolCounts.set(o.protocol, (protocolCounts.get(o.protocol) ?? 0) + 1);
+  }
+  const countLabels: string[] = [];
+  for (const [platform, count] of protocolCounts) {
+    countLabels.push(`${count} ${formatPlatformLabel(platform)}`);
+  }
   const truncNote = totalBeforeTruncation != null && totalBeforeTruncation > opps.length
     ? ` (showing top ${opps.length} of ${totalBeforeTruncation})`
     : "";
-  lines.push(`  Results: ${opps.length} (${spectraCount} Spectra, ${pendleCount} Pendle)${truncNote} | Max Impact: ${formatPct(maxImpactPct)}`);
+  lines.push(`  Results: ${opps.length} (${countLabels.join(", ")})${truncNote} | Max Impact: ${formatPct(maxImpactPct)}`);
   if (failedChains.length > 0) lines.push(`  Failed chains: ${failedChains.join(", ")}`);
   lines.push(``);
 
@@ -6107,7 +6234,7 @@ export function formatCuratorScanResults(
   lines.push(`--- Impact Accuracy ---`);
   lines.push(`  ⚠ Effective APY is a CONSERVATIVE LOWER BOUND.`);
   lines.push(`  Spectra: constant-product estimate. Curve StableSwap-NG is more efficient — real APY typically 30-60% higher.`);
-  if (pendleCount > 0) {
+  if ((protocolCounts.get("pendle") ?? 0) > 0) {
     lines.push(`  Pendle: logit AMM model (scalarRoot=50, conservative). Real impact likely lower.`);
   }
   lines.push(`  → Verify: spectra_quote_trade(chain, pt_address, amount, "buy") for exact on-chain Curve quotes.`);

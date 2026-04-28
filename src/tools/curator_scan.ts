@@ -43,6 +43,7 @@ import {
   formatCuratorOpportunityCompact,
   getEffectiveLiquidityUsd,
   formatPrescriptiveObservationBoundary,
+  getPlatformYTFeeRate,
 } from "../formatters.js";
 import type { BoostInfo } from "../formatters.js";
 
@@ -524,12 +525,26 @@ Use spectra_get_curator_dashboard for operational monitoring of an existing Meta
         // ================================================================
         // PHASE 3.5: MetaVault gross estimate
         // ================================================================
-        // Conservative estimate: LP APY + 30% of variable APR (YT compounding, net of protocol YT fee)
+        // Conservative estimate: LP APY + 30% of variable APR (YT compounding, net of protocol YT fee).
+        // PR-D: dispatch via metadata-driven helper instead of `opp.protocol === "pendle" ? 0.05 : 0.03`.
+        //
+        // Diverger fix (Lens 2 audit, 2026-04-28): if the platform has no known YT fee rate,
+        // we SKIP the mvGrossEstimatePct calculation rather than silently inheriting Spectra's
+        // 3%. Falling back to Spectra's rate would silently lie about an unmapped platform's
+        // economics — the exact "0% YT fee lie" pattern the spec explicitly forbids (BL-1).
+        // Render-side will see `mvGrossEstimatePct == null` and omit the MV est line entirely,
+        // which is honest signal that the calculation can't be trusted for this platform.
+        //
+        // When a 3rd platform with known YT fee arrives: add a metadata entry with `ytFeeRate`
+        // populated → this branch picks it up automatically (one row, no consumer edit).
         for (const opp of opportunities) {
           if (opp.lpApy > 0 && opp.variableApr > 0) {
-            const ytFee = opp.protocol === "pendle" ? 0.05 : 0.03; // Pendle 5%, Spectra 3%
-            const netYtBoost = opp.variableApr * 0.3 * (1 - ytFee);
-            opp.mvGrossEstimatePct = opp.lpApy + netYtBoost;
+            const ytFee = getPlatformYTFeeRate(opp.protocol);
+            if (ytFee !== undefined) {
+              const netYtBoost = opp.variableApr * 0.3 * (1 - ytFee);
+              opp.mvGrossEstimatePct = opp.lpApy + netYtBoost;
+            }
+            // else: leave mvGrossEstimatePct undefined — caller renders no MV est line.
           }
           // YT exposure signal: variable APR significantly exceeds implied fixed rate
           if (opp.variableApr > opp.impliedApy * 2 && opp.impliedApy > 0) {
