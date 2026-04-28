@@ -829,6 +829,11 @@ Pendle externals are NOT yet probed in this slice.`,
         // This surfaces PENDLE incentives, LP APY breakdown, liquidity, and volume
         // that the Spectra API doesn't carry for cross-protocol positions.
         const pendleEnrichment = new Map<string, { swapFeeApy: number; pendleApy: number; impliedApy: number; aggregatedApy: number; maxBoostedApy: number; liquidity: number; tvl: number; volume: number }>();
+        // PR-E (2026-04-28) note: this `protocol` field is the LOCAL dashboard
+        // classification (`"Spectra" | "Pendle" | "Unknown"` per line 773), NOT the
+        // schema-derived API field. PR-E parse-time normalization affects
+        // `externalPositions[].protocol` and `pt.ibt.protocol`, not this local label
+        // namespace. Capital-P stays correct here.
         const pendlePositions = positions.filter(p => p.protocol === "Pendle" && p.poolAddress);
         if (pendlePositions.length > 0) {
           const pendleResults = await Promise.allSettled(
@@ -1104,6 +1109,9 @@ Pendle externals are NOT yet probed in this slice.`,
 
         // Pendle manual rollover warnings
         for (const pos of positions) {
+          // Note (PR-E): this is the LOCAL dashboard classification (capital-P), not
+          // the schema-normalized API field. See line 832 comment for the namespace
+          // distinction.
           if (pos.protocol === "Pendle" && !pos.expired && pos.daysToMaturity <= 30) {
             actionItems.push(`[PENDLE ROLLOVER] ${pos.symbol} matures in ${pos.daysToMaturity}d — requires manual rollover (MetaVault auto-roll does not cover Pendle positions)`);
           }

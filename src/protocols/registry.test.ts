@@ -206,6 +206,29 @@ describe("normalizeProtocolName — display-name → registry-key shape", () => 
   it("trims tab and newline whitespace before alias lookup", () => {
     assert.equal(normalizeProtocolName("\tAvant\n"), "avant");
   });
+
+  // Dot-handling — PR-E (April 28, 2026). The original regex `/\s+/g` did NOT
+  // replace dots. An API casing shift like "Ether.Fi" (capital F) would
+  // lowercase-fold to "ether.fi" (literal dot) and miss the registered key
+  // "ether_fi". Caught by Diverger (April 27). Extended to `/[\s.]+/g`.
+
+  it("handles dot-containing display names via fallback regex (Ether.Fi capital F)", () => {
+    assert.equal(normalizeProtocolName("Ether.Fi"), "ether_fi");
+  });
+
+  it("collapses multiple consecutive dots to a single underscore", () => {
+    assert.equal(normalizeProtocolName("a..b"), "a_b");
+  });
+
+  it("collapses mixed dots-and-spaces to a single underscore", () => {
+    assert.equal(normalizeProtocolName("Foo. Bar"), "foo_bar");
+  });
+
+  // Existing alias preserved: "Ether.fi" (lowercase f) hits the alias map,
+  // not the regex fallback. Both paths converge on "ether_fi".
+  it("preserves Ether.fi (lowercase f) alias-map path", () => {
+    assert.equal(normalizeProtocolName("Ether.fi"), "ether_fi");
+  });
 });
 
 describe("PROTOCOL_NAME_ALIASES — shape", () => {

@@ -42,6 +42,13 @@
 // =============================================================================
 
 import { z } from "zod";
+// PR-E of hardcode-vs-generalize-spec.md (2026-04-28): parse-time normalization
+// of protocol display-name → registry-key via the existing
+// `normalizeProtocolName` function. Applied at every `protocol: z.string()`
+// boundary so downstream consumers see lowercase/aliased keys (e.g. "pendle"
+// not "Pendle"). Dissolves the capital-P drift class without each consumer
+// having to remember to call normalize.
+import { normalizeProtocolName } from "../protocols/registry.js";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Primitives
@@ -209,6 +216,16 @@ const PositionSchema = z
     underlying: TokenSchema.optional(),
     ibt: TokenSchema.extend({
       apr: ApySchema.optional(),
+      // NB (PR-E audit): kept as raw `z.string()` — NOT transformed.
+      // `pos.ibt.protocol` is consumed at `formatters.ts:3919` as the HUMAN-
+      // READABLE upstream label ("Upstream: Pendle" not "Upstream: pendle").
+      // The PR5 comment at formatters.ts:3897-3901 documents the intent: the
+      // audience matches against external docs / DeFiLlama / protocol-team
+      // conversations using the canonical display name. Normalization for
+      // registry lookup happens INLINE at the consumer
+      // (`normalizeProtocolName(protoRaw)` at line 3913). Only the
+      // `ExternalPositionSchema.protocol` field — which is registry-key
+      // context, never displayed raw — gets parse-time transform.
       protocol: z.string().optional(),
       rate: z.string().optional(),
       spotRate: z.string().optional(),
@@ -312,7 +329,15 @@ const ModifierSchema = z
 
 export const ExternalPositionSchema = z
   .object({
-    protocol: z.string().min(1),
+    // PR-E: parse-time normalize so engine.ts + consumer migrations see lowercase keys
+    // ("pendle" not "Pendle"; "ether_fi" not "Ether.Fi"). Dissolves the capital-P
+    // drift class. `.min(1)` enforced AFTER normalize via refinement to keep min-1
+    // requirement intact (a normalized empty would still throw).
+    protocol: z
+      .string()
+      .min(1)
+      .transform(normalizeProtocolName)
+      .refine((s) => s.length > 0, { message: "protocol must normalize to non-empty key" }),
     chainId: z.number().optional(),
     valueUsd: z.number().optional(),
     updatedAt: z.number().optional(),

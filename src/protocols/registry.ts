@@ -97,21 +97,23 @@ export const PROTOCOL_NAME_ALIASES: Record<string, string> = {
  *   2. Empty (or whitespace-only) → return `""`. Caller's `getMeta` falls through
  *      to `_unknown`.
  *   3. Exact match in PROTOCOL_NAME_ALIASES (handles multi-word + special chars).
- *   4. Lowercase + spaces-to-underscores fallback.
+ *   4. Lowercase + spaces/dots-to-underscores fallback.
  *
  * Dissolution: when a fixture surfaces a value not in the alias map AND the
- * lowercased version doesn't match a registry entry, add an explicit alias
- * here. metadata.ts:188-189 documents the 7-day prose dissolution intent;
- * runtime telemetry for alias-map drift is not yet wired (deferred to PR5).
+ * lowercased+normalized version doesn't match a registry entry, add an explicit
+ * alias here. metadata.ts dissolution prose documents 7-day intent; runtime
+ * telemetry for alias-map drift is not yet wired.
  *
- * Known fragility (deferred to PR5 ship-time): the lowercase-fallback uses
- * `replace(/\s+/g, "_")` only — it does NOT replace dots. An API casing shift
- * like `"Ether.Fi"` (capital F) would lowercase-fold to `"ether.fi"` (literal
- * dot) and miss the registered key `"ether_fi"`. Caught by Diverger (April 27).
+ * Dot-handling (PR-E of hardcode-vs-generalize-spec.md, 2026-04-28): the regex
+ * was extended from `/\s+/g` to `/[\s.]+/g` to handle API casing shifts like
+ * `"Ether.Fi"` (capital F) which would otherwise lowercase-fold to
+ * `"ether.fi"` (literal dot) and miss the registered key `"ether_fi"`. Multiple
+ * consecutive separators (any mix of spaces and dots) collapse to one
+ * underscore — `"Foo. Bar"` → `"foo_bar"`. Caught by Diverger (April 27).
  */
 export function normalizeProtocolName(displayName: string): string {
   const trimmed = displayName?.trim() ?? "";
   if (!trimmed) return "";
   if (PROTOCOL_NAME_ALIASES[trimmed]) return PROTOCOL_NAME_ALIASES[trimmed];
-  return trimmed.toLowerCase().replace(/\s+/g, "_");
+  return trimmed.toLowerCase().replace(/[\s.]+/g, "_");
 }
