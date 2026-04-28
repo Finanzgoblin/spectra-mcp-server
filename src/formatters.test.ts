@@ -3505,6 +3505,10 @@ import {
   formatPositionSummary,
   formatPoolSummary,
   formatPointsMultipliers,
+  formatClaimVsObserved,
+  isHighSlippage,
+  isLiquidityTrendBad,
+  vaultSizeAdjustedIdleThreshold,
 } from "./formatters.js";
 import { PROTOCOL_METADATA } from "./protocols/metadata.js";
 
@@ -5636,5 +5640,108 @@ describe("formatPointsMultipliers — render gallery contracts (shape-based)", (
     const out = formatPointsMultipliers(undefined, syntheticMeta, { isExpired: false, isInCooldown: false });
     assert.ok(out);
     assert.match(out!, /\[stale since \d{4}-\d{2}-\d{2}\]/);
+  });
+});
+
+// =============================================================================
+// PR-M: audit follow-up shape tests
+// =============================================================================
+//
+// PR-M consolidates findings from co-architect audit (2026-04-28):
+//   A1 — formatClaimVsObserved helper (drift annotation per spec §7)
+//   B1 — isHighSlippage / isLiquidityTrendBad / vaultSizeAdjustedIdleThreshold
+//        helpers from PR-K were dead (zero consumers); shape tests here pin
+//        the contract before consumer migration in next session.
+
+describe("formatClaimVsObserved — drift annotation contract (PR-M A1)", () => {
+  it("returns empty string when claimed === observed", () => {
+    assert.equal(formatClaimVsObserved("5%", "5%"), "");
+    assert.equal(formatClaimVsObserved(40, 40), "");
+  });
+
+  it("returns ` [CLAIMED:X, OBSERVED:Y]` annotation when values differ", () => {
+    const out = formatClaimVsObserved("5%", "4.7%");
+    assert.equal(out, " [CLAIMED:5%, OBSERVED:4.7%]");
+  });
+
+  it("coerces number → string consistently for both sides", () => {
+    const out = formatClaimVsObserved(40, 38);
+    assert.equal(out, " [CLAIMED:40, OBSERVED:38]");
+  });
+
+  it("renders type-mismatched values via String() coercion (string '40' === number 40)", () => {
+    // Documents the stringly-typed contract: `formatClaimVsObserved("40", 40)`
+    // treats them as equal because String(40) === "40". Caller is responsible
+    // for pre-formatting to display strings BEFORE comparison.
+    assert.equal(formatClaimVsObserved("40", 40), "");
+  });
+});
+
+describe("PR-K size/trend-relative companions — shape contracts (PR-M B1)", () => {
+  describe("isHighSlippage", () => {
+    it("returns false for zero / negative inputs (defensive)", () => {
+      assert.equal(isHighSlippage(0, 100_000), false);
+      assert.equal(isHighSlippage(10_000, 0), false);
+      assert.equal(isHighSlippage(-5_000, 100_000), false);
+    });
+
+    it("returns true when impact exceeds default 2% threshold (large entry on thin pool)", () => {
+      // estimatePriceImpact uses constant-product approx: amount / (2*pool).
+      // For amount=$50K on $100K pool: 50000/200000 = 25% impact > 2%.
+      assert.equal(isHighSlippage(50_000, 100_000), true);
+    });
+
+    it("returns false when impact below default 2% threshold (small entry on deep pool)", () => {
+      // amount=$1K on $1M pool: 1000/2000000 = 0.05% impact < 2%.
+      assert.equal(isHighSlippage(1_000, 1_000_000), false);
+    });
+
+    it("respects custom maxImpactPct override", () => {
+      // Same inputs, but allow up to 30% impact → returns false.
+      assert.equal(isHighSlippage(50_000, 100_000, 30), false);
+    });
+  });
+
+  describe("isLiquidityTrendBad", () => {
+    it("returns false when sevenDayAgoUsd is zero (no baseline)", () => {
+      assert.equal(isLiquidityTrendBad(50_000, 0), false);
+    });
+
+    it("returns true when liquidity dropped > 30% (default threshold)", () => {
+      // 1M → 500K = 50% drop, > 30%
+      assert.equal(isLiquidityTrendBad(500_000, 1_000_000), true);
+    });
+
+    it("returns false when liquidity dropped ≤ 30%", () => {
+      // 1M → 800K = 20% drop
+      assert.equal(isLiquidityTrendBad(800_000, 1_000_000), false);
+    });
+
+    it("returns false when liquidity grew (negative drop)", () => {
+      assert.equal(isLiquidityTrendBad(1_500_000, 1_000_000), false);
+    });
+
+    it("respects custom dropPctThreshold override", () => {
+      // 20% drop with threshold of 10 → fires
+      assert.equal(isLiquidityTrendBad(800_000, 1_000_000, 10), true);
+    });
+  });
+
+  describe("vaultSizeAdjustedIdleThreshold", () => {
+    it("returns 30 for vaults under $1M (small-vault tolerance)", () => {
+      assert.equal(vaultSizeAdjustedIdleThreshold(500_000), 30);
+      assert.equal(vaultSizeAdjustedIdleThreshold(0), 30);
+    });
+
+    it("returns 20 for vaults $1M-$10M (default IDLE_LIQUIDITY_WARN_PCT)", () => {
+      assert.equal(vaultSizeAdjustedIdleThreshold(1_000_000), 20);
+      assert.equal(vaultSizeAdjustedIdleThreshold(5_000_000), 20);
+      assert.equal(vaultSizeAdjustedIdleThreshold(9_999_999), 20);
+    });
+
+    it("returns 10 for vaults > $10M (institutional tightness)", () => {
+      assert.equal(vaultSizeAdjustedIdleThreshold(10_000_000), 10);
+      assert.equal(vaultSizeAdjustedIdleThreshold(100_000_000), 10);
+    });
   });
 });

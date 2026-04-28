@@ -136,6 +136,9 @@ export interface MaturityCtx {
   symbol: string;
   daysToMaturity: number;
   meta: ProtocolMeta;
+  /** Optional vault-side fields consumed by `outflows` / future templates. */
+  idleUsd?: number;
+  idlePct?: number;
 }
 
 /**
@@ -187,12 +190,19 @@ export function formatMaturityActionItem(
         case "auto":
           return `${prefix} ${symbol} auto-rolled.`;
         case "redeem_to_underlying": {
-          const floor = meta.stressSettlement.settlementWindow.typical.value;
-          const ceiling = meta.stressSettlement.settlementWindow.ceiling;
+          // PR-M (B4 fix): use `floor.value` when present (strict minimum cooldown
+          // per protocols-metadata-spec SU-2 SettlementWindow semantics). Fall back
+          // to `typical.value` (interpreted nominal-path) when no floor declared.
+          // Pre-PR-M used typical unconditionally — currently safe because Avant's
+          // typical=floor=7, but latent bug if a future protocol declares
+          // `typical: InterpretedValue<10>` over `floor: SourcedValue<7>`.
+          const sw = meta.stressSettlement.settlementWindow;
+          const cooldownDays = sw.floor?.value ?? sw.typical.value;
+          const ceiling = sw.ceiling;
           const ceilingNote = ceiling?.value === "unknown"
             ? `; ceiling unknown under queue stress (verify head orderId before promising depositor exit)`
             : ``;
-          return `${prefix} ${symbol} matured. Floor ${floor}d cooldown${ceilingNote}.`;
+          return `${prefix} ${symbol} matured. Floor ${cooldownDays}d cooldown${ceilingNote}.`;
         }
         case "manual_to_successor":
           return `${prefix} ${symbol} matured. Redeem and reallocate to successor PT.`;
@@ -210,6 +220,19 @@ export function formatMaturityActionItem(
       return `${prefix} ${symbol} expires in ${daysToMaturity}d. ${rolloverPrelude(meta)}`;
     case "upcoming":
       return `${prefix} ${symbol} expires in ${daysToMaturity}d.`;
+    case "outflows": {
+      // PR-M (A4 fix): closes the spec §5 gap — `[OUTFLOWS]` was declared in
+      // ACTION_ITEM_PREFIXES but had no template body, so consumers fell through
+      // to the default `${prefix} ${symbol}` rendering. Per spec example: vault
+      // unallocated ≥ IDLE_LIQUIDITY_WARN_PCT → emit pct + idle USD prose.
+      // ctx.idleUsd / ctx.idlePct are optional inputs; render gracefully when absent.
+      const pctPart = ctx.idlePct !== undefined ? `${ctx.idlePct.toFixed(0)}% ` : "";
+      const usdPart = ctx.idleUsd !== undefined ? `(${ctx.idleUsd.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })} idle)` : "";
+      const body = pctPart || usdPart
+        ? `vault unallocated ${pctPart}${usdPart}`.trim()
+        : `vault unallocated capital threshold exceeded`;
+      return `${prefix} ${body}; review depositor retention.`;
+    }
     default:
       return `${prefix} ${symbol}`;
   }

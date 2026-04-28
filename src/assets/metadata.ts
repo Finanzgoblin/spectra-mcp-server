@@ -51,6 +51,20 @@ export interface AssetMeta {
 
 // Centralized source citations — these are well-known public tickers; the
 // classification is ours but the inputs are publicly verifiable.
+//
+// Provenance laxity disclosure (PR-M, Hyperyellow audit B3 finding,
+// 2026-04-28): every entry's `sourceUrl` points to a CoinGecko CATEGORY page
+// (e.g., the stablecoins category), not to the specific token's CoinGecko
+// page. So `srcClass("stable", COINGECKO_STABLECOINS)` for `USDU` claims the
+// stable class without proving USDU is actually listed on that category
+// page. This is a known shape-vs-instance gap: the URL proves "the
+// stablecoin category exists" but not "USDU is in it." Acceptable for
+// shape-registry purposes (the helpers consume `class.value`, not
+// `sourceUrl`); flagged here so future verifiers can upgrade specific
+// entries to specific-token URLs when an entry becomes load-bearing for
+// a stakeholder claim. Trigger: when a curator/protocol-team disputes an
+// asset's classification, upgrade THAT entry's sourceUrl to its
+// per-token page.
 const COINGECKO_STABLECOINS = "https://www.coingecko.com/en/categories/stablecoins";
 const COINGECKO_LST = "https://www.coingecko.com/en/categories/liquid-staking-tokens";
 const COINGECKO_LRT = "https://www.coingecko.com/en/categories/liquid-restaking-tokens";

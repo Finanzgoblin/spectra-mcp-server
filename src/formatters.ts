@@ -5451,11 +5451,47 @@ export function isLiquidityTrendBad(
  *   < $1M:    30% idle threshold (small-vault tolerance)
  *   $1M-$10M: 20% (the absolute default — IDLE_LIQUIDITY_WARN_PCT)
  *   > $10M:   10% (institutional-scale demands tighter)
+ *
+ * Provenance [InterpretedValue]: the 1M / 10M / 30 / 20 / 10 numbers are
+ * builder intuitions, NOT externally sourced — Hyperyellow co-architect audit
+ * (PR-M, 2026-04-28) flagged that this codebase enforces SourcedValue/
+ * InterpretedValue everywhere else but bypassed it here. The intuition rests
+ * on operational-drag arithmetic: at $1M AUM a $1K rebalance gas cost is 10
+ * basis points; at $10M it's 1 bp; at $50M it's 0.2 bp — the same idle
+ * fraction stings small vaults proportionally more. Dissolution: re-evaluate
+ * when a curator surfaces evidence the breakpoints misclassify.
  */
 export function vaultSizeAdjustedIdleThreshold(vaultTvlUsd: number): number {
   if (vaultTvlUsd < 1_000_000) return 30;
   if (vaultTvlUsd < 10_000_000) return 20;
   return 10;
+}
+
+/**
+ * Render a `[CLAIMED:X, OBSERVED:Y]` drift annotation per spec §7 (PR-M A1).
+ *
+ * The pattern: when an API field claims a value but on-chain (or other
+ * authoritative) observation disagrees, render BOTH so the reader can resolve
+ * the discrepancy. Used by points-multiplier rendering when on-chain rewards
+ * data contradicts metadata.amount, and by ytFeeRate rendering when verifier
+ * surfaces a fee differing from `meta.ytFeeRate.value` (P7-NTH-9).
+ *
+ * Returns `""` when claimed === observed (no drift to annotate); returns the
+ * suffix annotation otherwise (caller appends to its render line).
+ *
+ * The helper is intentionally type-loose (string | number) — the rendered
+ * representation is the contract, not the underlying type. Callers format
+ * their values to display strings BEFORE passing in (e.g., `formatPct(0.05)`
+ * → "5%") so the helper doesn't need to know about percentage semantics.
+ */
+export function formatClaimVsObserved(
+  claimed: string | number,
+  observed: string | number,
+): string {
+  const claimedStr = String(claimed);
+  const observedStr = String(observed);
+  if (claimedStr === observedStr) return "";
+  return ` [CLAIMED:${claimedStr}, OBSERVED:${observedStr}]`;
 }
 
 export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {

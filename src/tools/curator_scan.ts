@@ -45,6 +45,7 @@ import {
   formatPrescriptiveObservationBoundary,
   getPlatformYTFeeRate,
   CROSS_TOOL_THRESHOLDS,
+  isHighSlippage,
 } from "../formatters.js";
 // PR-A: asset registry for class queries (was inline `STABLES = new Set(...)`).
 import { isStable } from "../assets/metadata.js";
@@ -231,7 +232,15 @@ Use spectra_get_curator_dashboard for operational monitoring of an existing Meta
             const warnings: string[] = [];
             if (days < 14) warnings.push("Very short maturity (<14d)");
             else if (days < 30) warnings.push("Short maturity (<30d)");
+            // Absolute floor: pool too thin in dollar terms.
             if (poolLiqUsd < CROSS_TOOL_THRESHOLDS.LOW_LIQUIDITY_USD) warnings.push("Low liquidity (<$50K)");
+            // Size-relative slippage check (PR-M B1: wires isHighSlippage helper from PR-K).
+            // Even when poolLiqUsd ≥ $50K floor, a curator-scale entry (capital_usd) may
+            // still produce > 2% price impact — the absolute floor under-warns at scale.
+            // Suppressed when LOW_LIQUIDITY_USD already fired (avoid double-warn).
+            else if (isHighSlippage(capital_usd, poolLiqUsd)) {
+              warnings.push(`High slippage at your size (>${formatPct(2)} impact at ${formatUsd(capital_usd)} entry on ${formatUsd(poolLiqUsd)} pool)`);
+            }
             if (!bestIsLp && impactPct > 2) warnings.push(`High entry impact (${formatPct(impactPct)})`);
             if (effectiveApy < 0 && !bestIsLp) warnings.push("Negative effective APY");
 
