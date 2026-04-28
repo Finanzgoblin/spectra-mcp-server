@@ -36,7 +36,7 @@ import {
   matchByAssetAndMaturity,
   formatMetavaultStrategy,
   formatCuratorDashboard,
-  CURATOR_DASHBOARD_THRESHOLDS,
+  CROSS_TOOL_THRESHOLDS,
   formatObservationCoverage,
   pendleDaysToMaturity,
   formatPendleMarketCompact,
@@ -1824,7 +1824,7 @@ describe("formatCuratorDashboard — protocol tags", () => {
     assert.ok(result.includes("Capital state:"), "Capital state line precondition");
     assert.ok(
       result.includes('"unallocated" is point-in-time'),
-      `temporal boundary note must emit when unallocated >= ${CURATOR_DASHBOARD_THRESHOLDS.TEMPORAL_BOUNDARY_UNALLOC_PCT}%; got first 600 chars: ${result.slice(0, 600)}`,
+      `temporal boundary note must emit when unallocated >= ${CROSS_TOOL_THRESHOLDS.TEMPORAL_BOUNDARY_UNALLOC_PCT}%; got first 600 chars: ${result.slice(0, 600)}`,
     );
   });
 
@@ -1841,7 +1841,7 @@ describe("formatCuratorDashboard — protocol tags", () => {
     if (result.includes("Capital state:")) {
       assert.ok(
         !result.includes('"unallocated" is point-in-time'),
-        `temporal note must be suppressed when unallocated < ${CURATOR_DASHBOARD_THRESHOLDS.TEMPORAL_BOUNDARY_UNALLOC_PCT}%`,
+        `temporal note must be suppressed when unallocated < ${CROSS_TOOL_THRESHOLDS.TEMPORAL_BOUNDARY_UNALLOC_PCT}%`,
       );
     }
   });

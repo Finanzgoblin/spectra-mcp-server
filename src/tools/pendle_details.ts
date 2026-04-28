@@ -11,7 +11,7 @@ import { z } from "zod";
 import { PENDLE_CHAIN_IDS, PENDLE_CHAIN_NAMES, EVM_ADDRESS } from "../config.js";
 import type { MerklCampaign } from "../types.js";
 import { fetchPendleMarketDetail, fetchMerklCampaigns, lookupMerklCampaigns } from "../api.js";
-import { formatPendleMarketSummary, pendleDaysToMaturity, formatPct, formatUsd } from "../formatters.js";
+import { formatPendleMarketSummary, pendleDaysToMaturity, formatPct, formatUsd, CROSS_TOOL_THRESHOLDS } from "../formatters.js";
 
 const PENDLE_CHAIN_KEYS = Object.keys(PENDLE_CHAIN_IDS) as [string, ...string[]];
 const PENDLE_CHAIN_ENUM = z.enum(PENDLE_CHAIN_KEYS);
@@ -110,7 +110,7 @@ Use mv_compare_yield to compare this market with Spectra equivalents.`,
         }
 
         // Liquidity assessment
-        if (d.liquidity < 50000) {
+        if (d.liquidity < CROSS_TOOL_THRESHOLDS.LOW_LIQUIDITY_USD) {
           lines.push(`  ⚠ Low pool liquidity (${formatUsd(d.liquidity)}) — large trades will face significant slippage`);
         }
 

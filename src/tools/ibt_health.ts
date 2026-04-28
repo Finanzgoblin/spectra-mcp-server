@@ -10,7 +10,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork } from "../config.js";
 import { fetchSpectraPtValidated, fetchIbtConversionRate, fetchTokenDecimals, fetchSyExchangeRate, resolvePtFromPoolAddress } from "../api.js";
-import { formatUsd, formatPct, formatBalance } from "../formatters.js";
+import { formatUsd, formatPct, formatBalance, CROSS_TOOL_THRESHOLDS } from "../formatters.js";
 
 type Signal = "ok" | "caution" | "warning";
 
@@ -334,7 +334,7 @@ Use spectra_compare_yield for fixed-vs-variable rate analysis on the same PT.`,
               signal: "warning",
               lines: [`${formatUsd(poolLiqUsd)} — very thin, high slippage risk`],
             });
-          } else if (poolLiqUsd < 50_000) {
+          } else if (poolLiqUsd < CROSS_TOOL_THRESHOLDS.LOW_LIQUIDITY_USD) {
             checks.push({
               name: "Liquidity",
               signal: "caution",

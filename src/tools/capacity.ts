@@ -11,7 +11,7 @@ import { z } from "zod";
 import { CHAIN_ENUM, EVM_ADDRESS, resolveNetwork } from "../config.js";
 import { fetchSpectraPtValidated, fetchCurveCalcTokenAmount, amountToBigInt, resolvePtFromPoolAddress } from "../api.js";
 import type { SpectraPt } from "../types.js";
-import { buildQuoteFromPt, formatUsd, formatPct, formatDate, daysToMaturity, estimateLpDepositImpact, extractLpApyBreakdown } from "../formatters.js";
+import { buildQuoteFromPt, formatUsd, formatPct, formatDate, daysToMaturity, estimateLpDepositImpact, extractLpApyBreakdown, CROSS_TOOL_THRESHOLDS } from "../formatters.js";
 import { tryOnChainQuote } from "./quote.js";
 
 export function register(server: McpServer): void {
@@ -106,8 +106,8 @@ Use mv_check_ibt_health to verify the underlying IBT before deploying.`,
           return { content: [{ type: "text" as const, text: `PT price data unavailable for ${pt.name}. Cannot build capacity curve.` }], isError: true };
         }
 
-        // Generate geometric (log-spaced) capital tiers
-        const MIN_TIER_USD = 1_000;
+        // Generate geometric (log-spaced) capital tiers (PR-K: from CROSS_TOOL_THRESHOLDS)
+        const MIN_TIER_USD = CROSS_TOOL_THRESHOLDS.REAL_VALUE_USD;
         const minLog = Math.log10(MIN_TIER_USD);
         const maxLog = Math.log10(max_capital_usd);
         const tiers: number[] = [];

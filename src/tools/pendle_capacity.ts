@@ -16,6 +16,7 @@ import {
   formatPct,
   pendleDaysToMaturity,
   estimatePendlePriceImpact,
+  CROSS_TOOL_THRESHOLDS,
 } from "../formatters.js";
 
 const PENDLE_CHAIN_KEYS = Object.keys(PENDLE_CHAIN_IDS) as [string, ...string[]];
@@ -85,8 +86,8 @@ Use pendle_scan_opportunities for capital-aware ranking across all markets.`,
           };
         }
 
-        // Generate log-spaced capital tiers (deduplicate after rounding)
-        const MIN_TIER_USD = 1_000;
+        // Generate log-spaced capital tiers (deduplicate after rounding) (PR-K: from CROSS_TOOL_THRESHOLDS)
+        const MIN_TIER_USD = CROSS_TOOL_THRESHOLDS.REAL_VALUE_USD;
         const minLog = Math.log10(MIN_TIER_USD);
         const maxLog = Math.log10(max_capital_usd);
         let tiers: number[] = [];

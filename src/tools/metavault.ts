@@ -53,6 +53,7 @@ import {
   formatMetavaultList,
   formatCuratorDashboard,
   formatChainTruthFooter,
+  CROSS_TOOL_THRESHOLDS,
 } from "../formatters.js";
 import type { CuratorDashboardOpts, ChainTruthSummaryResult } from "../formatters.js";
 import { generateActionItems } from "../protocols/engine.js";
@@ -1102,7 +1103,7 @@ Pendle externals are NOT yet probed in this slice.`,
         const apyBase = mv.liveApy?.details?.base || 0;
         if (liveApyTotal > 0 && apyBase > 0) {
           const incentiveShare = (liveApyTotal - apyBase) / liveApyTotal;
-          if (incentiveShare > 0.7) {
+          if (incentiveShare > CROSS_TOOL_THRESHOLDS.INCENTIVE_SHARE_WARN_FRAC) {
             actionItems.push(`[INCENTIVE] ${(incentiveShare * 100).toFixed(0)}% of APY comes from incentive programs. Base yield is only ${formatPct(apyBase)}.`);
           }
         }

@@ -2688,8 +2688,8 @@ export function formatMorphoMarketHints(m: MorphoMarket, ptMaturityIndex?: Map<s
   const utilization = (s.utilization || 0) * 100;
   const availableLiq = getEffectiveLiquidityUsd(m);
 
-  // Capacity warning
-  if (availableLiq < 50000) {
+  // Capacity warning (PR-K: was inline `< 50000`)
+  if (availableLiq < CROSS_TOOL_THRESHOLDS.LOW_LIQUIDITY_USD) {
     lines.push(`  Hint: Available liquidity is ${formatUsd(availableLiq)} -- looping at scale could exhaust borrowable supply.`);
   }
 
@@ -5298,7 +5298,19 @@ export interface CuratorDashboardOpts {
  * the correct response is to re-examine the threshold, not suppress the
  * vault. The comment-at-site is the invitation to that re-examination.
  */
-export const CURATOR_DASHBOARD_THRESHOLDS = {
+/**
+ * PR-K of hardcode-vs-generalize-spec.md (2026-04-28): renamed from
+ * `CROSS_TOOL_THRESHOLDS` to `CROSS_TOOL_THRESHOLDS`. The original name
+ * implied curator-dashboard scope; the constants are consumed cross-tool
+ * (curator_scan, curator_portfolio, ibt_health, pendle_details, metavault),
+ * and the rename makes the actual scope honest.
+ *
+ * Extension (PR-K): 4 absolute constants + 3 size/trend-relative companion
+ * helpers per spec §5.6 (P7-BL-2). The absolute constants serve as defensible
+ * defaults; the relative helpers handle vault-size / order-size / trend-aware
+ * reasoning that pure absolute thresholds can't capture.
+ */
+export const CROSS_TOOL_THRESHOLDS = {
   /**
    * Minimum pct of TVL for expired-stuck and external buckets to render
    * in the Capital State decomposition line. Below this, the bucket is
@@ -5328,7 +5340,101 @@ export const CURATOR_DASHBOARD_THRESHOLDS = {
    * cross-chain transit can appear unallocated until indexer refresh).
    */
   TEMPORAL_BOUNDARY_UNALLOC_PCT: 20,
+
+  // ─── PR-K extensions (4 absolute constants) ──────────────────────────
+
+  /**
+   * Pool liquidity floor below which warnings fire. Below $50K, slippage on
+   * curator-scale entries (≥$10K) becomes prohibitive AND exits compound the
+   * problem under stress. Sites: curator_scan, ibt_health, pendle_details,
+   * formatters loop curve.
+   *
+   * Dissolution: when `isHighSlippage(amount, liq)` (size-relative) covers
+   * the use case end-to-end, the absolute floor can be deprecated.
+   */
+  LOW_LIQUIDITY_USD: 50_000,
+
+  /**
+   * Minimum-tier USD for capacity-bucket rendering in capacity tools.
+   * Below this, the bucket is treated as noise (sub-$1K orders aren't
+   * material to curator decisions).
+   */
+  REAL_VALUE_USD: 1_000,
+
+  /**
+   * Idle-liquidity-warn pct: separate from TEMPORAL_BOUNDARY_UNALLOC_PCT
+   * (which gates a temporal note). This one is the action-item warn level
+   * for vault-side reporting. Same numeric value today, distinct semantic.
+   */
+  IDLE_LIQUIDITY_WARN_PCT: 20,
+
+  /**
+   * Incentive-share warn fraction: when ≥70% of APY comes from incentive
+   * programs (vs. base yield), the position is incentive-dependent and the
+   * dashboard surfaces a [INCENTIVE] action-item.
+   */
+  INCENTIVE_SHARE_WARN_FRAC: 0.7,
 } as const;
+
+// ─── PR-K size/trend-relative companions (§5.6) ─────────────────────────
+//
+// These three helpers cover what absolute thresholds can't: vault-size
+// dependence (curators), order-size dependence (traders), trend-relative
+// dependence (LPs). Adding a new threshold here doesn't require touching
+// CROSS_TOOL_THRESHOLDS — they compose.
+
+/**
+ * Order-size-aware slippage check. Uses `estimatePriceImpact` from primitives
+ * to compute the impact of `amountUsd` against pool depth `poolLiqUsd`.
+ * Returns `true` when impact exceeds `maxImpactPct` (default 2%).
+ *
+ * Why size-relative: $50K LOW_LIQUIDITY_USD is correct for curator-scale entries
+ * (~$10K-$100K). For a $1K trader, sub-$50K liquidity may still be fine. For a
+ * $1M institutional entry, even $200K liquidity is too thin. The absolute
+ * floor is the proxy; this helper is the truth.
+ */
+export function isHighSlippage(
+  amountUsd: number,
+  poolLiqUsd: number,
+  maxImpactPct: number = 2,
+): boolean {
+  if (poolLiqUsd <= 0 || amountUsd <= 0) return false;
+  return estimatePriceImpact(amountUsd, poolLiqUsd) * 100 > maxImpactPct;
+}
+
+/**
+ * Trend-relative liquidity-trend check. Returns `true` when liquidity has
+ * dropped by more than `dropPctThreshold` (default 30%) over a 7-day window.
+ *
+ * Why trend-relative: LPs care about the trajectory, not just current depth.
+ * A $200K pool that fell from $1M last week is bleeding; a $200K pool that's
+ * been stable for months is healthy at that level. Absolute floors miss the
+ * direction.
+ */
+export function isLiquidityTrendBad(
+  currentUsd: number,
+  sevenDayAgoUsd: number,
+  dropPctThreshold: number = 30,
+): boolean {
+  if (sevenDayAgoUsd <= 0) return false;
+  return ((sevenDayAgoUsd - currentUsd) / sevenDayAgoUsd) * 100 > dropPctThreshold;
+}
+
+/**
+ * Vault-size-adjusted idle threshold (in pct). Smaller vaults can tolerate
+ * higher idle ratios because operational drag (gas, rebalance latency)
+ * disproportionately hurts small AUM; institutional-scale vaults must keep
+ * idle tight because the dollar cost compounds.
+ *
+ *   < $1M:    30% idle threshold (small-vault tolerance)
+ *   $1M-$10M: 20% (the absolute default — IDLE_LIQUIDITY_WARN_PCT)
+ *   > $10M:   10% (institutional-scale demands tighter)
+ */
+export function vaultSizeAdjustedIdleThreshold(vaultTvlUsd: number): number {
+  if (vaultTvlUsd < 1_000_000) return 30;
+  if (vaultTvlUsd < 10_000_000) return 20;
+  return 10;
+}
 
 export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
   const lines: string[] = [];
@@ -5585,13 +5691,13 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
     // threshold here would erase that contrast. Killed FU5 from the
     // 5-lens dialectic explicitly protected this.
     if (deployedUsd > 0) buckets.push(`${deployedPct.toFixed(1)}% Spectra LP`);
-    if (expiredLpUsd > 0 && expiredPct >= CURATOR_DASHBOARD_THRESHOLDS.CAPITAL_STATE_BUCKET_NOISE_PCT) {
+    if (expiredLpUsd > 0 && expiredPct >= CROSS_TOOL_THRESHOLDS.CAPITAL_STATE_BUCKET_NOISE_PCT) {
       buckets.push(`${expiredPct.toFixed(1)}% expired-stuck`);
     }
-    if (externalUsd > 0 && externalPct >= CURATOR_DASHBOARD_THRESHOLDS.CAPITAL_STATE_BUCKET_NOISE_PCT) {
+    if (externalUsd > 0 && externalPct >= CROSS_TOOL_THRESHOLDS.CAPITAL_STATE_BUCKET_NOISE_PCT) {
       buckets.push(`${externalPct.toFixed(1)}% external`);
     }
-    if (unallocated > 0 && idlePct >= CURATOR_DASHBOARD_THRESHOLDS.CAPITAL_STATE_UNALLOC_BUCKET_PCT) {
+    if (unallocated > 0 && idlePct >= CROSS_TOOL_THRESHOLDS.CAPITAL_STATE_UNALLOC_BUCKET_PCT) {
       buckets.push(`${idlePct.toFixed(1)}% unallocated`);
     }
     // Emit condition: ≥1 non-idle-non-LP bucket populated AND total buckets ≥2.
@@ -5626,7 +5732,7 @@ export function formatCuratorDashboard(opts: CuratorDashboardOpts): string {
       // Why 20% threshold: below this a reader is unlikely to form
       // false confidence from the label. Above it, the tool is surfacing
       // a load-bearing number and the caveat becomes ammunition-critical.
-      if (idlePct >= CURATOR_DASHBOARD_THRESHOLDS.TEMPORAL_BOUNDARY_UNALLOC_PCT) {
+      if (idlePct >= CROSS_TOOL_THRESHOLDS.TEMPORAL_BOUNDARY_UNALLOC_PCT) {
         lines.push(`  Note: "unallocated" is point-in-time — capital in pending timelock executions, cross-chain transit, or unrecognized external channels may appear here until the next indexer refresh.`);
       }
       lines.push(``);

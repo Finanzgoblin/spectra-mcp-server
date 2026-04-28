@@ -44,6 +44,7 @@ import {
   getEffectiveLiquidityUsd,
   formatPrescriptiveObservationBoundary,
   getPlatformYTFeeRate,
+  CROSS_TOOL_THRESHOLDS,
 } from "../formatters.js";
 import type { BoostInfo } from "../formatters.js";
 
@@ -228,7 +229,7 @@ Use spectra_get_curator_dashboard for operational monitoring of an existing Meta
             const warnings: string[] = [];
             if (days < 14) warnings.push("Very short maturity (<14d)");
             else if (days < 30) warnings.push("Short maturity (<30d)");
-            if (poolLiqUsd < 50000) warnings.push("Low liquidity (<$50K)");
+            if (poolLiqUsd < CROSS_TOOL_THRESHOLDS.LOW_LIQUIDITY_USD) warnings.push("Low liquidity (<$50K)");
             if (!bestIsLp && impactPct > 2) warnings.push(`High entry impact (${formatPct(impactPct)})`);
             if (effectiveApy < 0 && !bestIsLp) warnings.push("Negative effective APY");
 
@@ -299,7 +300,7 @@ Use spectra_get_curator_dashboard for operational monitoring of an existing Meta
             const warnings: string[] = [];
             if (days < 14) warnings.push("Very short maturity (<14d)");
             else if (days < 30) warnings.push("Short maturity (<30d)");
-            if (poolLiqUsd < 50000) warnings.push("Low liquidity (<$50K)");
+            if (poolLiqUsd < CROSS_TOOL_THRESHOLDS.LOW_LIQUIDITY_USD) warnings.push("Low liquidity (<$50K)");
             if (impactPct > 2) warnings.push(`High entry impact (${formatPct(impactPct)})`);
             if (effectiveApy < 0) warnings.push("Negative effective APY");
 
