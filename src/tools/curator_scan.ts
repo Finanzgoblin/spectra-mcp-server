@@ -46,6 +46,8 @@ import {
   getPlatformYTFeeRate,
   CROSS_TOOL_THRESHOLDS,
 } from "../formatters.js";
+// PR-A: asset registry for class queries (was inline `STABLES = new Set(...)`).
+import { isStable } from "../assets/metadata.js";
 import type { BoostInfo } from "../formatters.js";
 
 export function register(server: McpServer): void {
@@ -564,9 +566,10 @@ Use spectra_get_curator_dashboard for operational monitoring of an existing Meta
           fundingAvailable = fundingResult.available;
           const fundingMap = fundingResult.data;
           if (fundingMap.size > 0) {
-            const STABLES = new Set(["USDC", "USDT", "DAI", "FRAX", "GHO", "LUSD", "AUSD", "NUSD", "SNUSD", "SUSD", "USP", "USDU", "SUSDU", "CUSD", "REUSD", "USDAI", "APYUSD", "COREUSD", "COREUSDC", "VBUSDC", "VBUSDT"]);
+            // PR-A: dispatch via `isStable(symbol)` instead of inline 21-symbol Set.
+            // Adding a new stable = one row in `src/assets/metadata.ts`.
             for (const opp of opportunities) {
-              if (STABLES.has(opp.underlying.toUpperCase())) continue;
+              if (isStable(opp.underlying)) continue;
               const symbol = resolveHyperliquidSymbol(opp.underlying);
               if (!symbol) continue;
               const annualized = fundingMap.get(symbol);

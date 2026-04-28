@@ -33,6 +33,9 @@ import { getMeta, normalizeProtocolName } from "./protocols/registry.js";
 // PR-D of hardcode-vs-generalize-spec.md: Spectra's wrapper YT fee comes from config
 // (since spectra is the wrapper, not an externalPosition module in PROTOCOL_METADATA).
 import { PROTOCOL_CONSTANTS } from "./config.js";
+// PR-A of hardcode-vs-generalize-spec.md: asset registry replaces local DIRECT_ASSETS
+// and ONE_HOP_ASSETS Sets. New assets land via one row in `assets/metadata.ts`.
+import { isStartingPoint, isOneHop } from "./assets/metadata.js";
 import { computePerformanceMetrics, formatPerformanceMetricsOneLine } from "./performance.js";
 
 // Primitives now live in primitives.ts. Re-exported here for backward compat
@@ -212,19 +215,11 @@ export function formatPlatformLabel(platform: string): string {
 //   - sw-* wrappers add a hop that's invisible in the yield number
 //   - The same yield on different chains has different real cost to enter
 
-/** Common assets most wallets already hold or can acquire in one swap */
-const DIRECT_ASSETS = new Set([
-  "USDC", "USDT", "DAI", "USDC.e", "USDbC", "FRAX",
-  "WETH", "ETH", "wETH",
-  "WBTC", "BTC",
-]);
-
-/** Assets one swap away from common assets */
-const ONE_HOP_ASSETS = new Set([
-  "stETH", "wstETH", "cbETH", "rETH", "weETH", "ezETH", "rsETH",   // ETH LSTs
-  "sDAI", "sUSDe", "GHO", "crvUSD", "FRAX", "pyUSD", "USDG",       // stablecoins one swap
-  "CRV", "CVX", "AAVE", "COMP", "MKR",                               // governance one swap
-]);
+// PR-A of hardcode-vs-generalize-spec.md (2026-04-28): the local sets
+// `DIRECT_ASSETS` + `ONE_HOP_ASSETS` were dissolved into `src/assets/metadata.ts`
+// `ASSET_METADATA` registry. Consumers below now use `isStartingPoint(sym)`
+// for the 0-hop class and `isOneHop(sym)` for the 1-swap class. Adding a new
+// asset = one row in `ASSET_METADATA`, no edit at consumer sites.
 
 /** Gas regime by chain — rough order-of-magnitude cost for a complex tx */
 const GAS_REGIME: Record<string, "high" | "medium" | "low"> = {
@@ -271,11 +266,11 @@ export function inferEntryPath(
   let hops = 0;
   const steps: string[] = [];
 
-  // Step 0: Acquire the underlying
-  if (DIRECT_ASSETS.has(underlying)) {
+  // Step 0: Acquire the underlying (PR-A: routes via ASSET_METADATA)
+  if (isStartingPoint(underlying)) {
     // User likely has it or can get it trivially
     // Don't count as a hop — this is the starting point
-  } else if (ONE_HOP_ASSETS.has(underlying)) {
+  } else if (isOneHop(underlying)) {
     hops += 1;
     steps.push(`acquire ${underlying} (1 swap from common assets)`);
   } else {
@@ -301,7 +296,7 @@ export function inferEntryPath(
   // Decision: should we surface this?
   // Trivial entries (USDC → vault on L2) don't need a warning.
   // Complex entries (exotic asset + sw-wrapper + mainnet gas) do.
-  const isExoticUnderlying = !DIRECT_ASSETS.has(underlying) && !ONE_HOP_ASSETS.has(underlying);
+  const isExoticUnderlying = !isStartingPoint(underlying) && !isOneHop(underlying);
   const hasWrapper = !!baseIbtSymbol && ibt.startsWith("sw-");
   const isHighGas = gasRegime === "high";
 
