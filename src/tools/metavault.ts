@@ -59,7 +59,7 @@ import {
 // `[BRIDGE]` / `[INCENTIVE]` literals with central registry calls. The maturity
 // emit-sites in this file (lines ~1071-1077) are NOT migrated here; PR-B1
 // handles those with full rolloverPolicy-aware `formatMaturityActionItem`.
-import { formatActionItemPrefix } from "../action-items/types.js";
+import { formatActionItemPrefix, getMaturityCategory } from "../action-items/types.js";
 import type { CuratorDashboardOpts, ChainTruthSummaryResult } from "../formatters.js";
 import { generateActionItems } from "../protocols/engine.js";
 import type { TypedExternalPosition, ExternalChainTruthMap } from "../protocols/engine.js";
@@ -1070,16 +1070,30 @@ Pendle externals are NOT yet probed in this slice.`,
           }
         }
 
-        // Expiring positions
+        // Expiring positions (PR-B1: dispatch via getMaturityCategory + centralized prefix).
+        // Spectra-platform positions; auto-roll handled by the vault — distinct prose
+        // per tier preserved (rollover-prep / plan / monitor language); only the
+        // literal prefix string is now sourced from the central registry.
         for (const pos of positions) {
-          if (pos.expired) {
-            actionItems.push(`[EXPIRED] ${pos.symbol} has matured. Redeem and reallocate to a new pool.`);
-          } else if (pos.daysToMaturity <= 7) {
-            actionItems.push(`[URGENT] ${pos.symbol} expires in ${pos.daysToMaturity}d. Prepare rollover to next maturity.`);
-          } else if (pos.daysToMaturity <= 14) {
-            actionItems.push(`[SOON] ${pos.symbol} expires in ${pos.daysToMaturity}d. Plan rollover strategy.`);
-          } else if (pos.daysToMaturity <= 30) {
-            actionItems.push(`[UPCOMING] ${pos.symbol} expires in ${pos.daysToMaturity}d. Monitor for rollover timing.`);
+          // pos.expired comes from the dashboard layer pre-classification; treat as
+          // "already past maturity" regardless of pos.daysToMaturity sign-noise.
+          const cat = pos.expired
+            ? "expired"
+            : getMaturityCategory(pos.daysToMaturity);
+          switch (cat) {
+            case "expired":
+              actionItems.push(`${formatActionItemPrefix("expired")} ${pos.symbol} has matured. Redeem and reallocate to a new pool.`);
+              break;
+            case "urgent":
+              actionItems.push(`${formatActionItemPrefix("urgent")} ${pos.symbol} expires in ${pos.daysToMaturity}d. Prepare rollover to next maturity.`);
+              break;
+            case "soon":
+              actionItems.push(`${formatActionItemPrefix("soon")} ${pos.symbol} expires in ${pos.daysToMaturity}d. Plan rollover strategy.`);
+              break;
+            case "upcoming":
+              actionItems.push(`${formatActionItemPrefix("upcoming")} ${pos.symbol} expires in ${pos.daysToMaturity}d. Monitor for rollover timing.`);
+              break;
+            // status / others: silent — beyond upcoming horizon, no action item
           }
         }
 

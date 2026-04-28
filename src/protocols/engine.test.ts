@@ -283,8 +283,21 @@ describe("generateActionItems — Pendle maturity thresholds", () => {
     assert.deepEqual(generateActionItems(ext(7), nowMs), ["[PENDLE-EXT URGENT]"]);
   });
 
-  it("emits UPCOMING between urgent and upcoming (10 days)", () => {
-    assert.deepEqual(generateActionItems(ext(10), nowMs), ["[PENDLE-EXT UPCOMING]"]);
+  // PR-B1 of hardcode-vs-generalize-spec.md (R2-BL-3 fix, 2026-04-28):
+  // The previous implementation collapsed both 7-14d AND 14-30d into UPCOMING,
+  // losing the SOON tier signal. After PR-B1, 7-14d emits SOON; 14-30d emits
+  // UPCOMING. The 10-day case below was the canonical assertion that demonstrated
+  // the bug — now updated.
+  it("emits SOON between urgent and upcoming (10 days)", () => {
+    assert.deepEqual(generateActionItems(ext(10), nowMs), ["[PENDLE-EXT SOON]"]);
+  });
+
+  it("emits SOON at the soon-tier boundary (14 days)", () => {
+    assert.deepEqual(generateActionItems(ext(14), nowMs), ["[PENDLE-EXT SOON]"]);
+  });
+
+  it("emits UPCOMING just past the soon boundary (15 days)", () => {
+    assert.deepEqual(generateActionItems(ext(15), nowMs), ["[PENDLE-EXT UPCOMING]"]);
   });
 
   it("emits UPCOMING at the upcomingMax boundary (30 days)", () => {

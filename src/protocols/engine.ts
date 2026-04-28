@@ -23,6 +23,9 @@ import type {
   SettlementWindow,
 } from "./types.js";
 import { formatUsd, formatPct, formatDate } from "../primitives.js";
+// PR-B1: route maturity-tier classification through the centralized helper
+// instead of re-implementing the days-to-tier branching here.
+import { getMaturityCategory } from "../action-items/types.js";
 import { getVerifier } from "./verifier-registry.js";
 import type { ChainTruthMap } from "./verifier-types.js";
 
@@ -381,17 +384,21 @@ export function generateActionItems(
   const deltaDays = (tsSec - nowSec) / 86400;
 
   const t = ai.maturityThresholdsDays ?? {};
-  const urgent = t.urgent ?? 7;
-  const upcoming = t.upcoming ?? 14;
-  const upcomingMax = t.upcomingMax ?? 30;
-
   const tag = meta.label.toUpperCase();
 
-  if (deltaDays < 0) return [`[${tag}-EXT EXPIRED]`];
-  if (deltaDays <= urgent) return [`[${tag}-EXT URGENT]`];
-  if (deltaDays <= upcoming) return [`[${tag}-EXT UPCOMING]`];
-  if (deltaDays <= upcomingMax) return [`[${tag}-EXT UPCOMING]`];
-  return [];
+  // PR-B1 of hardcode-vs-generalize-spec.md (R2-BL-3 fix, 2026-04-28):
+  // 3-tier vocabulary was previously collapsed — both 7-14d and 14-30d
+  // emitted `[*-EXT UPCOMING]`, losing the SOON tier signal. Fixed to
+  // route URGENT → SOON → UPCOMING with distinct boundaries. Tests at
+  // engine.test.ts updated for the 10-day case (was UPCOMING, now SOON).
+  const cat = getMaturityCategory(deltaDays, t);
+  switch (cat) {
+    case "expired":  return [`[${tag}-EXT EXPIRED]`];
+    case "urgent":   return [`[${tag}-EXT URGENT]`];
+    case "soon":     return [`[${tag}-EXT SOON]`];
+    case "upcoming": return [`[${tag}-EXT UPCOMING]`];
+    default:         return [];
+  }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
