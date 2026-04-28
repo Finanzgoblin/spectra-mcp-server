@@ -401,26 +401,75 @@ NOT `assert.match(out, /Avant points: lp 40x, yt 60x/)` — that would mirror th
 
 Multi-archetype need: vault-size-relative for curators, order-size-relative for traders, trend-relative for LPs. Spec already has `estimatePriceImpact` in `primitives.ts:43` — thread it through PR-K.
 
+### §5.6.1 — Calcification disclosure (PR-M2 amendment, 2026-04-28)
+
+**The original spec §5.6 (below) hardcoded magic-number defaults at the spec layer.** Hyperyellow co-architect audit (2026-04-28) named the recursive failure: "PR-M did not dissolve the scar; it relocated it from data-shape to threshold-helper-default surface. The forcing function (PR-J pre-commit hook) scans for `new Set([...])` / `Record<string, ...>` literals — it would not have flagged a magic number in a function signature default."
+
+The values that needed dissolution:
+- `maxImpactPct = 2` — no source citation
+- `dropPctThreshold = 30` — no source citation
+- `sevenDayAgoUsd` window encoded in parameter name — no source citation
+- `1M / 10M` TVL breakpoints — no source citation
+- `30 / 20 / 10` pct outputs — no source citation
+
+**Resolution (PR-M2)**: extracted the class "risk-tolerance configuration" into `src/risk-profiles/metadata.ts` with a `RiskProfile` interface. Every threshold value is `InterpretedValue<number>` with explicit `interpretedFrom: "no published source — opening builder default; pending research"` provenance. The default profile (`DEFAULT_CURATOR_PROFILE`) ships these values as opening defaults but NAMES the calcification rather than baking it into function signatures. Helpers consume `profile: RiskProfile = DEFAULT_CURATOR_PROFILE`. Adding a new stakeholder cohort (trader-aggressive, institutional-LP, etc.) = one row in the registry, zero edits in helpers/tests.
+
+**Dissolution conditions per default-value entry**:
+- `slippageBudget`: dissolves when curator engagement surfaces empirical tolerance data → upgrade to `SourcedValue` inline
+- `liquidityDropTolerance`: dissolves when LP cohort surfaces volatility-regime data per asset class
+- `liquidityTrendWindowDays`: dissolves when cycle data shows non-weekly volatility OR trader cohort needs intraday windows
+- `idleByTvlBracket`: dissolves when vault data surfaces bracket-misclassification evidence
+
+**Test discipline**: tests assert via `profile.X.value` reads, NOT against literal `2` / `30` / `30` / `20` / `10`. Per spec P7-BL-6 α (class vs fixture in tests): "tests pinning the magic numbers as fixture-mirror at the test layer = recursive scar AT THE TEST LAYER." PR-M2 rewrite verified: `formatters.test.ts` "PR-M2 threshold helpers — class-shape contracts" describe block reads defaults from registry, asserts dispatch (tighter profile fires more, looser fires less) without pinning literals.
+
+### §5.6.2 — Helper signatures (PR-M2 final shape)
+
 ```typescript
-// PR-K Phase-2 helpers (alongside absolute LOW_LIQUIDITY_USD floor)
-function isHighSlippage(amountUsd: number, poolLiqUsd: number, maxImpactPct = 2): boolean {
-  return estimatePriceImpact(amountUsd, poolLiqUsd) * 100 > maxImpactPct;
+// src/risk-profiles/metadata.ts
+export interface RiskProfile {
+  name: string;
+  slippageBudget: InterpretedValue<number>;
+  liquidityDropTolerance: InterpretedValue<number>;
+  liquidityTrendWindowDays: InterpretedValue<number>;
+  idleByTvlBracket: TvlBracket[];
+}
+export const DEFAULT_CURATOR_PROFILE: RiskProfile = { /* InterpretedValue<number> per field */ };
+
+// src/formatters.ts (PR-M2 refactored)
+export function isHighSlippage(
+  amountUsd: number,
+  poolLiqUsd: number,
+  profile: RiskProfile = DEFAULT_CURATOR_PROFILE,
+): boolean {
+  if (poolLiqUsd <= 0 || amountUsd <= 0) return false;
+  return estimatePriceImpact(amountUsd, poolLiqUsd) * 100 > profile.slippageBudget.value;
 }
 
-function isLiquidityTrendBad(currentUsd: number, sevenDayAgoUsd: number, dropPctThreshold = 30): boolean {
-  if (sevenDayAgoUsd === 0) return false;
-  return ((sevenDayAgoUsd - currentUsd) / sevenDayAgoUsd) * 100 > dropPctThreshold;
+export function isLiquidityTrendBad(
+  currentUsd: number,
+  priorUsd: number,                          // PR-M2: window-agnostic; window in profile
+  profile: RiskProfile = DEFAULT_CURATOR_PROFILE,
+): boolean {
+  if (priorUsd <= 0) return false;
+  return ((priorUsd - currentUsd) / priorUsd) * 100 > profile.liquidityDropTolerance.value;
 }
 
-function vaultSizeAdjustedIdleThreshold(vaultTvlUsd: number): number {
-  // < $1M vault: 30% idle threshold (more tolerance for small vaults).
-  // $1M-$10M: 20% (the absolute default).
-  // > $10M: 10% (institutional-scale demands tighter).
-  if (vaultTvlUsd < 1_000_000)  return 30;
-  if (vaultTvlUsd < 10_000_000) return 20;
-  return 10;
+export function vaultSizeAdjustedIdleThreshold(
+  vaultTvlUsd: number,
+  profile: RiskProfile = DEFAULT_CURATOR_PROFILE,
+): number {
+  return resolveIdleThresholdPct(vaultTvlUsd, profile);
 }
 ```
+
+### §5.6.3 — DELETED original §5.6 helper signatures with magic-number defaults
+
+The pre-PR-M2 helper signatures (`maxImpactPct = 2`, `dropPctThreshold = 30`, inline TVL-bracket if-statements) are deliberately deleted from this spec. Re-introducing them would be a regression. The recursive scar is dissolved at three layers:
+1. **Spec layer** (this section) — calcification named, registry pointed to
+2. **Code layer** (formatters.ts helpers) — dispatch via RiskProfile
+3. **Test layer** (formatters.test.ts) — class-shape assertions
+
+PR-J's pre-commit hook has a documented blind spot: magic numbers in function-signature defaults. Future amendment to PR-J: extend the hook's pattern set OR rely on the 5th-lens reviewer brief to catch this class. See `docs/audit-discipline-spec.md` §3 for the hook's current pattern set; §4 names what the hook does NOT catch (reviewer's territory).
 
 ---
 

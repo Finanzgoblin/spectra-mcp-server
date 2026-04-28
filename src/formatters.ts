@@ -39,6 +39,15 @@ import { PROTOCOL_CONSTANTS } from "./config.js";
 import { isStartingPoint, isOneHop } from "./assets/metadata.js";
 // PR-B4: maturity-tier dispatch (Merkl campaign-end + dashboard urgency flags).
 import { getMaturityCategory } from "./action-items/types.js";
+// PR-M2 (recursive scar dissolution, 2026-04-28): risk-tolerance configuration
+// extracted to a class-shape registry. Helpers consume RiskProfile instead of
+// magic-number defaults; defaults are InterpretedValue<number> with explicit
+// "no source — pending research" provenance.
+import {
+  DEFAULT_CURATOR_PROFILE,
+  resolveIdleThresholdPct,
+  type RiskProfile,
+} from "./risk-profiles/metadata.js";
 import { computePerformanceMetrics, formatPerformanceMetricsOneLine } from "./performance.js";
 
 // Primitives now live in primitives.ts. Re-exported here for backward compat
@@ -5406,65 +5415,61 @@ export const CROSS_TOOL_THRESHOLDS = {
 // CROSS_TOOL_THRESHOLDS — they compose.
 
 /**
- * Order-size-aware slippage check. Uses `estimatePriceImpact` from primitives
- * to compute the impact of `amountUsd` against pool depth `poolLiqUsd`.
- * Returns `true` when impact exceeds `maxImpactPct` (default 2%).
+ * Order-size-aware slippage check. Returns `true` when entry impact exceeds
+ * the profile's `slippageBudget.value`.
  *
- * Why size-relative: $50K LOW_LIQUIDITY_USD is correct for curator-scale entries
- * (~$10K-$100K). For a $1K trader, sub-$50K liquidity may still be fine. For a
- * $1M institutional entry, even $200K liquidity is too thin. The absolute
- * floor is the proxy; this helper is the truth.
+ * PR-M2 (recursive scar dissolution): consumes `RiskProfile.slippageBudget`
+ * (an `InterpretedValue<number>` with explicit pending-research provenance)
+ * instead of a magic-number default in the function signature. Adding a new
+ * stakeholder cohort with different tolerance = one row in the risk-profiles
+ * registry, zero edits here.
  */
 export function isHighSlippage(
   amountUsd: number,
   poolLiqUsd: number,
-  maxImpactPct: number = 2,
+  profile: RiskProfile = DEFAULT_CURATOR_PROFILE,
 ): boolean {
   if (poolLiqUsd <= 0 || amountUsd <= 0) return false;
-  return estimatePriceImpact(amountUsd, poolLiqUsd) * 100 > maxImpactPct;
+  return estimatePriceImpact(amountUsd, poolLiqUsd) * 100 > profile.slippageBudget.value;
 }
 
 /**
- * Trend-relative liquidity-trend check. Returns `true` when liquidity has
- * dropped by more than `dropPctThreshold` (default 30%) over a 7-day window.
+ * Trend-relative liquidity check. Returns `true` when liquidity dropped by
+ * more than the profile's `liquidityDropTolerance.value` over the trend
+ * window (caller resolves the prior datapoint per the profile's
+ * `liquidityTrendWindowDays`).
  *
- * Why trend-relative: LPs care about the trajectory, not just current depth.
- * A $200K pool that fell from $1M last week is bleeding; a $200K pool that's
- * been stable for months is healthy at that level. Absolute floors miss the
- * direction.
+ * PR-M2: parameter `priorUsd` is intentionally window-agnostic — caller
+ * supplies the matching-window prior datapoint. The window is documented in
+ * the profile (`liquidityTrendWindowDays.value`) so a future trader-cohort
+ * profile with intraday windows doesn't require code changes here. Window
+ * was previously encoded in the parameter name (`sevenDayAgoUsd`) — that
+ * load-bearing identifier was the recursive-scar fingerprint at the API.
  */
 export function isLiquidityTrendBad(
   currentUsd: number,
-  sevenDayAgoUsd: number,
-  dropPctThreshold: number = 30,
+  priorUsd: number,
+  profile: RiskProfile = DEFAULT_CURATOR_PROFILE,
 ): boolean {
-  if (sevenDayAgoUsd <= 0) return false;
-  return ((sevenDayAgoUsd - currentUsd) / sevenDayAgoUsd) * 100 > dropPctThreshold;
+  if (priorUsd <= 0) return false;
+  return ((priorUsd - currentUsd) / priorUsd) * 100 > profile.liquidityDropTolerance.value;
 }
 
 /**
- * Vault-size-adjusted idle threshold (in pct). Smaller vaults can tolerate
- * higher idle ratios because operational drag (gas, rebalance latency)
- * disproportionately hurts small AUM; institutional-scale vaults must keep
- * idle tight because the dollar cost compounds.
+ * Vault-size-adjusted idle threshold (pct). Dispatches via the profile's
+ * `idleByTvlBracket` array — adding a new bracket is one row, no code edit.
  *
- *   < $1M:    30% idle threshold (small-vault tolerance)
- *   $1M-$10M: 20% (the absolute default — IDLE_LIQUIDITY_WARN_PCT)
- *   > $10M:   10% (institutional-scale demands tighter)
- *
- * Provenance [InterpretedValue]: the 1M / 10M / 30 / 20 / 10 numbers are
- * builder intuitions, NOT externally sourced — Hyperyellow co-architect audit
- * (PR-M, 2026-04-28) flagged that this codebase enforces SourcedValue/
- * InterpretedValue everywhere else but bypassed it here. The intuition rests
- * on operational-drag arithmetic: at $1M AUM a $1K rebalance gas cost is 10
- * basis points; at $10M it's 1 bp; at $50M it's 0.2 bp — the same idle
- * fraction stings small vaults proportionally more. Dissolution: re-evaluate
- * when a curator surfaces evidence the breakpoints misclassify.
+ * PR-M2: previously inlined the `1M / 10M / 30 / 20 / 10` literals at three
+ * `if` statements (the recursive-scar fingerprint). Now reads the same
+ * semantics from `profile.idleByTvlBracket`, which carries each bracket's
+ * threshold as an `InterpretedValue<number>` with explicit calcification
+ * disclosure.
  */
-export function vaultSizeAdjustedIdleThreshold(vaultTvlUsd: number): number {
-  if (vaultTvlUsd < 1_000_000) return 30;
-  if (vaultTvlUsd < 10_000_000) return 20;
-  return 10;
+export function vaultSizeAdjustedIdleThreshold(
+  vaultTvlUsd: number,
+  profile: RiskProfile = DEFAULT_CURATOR_PROFILE,
+): number {
+  return resolveIdleThresholdPct(vaultTvlUsd, profile);
 }
 
 /**
