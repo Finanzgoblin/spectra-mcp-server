@@ -97,6 +97,38 @@ export const PROTOCOL_METADATA: Record<string, ProtocolMeta> = {
     } satisfies SourcedValue<number>,
     shortTag: "[A]",
     rolloverPolicy: "redeem_to_underlying",
+    // Avant's points program (PR-L of hardcode-vs-generalize-spec.md, originating scar).
+    // LP positions earn 40x, YT holders earn 60x. The amounts are observed in Spectra's
+    // /metavaults response (e.g., gamisUSDC at 2026-04-22) and corroborated by Avant's
+    // points program announcements. Source attribution chain preserved per R2-BL-6
+    // (source.value === amount, zod-enforced). validUntil left undefined — Avant has not
+    // announced a campaign-end date for the program as of the verification date.
+    //
+    // Consumers fall back to this metadata via `formatPointsMultipliers` when position-side
+    // multipliers are missing (e.g., curators previewing entry without holding the position
+    // yet); rendering uses `[REFERENCE-ONLY]` prefix when position is expired/in-cooldown.
+    pointsMultipliers: [
+      {
+        program: "Avant points",
+        scope: "lp",
+        amount: 40,
+        source: {
+          value: 40,
+          sourceUrl: "https://docs.avantprotocol.com/avant-points",
+          sourceVerifiedOn: "2026-04-28",
+        },
+      },
+      {
+        program: "Avant points",
+        scope: "yt",
+        amount: 60,
+        source: {
+          value: 60,
+          sourceUrl: "https://docs.avantprotocol.com/avant-points",
+          sourceVerifiedOn: "2026-04-28",
+        },
+      },
+    ],
     // No actionItems — `updatedAt` on externalPositions[] is indexer-write time,
     // not submission time, so maturity thresholds cannot be computed honestly.
     observationBoundaries: {

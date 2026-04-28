@@ -3504,7 +3504,9 @@ import {
   hasPointsMultiplier,
   formatPositionSummary,
   formatPoolSummary,
+  formatPointsMultipliers,
 } from "./formatters.js";
+import { PROTOCOL_METADATA } from "./protocols/metadata.js";
 
 describe("formatMultipliers — Array | object union (PR12b core)", () => {
   it("returns null for undefined input", () => {
@@ -5497,5 +5499,113 @@ describe("formatMetavaultSummary — Phase 4 cross-PR fixture integration (gamis
     assert.match(out, /^  Governance: /m);
     assert.equal(/^  Governance \(\d+\): /m.test(out), false);
     assert.equal(/^  Pending \(/m.test(out), false);
+  });
+});
+
+// =============================================================================
+// PR-L: formatPointsMultipliers — shape-based tests against §5.5 render gallery
+// =============================================================================
+//
+// Discipline (P7-BL-6 α of hardcode-vs-generalize-spec.md): tests assert
+// against the SHAPE invariant, NOT against fixture-mirror literals like /40x/.
+// Values are read from PROTOCOL_METADATA.avant.pointsMultipliers and composed
+// into expected regexes — if Avant changes the program (40 → 45), the
+// formatter still works and the test still passes (because the contract is
+// shape, not value).
+//
+// The render gallery (spec §5.5) defines four contracts:
+//   (a) position-active object form  → "lp [Avant points {LP_AMT}x] | yt [Avant points {YT_AMT}x]"
+//   (b) position-active array form   → "Avant points {AMT}x"
+//   (c) position-empty active        → "Avant points: lp {LP_AMT}x, yt {YT_AMT}x (from metadata)"
+//   (d) position-empty expired       → "[REFERENCE-ONLY] Avant points: lp {LP_AMT}x, yt {YT_AMT}x — position expired/in-cooldown, points NOT accruing"
+describe("formatPointsMultipliers — render gallery contracts (shape-based)", () => {
+  // Reach into the registry instead of hardcoding 40 / 60 — when Avant changes
+  // their program, this test stays correct.
+  const avantMeta = (PROTOCOL_METADATA as any).avant;
+  const avantPm = avantMeta.pointsMultipliers;
+  const lpEntry = avantPm.find((p: any) => p.scope === "lp");
+  const ytEntry = avantPm.find((p: any) => p.scope === "yt");
+  const lpAmt = lpEntry.amount;
+  const ytAmt = ytEntry.amount;
+  const program = lpEntry.program;
+
+  it("(a) position-active object form: renders both lp + yt with brackets", () => {
+    const positionMultipliers = {
+      lp: [{ name: program, amount: lpAmt }],
+      yt: [{ name: program, amount: ytAmt }],
+    };
+    const out = formatPointsMultipliers(positionMultipliers, avantMeta, { isExpired: false, isInCooldown: false });
+    assert.ok(out, "expected non-null render");
+    // SHAPE: "lp [{program} {LP_AMT}x] | yt [{program} {YT_AMT}x]"
+    assert.match(out!, new RegExp(`lp \\[${program} ${lpAmt}x\\] \\| yt \\[${program} ${ytAmt}x\\]`));
+    // NOT mirror fixture: never assert /40x/ or /60x/ literally.
+  });
+
+  it("(b) position-active array form: renders inline", () => {
+    const positionMultipliers = [{ name: program, amount: lpAmt }];
+    const out = formatPointsMultipliers(positionMultipliers, avantMeta, { isExpired: false, isInCooldown: false });
+    assert.ok(out, "expected non-null render");
+    assert.match(out!, new RegExp(`${program} ${lpAmt}x`));
+  });
+
+  it("(c) position-empty active: falls back to metadata with '(from metadata)' suffix", () => {
+    const out = formatPointsMultipliers(undefined, avantMeta, { isExpired: false, isInCooldown: false });
+    assert.ok(out, "expected non-null render from metadata");
+    // SHAPE: "{program}: lp {LP_AMT}x, yt {YT_AMT}x (from metadata)"
+    assert.match(out!, new RegExp(`${program}: lp ${lpAmt}x, yt ${ytAmt}x \\(from metadata\\)`));
+  });
+
+  it("(d) position-empty expired: [REFERENCE-ONLY] prefix + accrual warning", () => {
+    const out = formatPointsMultipliers(undefined, avantMeta, { isExpired: true, isInCooldown: false });
+    assert.ok(out, "expected non-null render from metadata in expired branch");
+    assert.match(out!, /^\[REFERENCE-ONLY\] /);
+    assert.match(out!, new RegExp(`${program}: lp ${lpAmt}x, yt ${ytAmt}x`));
+    assert.match(out!, /points NOT accruing/);
+  });
+
+  it("(d) position-empty in-cooldown: [REFERENCE-ONLY] prefix (same as expired)", () => {
+    const out = formatPointsMultipliers(undefined, avantMeta, { isExpired: false, isInCooldown: true });
+    assert.ok(out);
+    assert.match(out!, /^\[REFERENCE-ONLY\] /);
+    assert.match(out!, /points NOT accruing/);
+  });
+
+  it("position-active wins over metadata: object-form populated → no fallback", () => {
+    const positionMultipliers = {
+      lp: [{ name: program, amount: lpAmt }],
+      yt: [{ name: program, amount: ytAmt }],
+    };
+    const out = formatPointsMultipliers(positionMultipliers, avantMeta, { isExpired: false, isInCooldown: false });
+    // No metadata-fallback markers should appear when position data is present
+    assert.ok(!out!.includes("(from metadata)"));
+    assert.ok(!out!.includes("[REFERENCE-ONLY]"));
+  });
+
+  it("returns null for protocol with no metadata pointsMultipliers + no position data", () => {
+    const pendleMeta = (PROTOCOL_METADATA as any).pendle;
+    // Pendle metadata doesn't populate pointsMultipliers; with no position data → null
+    const out = formatPointsMultipliers(undefined, pendleMeta, { isExpired: false, isInCooldown: false });
+    assert.equal(out, null);
+  });
+
+  it("returns null for _unknown protocol with no position data", () => {
+    const unknownMeta = (PROTOCOL_METADATA as any)._unknown;
+    const out = formatPointsMultipliers(undefined, unknownMeta, { isExpired: false, isInCooldown: false });
+    assert.equal(out, null);
+  });
+
+  it("staleness annotation: validUntil in the past appends [stale since X]", () => {
+    // Synthetic meta with past validUntil — does NOT mutate registry
+    const pastDate = "2024-01-01";
+    const syntheticMeta: any = {
+      ...avantMeta,
+      pointsMultipliers: [
+        { ...lpEntry, validUntil: pastDate },
+        { ...ytEntry, validUntil: pastDate },
+      ],
+    };
+    const out = formatPointsMultipliers(undefined, syntheticMeta, { isExpired: false, isInCooldown: false });
+    assert.ok(out);
+    assert.match(out!, /\[stale since \d{4}-\d{2}-\d{2}\]/);
   });
 });

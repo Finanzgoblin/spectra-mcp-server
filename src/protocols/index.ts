@@ -15,6 +15,9 @@ export type {
   SettlementWindow,
   RenderContext,
   ProtocolMeta,
+  PointsMultiplier,
+  PointsMultiplierScope,
+  RolloverPolicy,
 } from "./types.js";
 
 export {

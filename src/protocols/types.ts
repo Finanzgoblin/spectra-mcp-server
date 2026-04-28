@@ -62,6 +62,32 @@ export interface SettlementWindow {
 }
 
 /**
+ * PointsMultiplier — a single points-program entry (PR-L of hardcode-vs-generalize-spec.md, §3).
+ *
+ * Captures the originating scar (Avant points 40x for LPs / 60x for YT holders rendered via
+ * inline literals across many sites). The class:
+ *   - `program`: name of the points program (e.g., "Avant points")
+ *   - `scope`: which holder class earns it ("lp" / "yt" / "vault")
+ *   - `amount`: the multiplier (40 = "40x")
+ *   - `source`: SourcedValue OR InterpretedValue for `amount` — provenance chain
+ *   - `validUntil?`: ISO date — when set, render `[stale since X]` past it
+ *
+ * Invariant (R2-BL-6, zod-enforced): `source.value === amount`. Drift between the
+ * cited source and the rendered amount is annotated `[CLAIMED:X, OBSERVED:Y]` at
+ * the consumer; the class itself doesn't accept the discrepancy silently.
+ */
+export type PointsMultiplierScope = "lp" | "yt" | "vault";
+
+export interface PointsMultiplier {
+  program: string;
+  scope: PointsMultiplierScope;
+  amount: number;
+  source: MaybeInterpretedValue<number>;
+  /** ISO date `YYYY-MM-DD`. When past, render `[stale since X]` suffix. */
+  validUntil?: string;
+}
+
+/**
  * 6-way rolloverPolicy enum (P7-BL-4 of hardcode-vs-generalize-spec.md):
  *
  * - `auto`: protocol auto-rolls (e.g., Spectra MetaVault auto-rollover)
@@ -137,6 +163,14 @@ export interface ProtocolMeta {
 
   /** 6-way enum capturing settlement semantics. See `RolloverPolicy` doc. */
   rolloverPolicy?: RolloverPolicy;
+
+  /**
+   * Per-protocol points-program multipliers. PR-L of hardcode-vs-generalize-spec.md
+   * (originating scar). When position-side multipliers are missing/empty, consumers
+   * fall back to this metadata via `formatPointsMultipliers` (with `[REFERENCE-ONLY]`
+   * prefix when position is expired/in-cooldown).
+   */
+  pointsMultipliers?: PointsMultiplier[];
 
   observationBoundaries: {
     unobservable: string[];
@@ -302,6 +336,25 @@ export function protocolMetaSchema(
           "redeem_no_cooldown",
           "unknown",
         ])
+        .optional(),
+      // PR-L: pointsMultipliers + R2-BL-6 invariant `source.value === amount`.
+      // Enforced via .superRefine across the array — if any entry violates,
+      // registry-load throws.
+      pointsMultipliers: z
+        .array(
+          z
+            .object({
+              program: z.string().min(1),
+              scope: z.enum(["lp", "yt", "vault"]),
+              amount: z.number(),
+              source: maybeInterpretedValueSchema(z.number(), opts),
+              validUntil: ISO_DATE.optional(),
+            })
+            .strict()
+            .refine((pm) => pm.source.value === pm.amount, {
+              message: "PointsMultiplier invariant: source.value must equal amount (R2-BL-6)",
+            }),
+        )
         .optional(),
       observationBoundaries: z
         .object({

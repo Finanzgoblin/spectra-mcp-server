@@ -21,6 +21,7 @@ import {
   type TypedExternalPosition,
   type ExternalChainTruthMap,
   type ProtocolMeta,
+  type PointsMultiplier,
 } from "./protocols/index.js";
 // Phase 2 (discard-layer-spec):
 //   - PR5 calls `getMeta(normalizeProtocolName(...))` to detect _unknown
@@ -615,6 +616,93 @@ export function formatMultipliers(multipliers: unknown): string | null {
 }
 
 /**
+ * Render metadata-side `PointsMultiplier[]` grouped by program, with scope visible.
+ *
+ * PR-L of hardcode-vs-generalize-spec.md §5 + §5.5 render gallery contract:
+ *   - `Avant points: lp 40x, yt 60x` (one program, multiple scopes)
+ *
+ * Consumed by `formatPointsMultipliers` when position-side data is empty
+ * and we fall back to metadata.
+ */
+function renderMetadataPointsMultipliers(items: PointsMultiplier[]): string {
+  // Group by program → preserve insertion order so first-encountered scope wins ordering
+  const byProgram = new Map<string, { scope: string; amount: number }[]>();
+  for (const pm of items) {
+    const arr = byProgram.get(pm.program) ?? [];
+    arr.push({ scope: pm.scope, amount: pm.amount });
+    byProgram.set(pm.program, arr);
+  }
+  const programs: string[] = [];
+  for (const [program, scopes] of byProgram) {
+    const scopeStr = scopes.map((s) => `${s.scope} ${s.amount}x`).join(", ");
+    programs.push(`${program}: ${scopeStr}`);
+  }
+  return programs.join(" | ");
+}
+
+/**
+ * Annotation suffix when a `PointsMultiplier`'s `validUntil` has passed.
+ * Returns `""` if no annotation needed.
+ */
+function pointsStaleSuffix(items: PointsMultiplier[], nowMs: number = Date.now()): string {
+  const stale: string[] = [];
+  for (const pm of items) {
+    if (!pm.validUntil) continue;
+    const t = Date.parse(pm.validUntil + "T00:00:00Z");
+    if (Number.isFinite(t) && t < nowMs) stale.push(pm.validUntil);
+  }
+  if (stale.length === 0) return "";
+  // One annotation regardless of how many entries are stale — earliest date wins
+  stale.sort();
+  return ` [stale since ${stale[0]}]`;
+}
+
+/**
+ * Orchestrate points-multiplier rendering with position-data + metadata-fallback.
+ *
+ * PR-L of hardcode-vs-generalize-spec.md §5 + §5.5 render gallery.
+ *
+ * Behavior:
+ *   1. If position-side multipliers populated → render via `formatMultipliers` (existing
+ *      Array OR `{lp, yt}` shapes).
+ *   2. Else if metadata has `pointsMultipliers` → fall back:
+ *      a. When position is expired or in-cooldown → `[REFERENCE-ONLY]` prefix + warning
+ *         ("points NOT accruing").
+ *      b. Otherwise → metadata render + `(from metadata)` suffix.
+ *   3. Else → null (caller suppresses the line).
+ *
+ * Render gallery contracts (§5.5):
+ *   - Position-active object form: `lp [Avant points 40x] | yt [Avant points 60x]`
+ *   - Position-active array form: `Avant points 40x`
+ *   - Position-empty active fallback: `Avant points: lp 40x, yt 60x (from metadata)`
+ *   - Position-empty expired/cooldown: `[REFERENCE-ONLY] Avant points: lp 40x, yt 60x — position expired/in-cooldown, points NOT accruing`
+ *
+ * Tests MUST be shape-based (parameterize over fixture values) per P7-BL-6 α.
+ */
+export function formatPointsMultipliers(
+  positionMultipliers: unknown,
+  meta: ProtocolMeta,
+  positionState: { isExpired: boolean; isInCooldown: boolean },
+  nowMs: number = Date.now(),
+): string | null {
+  // (1) Position-side data takes precedence
+  const positionRender = formatMultipliers(positionMultipliers);
+  if (positionRender !== null) return positionRender;
+
+  // (2) Metadata fallback
+  const metaItems = meta.pointsMultipliers;
+  if (!metaItems || metaItems.length === 0) return null;
+
+  const body = renderMetadataPointsMultipliers(metaItems);
+  const stale = pointsStaleSuffix(metaItems, nowMs);
+
+  if (positionState.isExpired || positionState.isInCooldown) {
+    return `[REFERENCE-ONLY] ${body} — position expired/in-cooldown, points NOT accruing${stale}`;
+  }
+  return `${body} (from metadata)${stale}`;
+}
+
+/**
  * Detect whether a multipliers value contains any entry whose name ends in
  * "points" (case-insensitive). Used by PR4 attribution-creep flag — fires when
  * a points program is declared but on-chain rewards are absent (settlement
@@ -783,12 +871,27 @@ export function formatPoolSummary(pt: SpectraPt, pool: SpectraPool, chain: strin
     if (parts.length > 0) lines.push(`  Maturity Value (per PT): ${parts.join(" / ")}`);
   }
 
-  // Points program multipliers (e.g. Drops 3x, InfiniFi 12x)
+  // Points program multipliers (e.g. Drops 3x, InfiniFi 12x, Avant 40x/60x)
+  //
   // PR12b backport: schema MultipliersSchema is a union of Array | {lp,yt} — the
   // prior `pt.multipliers.length > 0` check silently no-op'd on object-form
   // variants (8 of 15 fixture positions affected). formatMultipliers handles
   // both shapes and returns null for empty/undefined.
-  const ptMultLine = formatMultipliers(pt.multipliers);
+  //
+  // PR-L (2026-04-28, originating-scar closure): when `pt.multipliers` is empty
+  // BUT the underlying protocol's metadata declares `pointsMultipliers` (e.g.,
+  // Avant), fall back to the metadata via `formatPointsMultipliers`. Curators
+  // researching a fresh PT entry get the points-program signal without holding
+  // the position. Pool maturity timestamps drive `isExpired` for the
+  // `[REFERENCE-ONLY]` prefix when the points are no longer accruing.
+  const ptProto = normalizeProtocolName(pt.ibt?.protocol ?? "");
+  const ptMeta = getMeta(ptProto);
+  const isPoolExpired = pt.maturity != null && pt.maturity * 1000 < Date.now();
+  const ptMultLine = formatPointsMultipliers(
+    pt.multipliers,
+    ptMeta,
+    { isExpired: isPoolExpired, isInCooldown: false },
+  );
   if (ptMultLine) {
     lines.push(`  Points: ${ptMultLine}`);
   }
