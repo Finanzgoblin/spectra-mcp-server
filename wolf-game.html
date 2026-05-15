@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Wolf Game</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #0b1220;
+    color: #e6e6e6;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    height: 100%;
+    overflow: hidden;
+  }
+  #wrap {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  canvas {
+    background: linear-gradient(#1f3a1f, #2d5a2d);
+    border: 2px solid #111;
+    border-radius: 8px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    image-rendering: pixelated;
+  }
+  #hud {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    background: rgba(0,0,0,0.45);
+    padding: 8px 14px;
+    border-radius: 6px;
+    font-size: 14px;
+    line-height: 1.4;
+    pointer-events: none;
+  }
+  #hud b { color: #ffd166; }
+  #overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    background: rgba(0,0,0,0.6);
+    text-align: center;
+    padding: 24px;
+  }
+  #overlay h1 { font-size: 42px; margin: 0 0 12px; color: #ffd166; }
+  #overlay p { max-width: 480px; margin: 6px 0; }
+  #overlay button {
+    margin-top: 18px;
+    padding: 12px 22px;
+    font-size: 16px;
+    background: #ffd166;
+    border: none;
+    border-radius: 6px;
+    color: #111;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  #overlay button:hover { background: #ffe29a; }
+  .hide { display: none !important; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="960" height="600"></canvas>
+  <div id="hud">
+    <div>Score: <b id="score">0</b></div>
+    <div>Hunger: <b id="hunger">100</b></div>
+    <div>Time: <b id="time">0</b>s</div>
+    <div style="margin-top:6px;opacity:0.8">WASD / Arrows to move &middot; Shift to sprint</div>
+  </div>
+  <div id="overlay">
+    <h1>The Wolf Game</h1>
+    <p>You are a hungry wolf. Hunt sheep to feed yourself. Avoid the hunters and their dogs.</p>
+    <p>Your hunger drains over time. Eat a sheep to refill it. Survive as long as you can.</p>
+    <p><b>Controls:</b> WASD or Arrow keys to move, hold Shift to sprint (uses stamina).</p>
+    <button id="startBtn">Start Hunt</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width;
+  const H = canvas.height;
+
+  const scoreEl = document.getElementById('score');
+  const hungerEl = document.getElementById('hunger');
+  const timeEl = document.getElementById('time');
+  const overlay = document.getElementById('overlay');
+  const startBtn = document.getElementById('startBtn');
+
+  const keys = {};
+  window.addEventListener('keydown', e => {
+    keys[e.key.toLowerCase()] = true;
+    if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase())) {
+      e.preventDefault();
+    }
+  });
+  window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+  // ---- Game State ----
+  let state;
+
+  function newState() {
+    return {
+      running: false,
+      t: 0,
+      lastSpawn: 0,
+      score: 0,
+      wolf: {
+        x: W/2, y: H/2,
+        r: 14,
+        vx: 0, vy: 0,
+        speed: 2.6,
+        sprintSpeed: 4.4,
+        stamina: 100,
+        hunger: 100,
+        facing: 1,
+      },
+      sheep: [],
+      hunters: [],
+      dogs: [],
+      bushes: [],
+      particles: [],
+      gameOver: false,
+      message: '',
+    };
+  }
+
+  function spawnInitial() {
+    for (let i = 0; i < 6; i++) state.sheep.push(makeSheep());
+    for (let i = 0; i < 18; i++) state.bushes.push(makeBush());
+    state.hunters.push(makeHunter());
+  }
+
+  function rand(a, b) { return a + Math.random() * (b - a); }
+  function randEdgePos() {
+    const side = Math.floor(Math.random() * 4);
+    if (side === 0) return { x: rand(0, W), y: -20 };
+    if (side === 1) return { x: W + 20, y: rand(0, H) };
+    if (side === 2) return { x: rand(0, W), y: H + 20 };
+    return { x: -20, y: rand(0, H) };
+  }
+
+  function makeSheep() {
+    return {
+      x: rand(60, W-60),
+      y: rand(60, H-60),
+      r: 11,
+      vx: 0, vy: 0,
+      panic: 0,
+      wanderT: 0,
+      wanderDx: 0, wanderDy: 0,
+    };
+  }
+
+  function makeBush() {
+    return {
+      x: rand(20, W-20),
+      y: rand(20, H-20),
+      r: rand(10, 22),
+      hue: 100 + Math.random()*40,
+    };
+  }
+
+  function makeHunter() {
+    const p = randEdgePos();
+    return {
+      x: p.x, y: p.y,
+      r: 14,
+      speed: 1.4,
+      cooldown: 0,
+      bullets: [],
+    };
+  }
+
+  function makeDog() {
+    const p = randEdgePos();
+    return {
+      x: p.x, y: p.y,
+      r: 10,
+      speed: 2.2,
+    };
+  }
+
+  function dist(a, b) {
+    const dx = a.x - b.x, dy = a.y - b.y;
+    return Math.hypot(dx, dy);
+  }
+
+  function blood(x, y, n=14) {
+    for (let i = 0; i < n; i++) {
+      state.particles.push({
+        x, y,
+        vx: rand(-2,2), vy: rand(-2,2),
+        life: rand(20, 40),
+        color: `hsl(${rand(-5,15)},80%,${rand(30,55)}%)`,
+        r: rand(2, 4),
+      });
+    }
+  }
+
+  function howl() {
+    for (let i = 0; i < 16; i++) {
+      state.particles.push({
+        x: state.wolf.x, y: state.wolf.y,
+        vx: Math.cos(i/16*Math.PI*2)*1.5,
+        vy: Math.sin(i/16*Math.PI*2)*1.5,
+        life: 30,
+        color: 'rgba(200,220,255,0.6)',
+        r: 3,
+      });
+    }
+  }
+
+  // ---- Update ----
+  function update(dt) {
+    if (!state.running) return;
+    state.t += dt;
+
+    // input
+    let ix = 0, iy = 0;
+    if (keys['w'] || keys['arrowup']) iy -= 1;
+    if (keys['s'] || keys['arrowdown']) iy += 1;
+    if (keys['a'] || keys['arrowleft']) ix -= 1;
+    if (keys['d'] || keys['arrowright']) ix += 1;
+    const len = Math.hypot(ix, iy);
+    if (len > 0) { ix /= len; iy /= len; }
+
+    const w = state.wolf;
+    const sprinting = (keys['shift']) && w.stamina > 0 && (ix||iy);
+    const speed = sprinting ? w.sprintSpeed : w.speed;
+    w.vx = ix * speed;
+    w.vy = iy * speed;
+    w.x = Math.max(w.r, Math.min(W - w.r, w.x + w.vx));
+    w.y = Math.max(w.r, Math.min(H - w.r, w.y + w.vy));
+    if (ix !== 0) w.facing = ix > 0 ? 1 : -1;
+
+    // stamina
+    if (sprinting) w.stamina = Math.max(0, w.stamina - 0.6);
+    else w.stamina = Math.min(100, w.stamina + 0.25);
+
+    // hunger
+    w.hunger -= 0.04;
+    if (w.hunger <= 0) {
+      endGame('You starved.');
+      return;
+    }
+
+    // sheep behaviour
+    for (const s of state.sheep) {
+      s.wanderT -= 1;
+      if (s.wanderT <= 0) {
+        s.wanderT = rand(40, 120);
+        const a = rand(0, Math.PI*2);
+        s.wanderDx = Math.cos(a) * 0.5;
+        s.wanderDy = Math.sin(a) * 0.5;
+      }
+      let vx = s.wanderDx, vy = s.wanderDy;
+      const d = dist(s, w);
+      if (d < 110) {
+        const dx = (s.x - w.x) / d, dy = (s.y - w.y) / d;
+        vx += dx * 2.2;
+        vy += dy * 2.2;
+        s.panic = 30;
+      }
+      if (s.panic > 0) { s.panic--; vx *= 1.4; vy *= 1.4; }
+      s.x += vx;
+      s.y += vy;
+      s.x = Math.max(s.r, Math.min(W - s.r, s.x));
+      s.y = Math.max(s.r, Math.min(H - s.r, s.y));
+
+      if (dist(s, w) < s.r + w.r - 2) {
+        // eat sheep
+        state.score += 10;
+        w.hunger = Math.min(100, w.hunger + 35);
+        blood(s.x, s.y, 18);
+        s.dead = true;
+      }
+    }
+    state.sheep = state.sheep.filter(s => !s.dead);
+
+    // respawn sheep occasionally
+    if (state.t - state.lastSpawn > 180 && state.sheep.length < 8) {
+      state.sheep.push(makeSheep());
+      state.lastSpawn = state.t;
+    }
+
+    // difficulty: spawn extra hunter / dog over time
+    if (Math.floor(state.t) % 600 === 0 && state.t > 1) {
+      if (Math.random() < 0.5) state.hunters.push(makeHunter());
+      else state.dogs.push(makeDog());
+    }
+    if (state.t > 1800 && state.dogs.length < 1) state.dogs.push(makeDog());
+    if (state.t > 3600 && state.hunters.length < 2) state.hunters.push(makeHunter());
+
+    // hunters
+    for (const h of state.hunters) {
+      const d = dist(h, w);
+      // approach
+      if (d > 200) {
+        const dx = (w.x - h.x) / d, dy = (w.y - h.y) / d;
+        h.x += dx * h.speed;
+        h.y += dy * h.speed;
+      } else {
+        // shoot
+        h.cooldown--;
+        if (h.cooldown <= 0) {
+          h.cooldown = 90;
+          const dx = (w.x - h.x) / d, dy = (w.y - h.y) / d;
+          h.bullets.push({ x: h.x, y: h.y, vx: dx*5, vy: dy*5, life: 120 });
+        }
+      }
+      // update bullets
+      for (const b of h.bullets) {
+        b.x += b.vx; b.y += b.vy; b.life--;
+        if (dist(b, w) < w.r) {
+          endGame('You were shot by a hunter.');
+          return;
+        }
+      }
+      h.bullets = h.bullets.filter(b => b.life > 0 && b.x > -10 && b.x < W+10 && b.y > -10 && b.y < H+10);
+    }
+
+    // dogs chase
+    for (const d of state.dogs) {
+      const dd = dist(d, w);
+      const dx = (w.x - d.x) / (dd||1), dy = (w.y - d.y) / (dd||1);
+      d.x += dx * d.speed;
+      d.y += dy * d.speed;
+      if (dd < d.r + w.r) {
+        endGame('A hunting dog got you.');
+        return;
+      }
+    }
+
+    // particles
+    for (const p of state.particles) {
+      p.x += p.vx; p.y += p.vy; p.life--;
+      p.vx *= 0.96; p.vy *= 0.96;
+    }
+    state.particles = state.particles.filter(p => p.life > 0);
+  }
+
+  // ---- Render ----
+  function drawBush(b) {
+    ctx.fillStyle = `hsl(${b.hue},45%,28%)`;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.r, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = `hsl(${b.hue},50%,38%)`;
+    ctx.beginPath();
+    ctx.arc(b.x - b.r*0.3, b.y - b.r*0.3, b.r*0.6, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  function drawSheep(s) {
+    // body
+    ctx.fillStyle = '#f1f1f1';
+    ctx.beginPath();
+    ctx.ellipse(s.x, s.y, s.r*1.2, s.r, 0, 0, Math.PI*2);
+    ctx.fill();
+    // head
+    ctx.fillStyle = '#444';
+    ctx.beginPath();
+    ctx.arc(s.x + s.r*0.9, s.y - s.r*0.3, s.r*0.5, 0, Math.PI*2);
+    ctx.fill();
+    // legs hint
+    ctx.fillStyle = '#222';
+    ctx.fillRect(s.x - s.r*0.6, s.y + s.r*0.6, 2, 4);
+    ctx.fillRect(s.x + s.r*0.4, s.y + s.r*0.6, 2, 4);
+  }
+
+  function drawWolf(w) {
+    ctx.save();
+    ctx.translate(w.x, w.y);
+    ctx.scale(w.facing, 1);
+    // body
+    ctx.fillStyle = '#444a55';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, w.r*1.4, w.r*0.9, 0, 0, Math.PI*2);
+    ctx.fill();
+    // back fur
+    ctx.fillStyle = '#2e323a';
+    ctx.beginPath();
+    ctx.ellipse(-2, -w.r*0.4, w.r*1.2, w.r*0.45, 0, 0, Math.PI*2);
+    ctx.fill();
+    // head
+    ctx.fillStyle = '#3a3f48';
+    ctx.beginPath();
+    ctx.arc(w.r*0.9, -w.r*0.2, w.r*0.7, 0, Math.PI*2);
+    ctx.fill();
+    // ears
+    ctx.beginPath();
+    ctx.moveTo(w.r*0.6, -w.r*0.7);
+    ctx.lineTo(w.r*0.8, -w.r*1.1);
+    ctx.lineTo(w.r*1.0, -w.r*0.7);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(w.r*1.1, -w.r*0.7);
+    ctx.lineTo(w.r*1.3, -w.r*1.1);
+    ctx.lineTo(w.r*1.5, -w.r*0.7);
+    ctx.fill();
+    // snout
+    ctx.fillStyle = '#2a2e35';
+    ctx.beginPath();
+    ctx.ellipse(w.r*1.4, -w.r*0.05, w.r*0.4, w.r*0.25, 0, 0, Math.PI*2);
+    ctx.fill();
+    // eye
+    ctx.fillStyle = '#ffd34d';
+    ctx.beginPath();
+    ctx.arc(w.r*1.0, -w.r*0.3, 2, 0, Math.PI*2);
+    ctx.fill();
+    // tail
+    ctx.fillStyle = '#2e323a';
+    ctx.beginPath();
+    ctx.ellipse(-w.r*1.3, -w.r*0.2, w.r*0.5, w.r*0.25, -0.4, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawHunter(h) {
+    // shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.beginPath();
+    ctx.ellipse(h.x, h.y + h.r, h.r, 4, 0, 0, Math.PI*2);
+    ctx.fill();
+    // body
+    ctx.fillStyle = '#6b4a2a';
+    ctx.fillRect(h.x - h.r*0.5, h.y - h.r*0.2, h.r, h.r*1.2);
+    // head
+    ctx.fillStyle = '#e0b48a';
+    ctx.beginPath();
+    ctx.arc(h.x, h.y - h.r*0.5, h.r*0.4, 0, Math.PI*2);
+    ctx.fill();
+    // hat
+    ctx.fillStyle = '#3d2a1a';
+    ctx.fillRect(h.x - h.r*0.55, h.y - h.r*0.8, h.r*1.1, 3);
+    ctx.fillRect(h.x - h.r*0.35, h.y - h.r*1.1, h.r*0.7, 5);
+    // rifle (line toward wolf)
+    const a = Math.atan2(state.wolf.y - h.y, state.wolf.x - h.x);
+    ctx.strokeStyle = '#222';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(h.x, h.y);
+    ctx.lineTo(h.x + Math.cos(a)*h.r*1.6, h.y + Math.sin(a)*h.r*1.6);
+    ctx.stroke();
+  }
+
+  function drawDog(d) {
+    ctx.fillStyle = '#a07040';
+    ctx.beginPath();
+    ctx.ellipse(d.x, d.y, d.r*1.2, d.r*0.8, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = '#704020';
+    ctx.beginPath();
+    ctx.arc(d.x + d.r*0.8, d.y - d.r*0.3, d.r*0.5, 0, Math.PI*2);
+    ctx.fill();
+    // ears
+    ctx.beginPath();
+    ctx.moveTo(d.x + d.r*0.5, d.y - d.r*0.6);
+    ctx.lineTo(d.x + d.r*0.7, d.y - d.r*1.0);
+    ctx.lineTo(d.x + d.r*0.9, d.y - d.r*0.6);
+    ctx.fill();
+  }
+
+  function drawBullets() {
+    ctx.fillStyle = '#ffe066';
+    for (const h of state.hunters) {
+      for (const b of h.bullets) {
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, 2.5, 0, Math.PI*2);
+        ctx.fill();
+      }
+    }
+  }
+
+  function drawParticles() {
+    for (const p of state.particles) {
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+      ctx.fill();
+    }
+  }
+
+  function drawHUD() {
+    // stamina bar
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(W - 160, 12, 140, 10);
+    ctx.fillStyle = '#5fc46b';
+    ctx.fillRect(W - 158, 14, (state.wolf.stamina/100)*136, 6);
+    ctx.fillStyle = '#fff';
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.fillText('Stamina', W - 160, 36);
+
+    // hunger bar
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(W - 160, 48, 140, 10);
+    const hue = Math.max(0, Math.min(120, state.wolf.hunger * 1.2));
+    ctx.fillStyle = `hsl(${hue}, 70%, 50%)`;
+    ctx.fillRect(W - 158, 50, (state.wolf.hunger/100)*136, 6);
+    ctx.fillStyle = '#fff';
+    ctx.fillText('Hunger', W - 160, 72);
+  }
+
+  function render() {
+    // background grass tile detail
+    ctx.clearRect(0, 0, W, H);
+    // base grass
+    const grad = ctx.createLinearGradient(0,0,0,H);
+    grad.addColorStop(0, '#2a4a2a');
+    grad.addColorStop(1, '#3a6a3a');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0,0,W,H);
+
+    // bushes
+    for (const b of state.bushes) drawBush(b);
+
+    // shadows under sheep/wolf
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    for (const s of state.sheep) {
+      ctx.beginPath();
+      ctx.ellipse(s.x, s.y + s.r*0.9, s.r*1.1, 3, 0, 0, Math.PI*2);
+      ctx.fill();
+    }
+    ctx.beginPath();
+    ctx.ellipse(state.wolf.x, state.wolf.y + state.wolf.r*0.9, state.wolf.r*1.3, 4, 0, 0, Math.PI*2);
+    ctx.fill();
+
+    for (const s of state.sheep) drawSheep(s);
+    for (const d of state.dogs) drawDog(d);
+    drawWolf(state.wolf);
+    for (const h of state.hunters) drawHunter(h);
+    drawBullets();
+    drawParticles();
+    drawHUD();
+
+    scoreEl.textContent = state.score;
+    hungerEl.textContent = Math.floor(state.wolf.hunger);
+    timeEl.textContent = Math.floor(state.t/60);
+  }
+
+  // ---- Loop ----
+  let last = performance.now();
+  function loop(now) {
+    const dt = Math.min(2, (now - last) / 16.67);
+    last = now;
+    update(dt);
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  function endGame(msg) {
+    state.running = false;
+    state.gameOver = true;
+    overlay.classList.remove('hide');
+    overlay.innerHTML = `
+      <h1>The hunt is over</h1>
+      <p>${msg}</p>
+      <p>Final score: <b>${state.score}</b> &middot; Survived: <b>${Math.floor(state.t/60)}s</b></p>
+      <button id="startBtn">Hunt Again</button>
+    `;
+    document.getElementById('startBtn').addEventListener('click', startGame);
+  }
+
+  function startGame() {
+    state = newState();
+    spawnInitial();
+    state.running = true;
+    overlay.classList.add('hide');
+  }
+
+  startBtn.addEventListener('click', startGame);
+
+  state = newState();
+  spawnInitial();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
